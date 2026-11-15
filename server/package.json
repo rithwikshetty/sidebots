@@ -8,13 +8,15 @@
   "scripts": {
     "start": "node src/main.ts",
     "add-person": "node src/main.ts add-person",
+    "push-key": "node src/main.ts push-key",
     "test": "node --test",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
     "@anthropic-ai/claude-agent-sdk": "^0.3.325",
     "@hono/node-server": "^2.1.8",
-    "hono": "^4.13.18"
+    "hono": "^4.13.18",
+    "zod": "^4.6.7"
   },
   "devDependencies": {
     "@types/node": "^26.6.6",
