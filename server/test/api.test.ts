@@ -5,11 +5,24 @@ import { DatabaseSync } from "node:sqlite";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { openStore } from "../src/store.ts";
-import { createQueue, type RunTurn, type TurnResult } from "../src/runner.ts";
+import { createQueue, type Turn, type TurnResult } from "../src/runner.ts";
 import { createApi } from "../src/api.ts";
 import { startPush, type Notice } from "../src/push.ts";
 
-function setup(runTurn: RunTurn, now: () => number = Date.now) {
+/** A turn's reply, as a fake Claude Code gives it. No reply means the fake gave its replies itself. */
+type Answer = TurnResult & { reply?: string };
+
+/**
+ * A Simon whose turns `answer` runs instead of Claude Code. The fake reads
+ * the turn's first message, then replies to it.
+ */
+function setup(answer: (turn: Turn) => Promise<Answer>, now: () => number = Date.now) {
+  const runTurn = async (turn: Turn): Promise<TurnResult> => {
+    turn.seen([turn.prompt.id]);
+    const { reply: text, ...result } = await answer(turn);
+    if (text !== undefined) turn.replied(text, [turn.prompt.id]);
+    return result;
+  };
   const home = mkdtempSync(join(tmpdir(), "simon-test-"));
   const store = openStore(home);
   store.addPerson({ name: "Alex", login: "alex@example.com", configDir: "/config/alex" });
@@ -35,16 +48,16 @@ function setup(runTurn: RunTurn, now: () => number = Date.now) {
   return { home, store, queue, call, say, app };
 }
 
-const reply = (text: string, sessionId = "session-1", contextTokens = 0): TurnResult => ({ reply: text, sessionId, contextTokens });
+const reply = (text: string, sessionId = "session-1", contextTokens = 0): Answer => ({ reply: text, sessionId, contextTokens });
 
 const ME = "alex@example.com";
 const HER = "robin@example.com";
 
 test("a message gets the agent's reply, run in the agent's folder under its owner's login", async () => {
-  const turns: Parameters<RunTurn>[0][] = [];
+  const turns: Turn[] = [];
   const { store, queue, call, say } = setup(async (turn) => {
     turns.push(turn);
-    return reply(`You said: ${turn.prompt}`);
+    return reply(`You said: ${turn.prompt.text}`);
   });
   const agent = (await call(ME, "POST", "/agents", { name: "Wedding", petId: "mochi" })).json;
 
@@ -75,7 +88,7 @@ test("messages sent while the agent is busy run one at a time, in order, on the 
     running++;
     most = Math.max(most, running);
     await new Promise((resolve) => setTimeout(resolve, 5));
-    seen.push([turn.prompt, turn.sessionId]);
+    seen.push([turn.prompt.text, turn.sessionId]);
     running--;
     return reply("ok");
   });
@@ -154,7 +167,7 @@ test("the event stream carries the person's own messages and their status change
 });
 
 test("after a known message returns only what came later", async () => {
-  const { queue, call, say } = setup(async (turn) => reply(`re: ${turn.prompt}`));
+  const { queue, call, say } = setup(async (turn) => reply(`re: ${turn.prompt.text}`));
   const agent = (await call(ME, "POST", "/agents", { name: "Books", petId: "wisp" })).json;
   const first = (await say(ME, agent.id, "first")).json;
   await queue.kick(agent.id);
@@ -166,7 +179,7 @@ test("after a known message returns only what came later", async () => {
 test("files sent with a message go into the agent's folder, the agent is told where, and only their owner can open them", async () => {
   const prompts: string[] = [];
   const { store, queue, call, say, app } = setup(async (turn) => {
-    prompts.push(turn.prompt);
+    prompts.push(turn.prompt.text);
     return reply("nice");
   });
   const agent = (await call(ME, "POST", "/agents", { name: "Scout", petId: "moss" })).json;
@@ -189,7 +202,7 @@ test("files sent with a message go into the agent's folder, the agent is told wh
 });
 
 test("a fresh start has the agent save its memory, then gives the next message a new session that is shown the chat so far", async () => {
-  const turns: Parameters<RunTurn>[0][] = [];
+  const turns: Turn[] = [];
   const { queue, call, say } = setup(async (turn) => {
     turns.push(turn);
     return reply("sure", `session-${turns.length}`);
@@ -204,9 +217,9 @@ test("a fresh start has the agent save its memory, then gives the next message a
   await queue.kick(agent.id);
 
   assert.deepEqual(turns.map((turn) => turn.sessionId), [null, "session-1", null]);
-  assert.match(turns[1].prompt, /Save what is worth keeping .* learned about Alex/);
+  assert.match(turns[1].prompt.text, /Save what is worth keeping .* learned about Alex/);
   assert.equal(
-    turns[2].prompt,
+    turns[2].prompt.text,
     "This is a fresh session in a chat that was already going. The latest messages in it:\n\nAlex: book the band\n\nYou: sure\n\nAlex's new message:\n\nany news?",
   );
   const messages = (await call(ME, "GET", `/agents/${agent.id}/messages`)).json;
@@ -241,7 +254,7 @@ test("a session that has grown large gets a fresh start by itself after its repl
 test("a search, by an agent or from the app, reaches all of the person's chats and nobody else's", async () => {
   const searches: string[] = [];
   const { queue, call, say } = setup(async (turn) => {
-    if (turn.prompt === "search") searches.push(turn.searchHistory("florist"));
+    if (turn.prompt.text === "search") searches.push(turn.searchHistory("florist"));
     return reply("ok");
   });
   const wedding = (await call(ME, "POST", "/agents", { name: "Wedding", petId: "mochi" })).json;
@@ -283,6 +296,8 @@ test("a reply or a failed turn notifies the person's phones, and a phone Apple h
   }
   assert.equal((await call(ME, "POST", "/devices", { token: "nope", topic: "com.example.simon", environment: "production" })).status, 400);
   const agent = (await call(ME, "POST", "/agents", { name: "Wedding", petId: "mochi" })).json;
+  // A reply counts as unread when it is newer than the chat was read, which begins at the agent's creation.
+  await new Promise((resolve) => setTimeout(resolve, 1));
 
   await say(ME, agent.id, "book the band");
   await queue.kick(agent.id);
@@ -361,14 +376,14 @@ test("a job runs when its time comes, in a session of its own, and only a run wi
   const runs: [string, string | null, boolean][] = [];
   let found = "SILENT";
   const { queue, call, say } = setup(async (turn) => {
-    if (turn.prompt === "watch the price") {
+    if (turn.prompt.text === "watch the price") {
       assert.match(turn.scheduleJob({ what: "Check the price. Stay silent unless it dropped.", every_minutes: 5 }), /^Saved job \w+: Every 5 minutes\. It first runs at 2026-11-16T09:05\. It is now 2026-11-16T09:00\.$/);
       assert.equal(turn.scheduleJob({ what: "x", every_minutes: 5, daily_at: "08:00" }), "Give exactly one of every_minutes, daily_at and once_at.");
       assert.match(turn.scheduleJob({ what: "x", once_at: "2026-11-16T08:00" }), /^That time has passed/);
       return reply("Watching.");
     }
-    runs.push([turn.prompt, turn.sessionId, turn.keepSession]);
-    return turn.prompt.startsWith("This is a run of one of your jobs") ? reply(found, "job-session") : reply("ok");
+    runs.push([turn.prompt.text, turn.sessionId, turn.keepSession]);
+    return turn.prompt.text.startsWith("This is a run of one of your jobs") ? reply(found, "job-session") : reply("ok");
   }, () => time);
   const agent = (await call(ME, "POST", "/agents", { name: "Scout", petId: "moss" })).json;
   await say(ME, agent.id, "watch the price");
@@ -413,7 +428,7 @@ test("a job set for one time runs once, a daily one keeps to its days, and a job
   let time = new Date(2026, 10, 16, 9, 0).getTime(); // A Monday.
   let fail = false;
   const { store, queue, call, say } = setup(async (turn) => {
-    if (turn.prompt === "set up") {
+    if (turn.prompt.text === "set up") {
       turn.scheduleJob({ what: "Say it is time to call the garage.", once_at: "2026-11-16T17:00" });
       assert.match(turn.scheduleJob({ what: "Morning brief.", daily_at: "08:00", weekdays: [1, 5] }), /Mon, Fri at 08:00\. It first runs at 2026-11-20T08:00/);
       assert.match(turn.listJobs(), /Once, 16 Nov at 17:00, next at 2026-11-16T17:00\. Say it is time to call the garage\.[\s\S]*It is now 2026-11-16T09:00\.$/);
@@ -447,7 +462,7 @@ test("a job set for one time runs once, a daily one keeps to its days, and a job
 test("a reply to a message tells the agent which one, and the chat pages back through older messages", async () => {
   const prompts: string[] = [];
   const { store, queue, call, say, app } = setup(async (turn) => {
-    prompts.push(turn.prompt);
+    prompts.push(turn.prompt.text);
     return reply("The florist is Petal & Co.");
   });
   const agent = (await call(ME, "POST", "/agents", { name: "Wedding", petId: "mochi" })).json;
@@ -514,4 +529,40 @@ test("a database from before a column was added gets it, with what it held kept"
     assert.deepEqual(store.messages("a").map((m) => [m.body, m.reply_to, m.job_id]), [["hello", null, null]]);
     store.close();
   }
+});
+
+test("a message sent while the agent works goes into the turn it is running, and reads as read once the agent takes it in", async () => {
+  let release: (() => void) | undefined;
+  const prompts: string[] = [];
+  const { queue, call, say } = setup(async (turn) => {
+    prompts.push(turn.prompt.text);
+    await new Promise<void>((resolve) => (release = resolve));
+    const [later] = turn.followUps!.take();
+    prompts.push(later.text);
+    turn.seen([later.id]);
+    turn.replied("Booked the band and the florist.", [turn.prompt.id, later.id]);
+    return { sessionId: "session-1", contextTokens: 0 };
+  });
+  const agent = (await call(ME, "POST", "/agents", { name: "Wedding", petId: "mochi" })).json;
+  await say(ME, agent.id, "book the band");
+  const working = queue.kick(agent.id);
+  while (!release) await new Promise((resolve) => setTimeout(resolve, 1));
+  const followUp = (await say(ME, agent.id, "and the florist")).json;
+  const before = (await call(ME, "GET", `/agents/${agent.id}/messages`)).json;
+  release();
+  await working;
+
+  const status = (messages: { id: string; status: string; seen_at: number | null }[], id: string) => messages.find((m) => m.id === id);
+  assert.deepEqual([status(before, followUp.id)?.status, status(before, followUp.id)?.seen_at], ["queued", null]);
+  const after = (await call(ME, "GET", `/agents/${agent.id}/messages`)).json;
+  assert.deepEqual(
+    after.map((m: { sender: string; body: string; status: string }) => [m.sender, m.body, m.status]),
+    [
+      ["person", "book the band", "done"],
+      ["person", "and the florist", "done"],
+      ["agent", "Booked the band and the florist.", "done"],
+    ],
+  );
+  assert.equal(typeof status(after, followUp.id)?.seen_at, "number");
+  assert.deepEqual(prompts, ["book the band", "and the florist"]);
 });

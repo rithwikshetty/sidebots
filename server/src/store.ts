@@ -46,6 +46,7 @@ create table if not exists messages (
   body        text not null,
   attachments text not null default '[]',
   status      text not null check (status in ('queued', 'running', 'done', 'failed')),
+  seen_at     integer,
   reply_to    text,
   job_id      text,
   created_at  integer not null
@@ -76,6 +77,7 @@ const ADDED_COLUMNS = [
   "alter table messages add column reply_to text",
   "alter table messages add column job_id text",
   "alter table agents add column effort text not null default 'medium'",
+  "alter table messages add column seen_at integer",
 ];
 
 const PAGE = 50;
@@ -355,6 +357,7 @@ export function openStore(home: string) {
         body,
         attachments,
         status,
+        seen_at: null,
         reply_to: replyTo ?? null,
         job_id: jobId ?? null,
         created_at: Date.now(),
@@ -382,6 +385,16 @@ export function openStore(home: string) {
       if (!ATTACHMENT_NAME.test(name)) return undefined;
       const path = join(agentHome(agentId), "attachments", name);
       return statSync(path, { throwIfNoEntry: false })?.isFile() ? path : undefined;
+    },
+
+    /** Records that the agent has read these messages from the person, the ones it hadn't yet. */
+    markSeen(messageIds: string[]): void {
+      const now = Date.now();
+      for (const id of messageIds) {
+        const read = db.prepare("update messages set status = 'running', seen_at = ? where id = ? and sender = 'person' and status = 'queued'").run(now, id);
+        const message = read.changes ? one("select * from messages where id = ?", id) : undefined;
+        if (message) changed(message);
+      }
     },
 
     setStatus(messageId: string, status: Status): void {
@@ -450,6 +463,11 @@ export function openStore(home: string) {
            order by messages.rowid desc limit ?`,
         )
         .all(personId, pattern, SEARCH_LIMIT) as Found[];
+    },
+
+    /** The messages from the person that wait for the agent to read them, oldest first. */
+    waitingFromPerson(agentId: string): Message[] {
+      return many("select * from messages where agent_id = ? and sender = 'person' and status = 'queued' order by rowid", agentId);
     },
 
     /** The agent's oldest message that is waiting for its turn. */

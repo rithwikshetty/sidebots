@@ -12,10 +12,13 @@ export type Message = {
   /** Files sent with the message, as paths inside the agent's home folder. */
   attachments: string[];
   /**
-   * For a message from a person, the state of the turn it started. For a fresh
+   * For a message from a person: `queued` until the agent reads it, `running`
+   * once it has, then `done` when it has answered, or `failed`. For a fresh
    * start, the state of replacing the session. A failure notice is `failed`.
    */
   status: Status;
+  /** When the agent read a message from the person, or null before it has. */
+  seen_at: number | null;
   /** The earlier message this one answers, when the person replied to one. */
   reply_to: string | null;
   /** The job whose run sent it, for a message the agent sent by itself. */
@@ -91,6 +94,20 @@ export function scheduleWords(schedule: Schedule): string {
   const at = new Date(schedule.at);
   const two = (value: number) => String(value).padStart(2, "0");
   return `Once, ${at.getDate()} ${at.toLocaleString("en", { month: "short" })} at ${two(at.getHours())}:${two(at.getMinutes())}`;
+}
+
+/**
+ * Markdown as one plain line, for a notification or the chat list: no marks
+ * for emphasis, code or headings, and a link as its words.
+ */
+export function plainText(markdown: string): string {
+  return markdown
+    .replace(/```[^\n]*\n?/g, "")
+    .replace(/!?\[([^\]]*)\]\([^)]*\)/g, "$1")
+    .replace(/^\s{0,3}(#{1,6}|>|[-*+]|\d+[.)])\s+/gm, "")
+    .replace(/(?<!\w)(\*\*|__|~~|\*|_|`)(?=\S)([\s\S]*?\S)\1(?!\w)/g, "$2")
+    .replace(/\s+/g, " ")
+    .trim();
 }
 
 /** What the event stream sends when a message is added or changes status. */

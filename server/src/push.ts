@@ -2,6 +2,7 @@
 
 import { sign } from "node:crypto";
 import { connect, type ClientHttp2Session } from "node:http2";
+import { plainText } from "./contract.ts";
 import type { Device } from "./contract.ts";
 import type { PushKey, Store } from "./store.ts";
 
@@ -29,7 +30,7 @@ export function startPush(store: Store, send: SendPush): () => void {
     if (!agent || agent.muted) return;
     // A muted agent's unread replies show on its own row, and never on the app's icon.
     const badge = store.agentsFor(agent.person_id).reduce((total, each) => total + (each.muted ? 0 : each.unread), 0);
-    const notice: Notice = { title: agent.name, body: message.body.slice(0, BODY_CHARS), badge, agentId: agent.id, messageId: message.id };
+    const notice: Notice = { title: agent.name, body: plainText(message.body).slice(0, BODY_CHARS), badge, agentId: agent.id, messageId: message.id };
     for (const device of store.devicesFor(agent.person_id)) {
       void send(device, notice).then((result) => {
         if (result === "gone") store.removeDevice(device.token);

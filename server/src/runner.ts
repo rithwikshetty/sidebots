@@ -1,7 +1,8 @@
 // The runner runs turns. It is the only module that imports the Agent SDK.
 
+import { randomUUID } from "node:crypto";
 import { join } from "node:path";
-import { createSdkMcpServer, query, tool } from "@anthropic-ai/claude-agent-sdk";
+import { createSdkMcpServer, query, tool, type SDKMessage, type SDKUserMessage } from "@anthropic-ai/claude-agent-sdk";
 import { z } from "zod";
 import { scheduleWords } from "./contract.ts";
 import type { Effort, Found, Job, Message, Model, Schedule } from "./contract.ts";
@@ -10,8 +11,24 @@ import type { Person, Store } from "./store.ts";
 /** A job as an agent asks for one: what to do on each run, and one of three ways to say when. */
 export type JobRequest = { what: string; every_minutes?: number; daily_at?: string; weekdays?: number[]; once_at?: string };
 
+/** A message as the agent is given it: its id, which Claude Code names again once it has read it, and its words. */
+export type Prompt = { id: string; text: string };
+
+/**
+ * Where a running turn finds the messages the person sent after it started.
+ * `take` hands over the ones it hasn't had yet, and `onArrival` calls back
+ * when another comes, until the function it returns is called.
+ */
+export type FollowUps = { take: () => Prompt[]; onArrival: (listener: () => void) => () => void };
+
 export type Turn = {
-  prompt: string;
+  prompt: Prompt;
+  /** Messages the person sends while the turn runs. Absent for a turn nobody talks to, such as a job's run. */
+  followUps?: FollowUps;
+  /** The agent has read these messages. */
+  seen: (ids: string[]) => void;
+  /** A reply, with the messages it answers. */
+  replied: (text: string, ids: string[]) => void;
   cwd: string;
   sessionId: string | null;
   configDir: string;
@@ -29,7 +46,7 @@ export type Turn = {
   cancelJob: (id: string) => string;
 };
 /** `contextTokens` is how much the session held when the turn ended. */
-export type TurnResult = { reply: string; sessionId: string; contextTokens: number };
+export type TurnResult = { sessionId: string; contextTokens: number };
 export type RunTurn = (turn: Turn) => Promise<TurnResult>;
 
 /** What a fresh start shows in the chat. */
@@ -49,8 +66,64 @@ const TOOLS = ["search_history", "schedule_job", "list_jobs", "cancel_job"];
 
 const text = (words: string) => ({ content: [{ type: "text" as const, text: words }] });
 
-/** Runs one turn through Claude Code, signed in as the person who owns the agent. */
-export const claudeTurn: RunTurn = async ({ prompt, cwd, sessionId, configDir, model, effort, keepSession, stop, searchHistory, scheduleJob, listJobs, cancelJob }) => {
+/** The messages a frame from Claude Code says it has read, by the ids they were sent with. */
+function readIds(message: SDKMessage): string[] {
+  const ids = "user_message_uuids" in message ? message.user_message_uuids : undefined;
+  if (ids?.length) return ids;
+  const id = "user_message_uuid" in message ? message.user_message_uuid : undefined;
+  return typeof id === "string" ? [id] : [];
+}
+
+/** Messages for Claude Code, handed over as they come, until `end`. */
+function inbox() {
+  const waiting: SDKUserMessage[] = [];
+  let wake: (() => void) | null = null;
+  let ended = false;
+  return {
+    push(message: SDKUserMessage) {
+      waiting.push(message);
+      wake?.();
+    },
+    end() {
+      ended = true;
+      wake?.();
+    },
+    async *messages(): AsyncGenerator<SDKUserMessage> {
+      for (;;) {
+        while (waiting.length) yield waiting.shift()!;
+        if (ended) return;
+        await new Promise<void>((resolve) => (wake = resolve));
+        wake = null;
+      }
+    },
+  };
+}
+
+/**
+ * Runs a turn through Claude Code, signed in as the person who owns the
+ * agent. The session stays open while the turn runs, so a message the person
+ * sends meanwhile goes into it: Claude Code reads it at its next pause between
+ * steps, and its reply answers both. One that arrives as the turn is finishing
+ * gets a reply of its own in the same session. The session closes once every
+ * message sent to it has its reply.
+ */
+export const claudeTurn: RunTurn = async ({
+  prompt,
+  followUps,
+  seen,
+  replied,
+  cwd,
+  sessionId,
+  configDir,
+  model,
+  effort,
+  keepSession,
+  stop,
+  searchHistory,
+  scheduleJob,
+  listJobs,
+  cancelJob,
+}) => {
   const simon = createSdkMcpServer({
     name: "simon",
     tools: [
@@ -76,8 +149,23 @@ export const claudeTurn: RunTurn = async ({ prompt, cwd, sessionId, configDir, m
       tool("cancel_job", "Remove one of your jobs.", { id: z.string().describe("The job's id, as list_jobs gives it") }, async ({ id }) => text(cancelJob(id))),
     ],
   });
+  const input = inbox();
+  // Sent to Claude Code and not yet answered.
+  const unanswered = new Set<string>();
+  let open = true;
+  const send = ({ id, text: words }: Prompt) => {
+    unanswered.add(id);
+    input.push({ type: "user", message: { role: "user", content: words }, parent_tool_use_id: null, uuid: id as SDKUserMessage["uuid"], priority: "next" });
+  };
+  const takeFollowUps = () => {
+    if (open) followUps?.take().forEach(send);
+  };
+  send(prompt);
+  takeFollowUps();
+  const stopListening = followUps?.onArrival(takeFollowUps);
+
   const run = query({
-    prompt,
+    prompt: input.messages(),
     options: {
       cwd,
       resume: sessionId ?? undefined,
@@ -106,16 +194,32 @@ export const claudeTurn: RunTurn = async ({ prompt, cwd, sessionId, configDir, m
     },
   });
   let contextTokens = 0;
-  for await (const message of run) {
-    if (message.type === "assistant" && message.parent_tool_use_id === null) {
-      // Each of the agent's own steps reports everything the model read for it, which is the session so far.
-      const usage = message.message.usage;
-      contextTokens = usage.input_tokens + (usage.cache_creation_input_tokens ?? 0) + (usage.cache_read_input_tokens ?? 0) + usage.output_tokens;
+  try {
+    for await (const message of run) {
+      const read = readIds(message).filter((id) => unanswered.has(id));
+      if (read.length) seen(read);
+      if (message.type === "assistant" && message.parent_tool_use_id === null) {
+        // Each of the agent's own steps reports everything the model read for it, which is the session so far.
+        const usage = message.message.usage;
+        contextTokens = usage.input_tokens + (usage.cache_creation_input_tokens ?? 0) + (usage.cache_read_input_tokens ?? 0) + usage.output_tokens;
+      }
+      if (message.type !== "result") continue;
+      if (message.subtype !== "success") throw new Error(message.errors.join("; ") || message.subtype);
+      if (message.is_error) throw new Error(message.result || "Claude Code returned an error");
+      // A result names the messages it answers. One from a Claude Code that doesn't answers all of them.
+      const answered = read.length ? read : [...unanswered];
+      answered.forEach((id) => unanswered.delete(id));
+      replied(message.result, answered);
+      if (unanswered.size === 0) {
+        open = false;
+        input.end();
+        return { sessionId: message.session_id, contextTokens };
+      }
     }
-    if (message.type !== "result") continue;
-    if (message.subtype !== "success") throw new Error(message.errors.join("; ") || message.subtype);
-    if (message.is_error) throw new Error(message.result || "Claude Code returned an error");
-    return { reply: message.result, sessionId: message.session_id, contextTokens };
+  } finally {
+    open = false;
+    stopListening?.();
+    input.end();
   }
   throw new Error("Claude Code stopped without a reply");
 };
@@ -202,12 +306,14 @@ function promptFor(message: Message, person: Person, unseen: { recent: Message[]
 
 /**
  * Runs each agent's work one turn at a time: the messages it was sent, in the
- * order they came, and then any job whose time has come. `kick` starts an
- * agent's queue if it isn't already running.
+ * order they came, and then any job whose time has come. A message the person
+ * sends during a turn goes into that turn instead of waiting for the next.
  */
 export function createQueue(store: Store, runTurn: RunTurn, now: () => number = Date.now) {
   const busy = new Map<string, Promise<void>>();
   const stops = new Map<string, AbortController>();
+  // For an agent running a turn the person can talk to, what to call when they send another message.
+  const arrivals = new Map<string, () => void>();
 
   async function drain(agentId: string, stop: AbortController): Promise<void> {
     while (!stop.signal.aborted) {
@@ -216,15 +322,18 @@ export function createQueue(store: Store, runTurn: RunTurn, now: () => number = 
       if (!agent || !person) return;
       const message = store.nextQueued(agentId);
       const job = message ? undefined : store.dueJob(agentId, now());
-      const turn = (prompt: string, ofJob = false) =>
+      const turn = (text: string, rest: Pick<Turn, "followUps" | "seen" | "replied"> & { id?: string; ofJob?: boolean }) =>
         runTurn({
-          prompt,
+          prompt: { id: rest.id ?? randomUUID(), text },
+          followUps: rest.followUps,
+          seen: rest.seen,
+          replied: rest.replied,
           cwd: store.agentHome(agent.id),
-          sessionId: ofJob ? null : agent.session_id,
+          sessionId: rest.ofJob ? null : agent.session_id,
           configDir: person.claude_config_dir,
           model: agent.model,
           effort: agent.effort,
-          keepSession: !ofJob,
+          keepSession: !rest.ofJob,
           stop,
           searchHistory: (search) => found(store.searchMessages(person.id, search)),
           scheduleJob: (request) => {
@@ -244,8 +353,10 @@ export function createQueue(store: Store, runTurn: RunTurn, now: () => number = 
 
       if (job) {
         try {
-          const result = await turn(jobPrompt(job, person), true);
-          if (!silent(result.reply)) store.addMessage(agent.id, "agent", result.reply, "done", { jobId: job.id });
+          const replies: string[] = [];
+          await turn(jobPrompt(job, person), { ofJob: true, seen: () => undefined, replied: (reply) => replies.push(reply) });
+          const reply = replies.at(-1) ?? "";
+          if (!silent(reply)) store.addMessage(agent.id, "agent", reply, "done", { jobId: job.id });
         } catch (error) {
           if (stop.signal.aborted) return;
           // A job that keeps failing says so once, not on every run.
@@ -259,41 +370,70 @@ export function createQueue(store: Store, runTurn: RunTurn, now: () => number = 
         continue;
       }
       if (!message) return;
-      store.setStatus(message.id, "running");
 
       if (message.sender === "simon") {
         // A fresh start. The session goes even when the agent couldn't save
         // first, since the chat itself is still there to search.
-        if (agent.session_id) await turn(remember(person)).catch(() => undefined);
+        store.setStatus(message.id, "running");
+        if (agent.session_id) await turn(remember(person), { seen: () => undefined, replied: () => undefined }).catch(() => undefined);
         if (stop.signal.aborted) return;
         store.setSession(agent.id, null);
         store.setStatus(message.id, "done");
         continue;
       }
 
+      // The messages sent into this turn, the first and any the person sends while it runs.
+      const sent = new Set([message.id]);
+      const quotedBy = (each: Message) => (each.reply_to ? store.message(agent.id, each.reply_to) : undefined);
+      const followUps: FollowUps = {
+        take: () =>
+          store
+            .waitingFromPerson(agent.id)
+            .filter((each) => !sent.has(each.id))
+            .map((each) => {
+              sent.add(each.id);
+              return { id: each.id, text: promptFor(each, person, { recent: [], quoted: quotedBy(each), fromJobs: [] }) };
+            }),
+        onArrival: (listener) => {
+          arrivals.set(agent.id, listener);
+          return () => arrivals.delete(agent.id);
+        },
+      };
       try {
         const result = await turn(
           promptFor(message, person, {
             recent: agent.session_id ? [] : store.messagesBefore(message.id, RECENT_MESSAGES),
-            quoted: message.reply_to ? store.message(agent.id, message.reply_to) : undefined,
+            quoted: quotedBy(message),
             fromJobs: store.sentByJobsBefore(message.id),
           }),
+          {
+            id: message.id,
+            followUps,
+            seen: (ids) => store.markSeen(ids),
+            replied: (reply, ids) => {
+              store.addMessage(agent.id, "agent", reply, "done");
+              store.markSeen(ids);
+              ids.forEach((id) => store.setStatus(id, "done"));
+            },
+          },
         );
         store.setSession(agent.id, result.sessionId);
-        store.addMessage(agent.id, "agent", result.reply, "done");
-        store.setStatus(message.id, "done");
         if (result.contextTokens > FRESH_START_TOKENS) store.addMessage(agent.id, "simon", FRESH_START, "queued");
       } catch (error) {
         if (stop.signal.aborted) return;
         store.addMessage(agent.id, "simon", `Simon couldn't finish this. ${reason(error)}`, "failed");
-        store.setStatus(message.id, "failed");
+        for (const id of sent) if (store.message(agent.id, id)?.status !== "done") store.setStatus(id, "failed");
       }
     }
   }
 
+  /** Starts the agent's queue if it isn't running. If it is running a turn the person can talk to, a new message of theirs goes into that turn. */
   function kick(agentId: string): Promise<void> {
     const running = busy.get(agentId);
-    if (running) return running;
+    if (running) {
+      arrivals.get(agentId)?.();
+      return running;
+    }
     const stop = new AbortController();
     const done = drain(agentId, stop).finally(() => {
       busy.delete(agentId);
