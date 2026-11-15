@@ -5,8 +5,9 @@ import { extname } from "node:path";
 import { Hono } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import { streamSSE } from "hono/streaming";
-import type { Device, MessageEvent } from "./contract.ts";
-import type { Person, Store } from "./store.ts";
+import { MODELS } from "./contract.ts";
+import type { Device, MessageEvent, Model } from "./contract.ts";
+import type { AgentChanges, Person, Store } from "./store.ts";
 import type { Queue } from "./runner.ts";
 
 // `tailscale serve` adds the sender's Tailscale login to every request.
@@ -51,13 +52,61 @@ export function createApi(store: Store, queue: Queue) {
     return c.json(store.createAgent(c.var.person, name.trim(), petId.trim()), 201);
   });
 
+  /** Changes any of an agent's name, pet and model, and whether it is muted or hidden. */
+  app.patch("/agents/:id", async (c) => {
+    const agent = ownAgent(c.var.person, c.req.param("id"));
+    if (!agent) return c.json({ error: "No such agent." }, 404);
+    const { name, petId, model, muted, hidden } = await c.req.json<{ name?: string; petId?: string; model?: string; muted?: boolean; hidden?: boolean }>();
+    const changes: AgentChanges = {};
+    if (name !== undefined) {
+      if (!name.trim()) return c.json({ error: "An agent needs a name." }, 400);
+      changes.name = name.trim();
+    }
+    if (petId !== undefined) {
+      if (!store.petSheet(petId)) return c.json({ error: "No such pet." }, 400);
+      changes.pet_id = petId;
+    }
+    if (model !== undefined) {
+      if (!Object.hasOwn(MODELS, model)) return c.json({ error: "No such model." }, 400);
+      changes.model = model as Model;
+    }
+    if (typeof muted === "boolean") changes.muted = muted;
+    if (typeof hidden === "boolean") changes.hidden = hidden;
+    store.updateAgent(agent, changes);
+    return c.json(store.agentWithLatest(agent.id));
+  });
+
+  /** Removes an agent with everything it had. A turn it is running is stopped first. */
+  app.delete("/agents/:id", async (c) => {
+    const agent = ownAgent(c.var.person, c.req.param("id"));
+    if (!agent) return c.json({ error: "No such agent." }, 404);
+    await queue.stop(agent.id);
+    store.deleteAgent(agent, c.var.person);
+    return c.json({});
+  });
+
+  app.get("/agents/:id/about", (c) => {
+    const agent = ownAgent(c.var.person, c.req.param("id"));
+    if (!agent) return c.json({ error: "No such agent." }, 404);
+    return c.json(store.about(agent.id));
+  });
+
+  app.delete("/agents/:id/jobs/:job", (c) => {
+    const agent = ownAgent(c.var.person, c.req.param("id"));
+    if (!agent || !store.removeJob(agent.id, c.req.param("job"))) return c.json({ error: "No such job." }, 404);
+    return c.json({});
+  });
+
   app.get("/agents/:id/messages", (c) => {
     const agent = ownAgent(c.var.person, c.req.param("id"));
     if (!agent) return c.json({ error: "No such agent." }, 404);
-    return c.json(store.messages(agent.id, c.req.query("after")));
+    return c.json(store.messages(agent.id, { after: c.req.query("after"), before: c.req.query("before") }));
   });
 
-  /** A message arrives as a form, with `body` for the text and `files` for anything sent with it. Text alone can come as JSON. */
+  /**
+   * A message arrives as a form, with `body` for the text, `files` for anything
+   * sent with it, and `replyTo` for the message it answers. Text alone can come as JSON.
+   */
   app.post("/agents/:id/messages", bodyLimit({ maxSize: MESSAGE_BYTES }), async (c) => {
     const agent = ownAgent(c.var.person, c.req.param("id"));
     if (!agent) return c.json({ error: "No such agent." }, 404);
@@ -67,7 +116,8 @@ export function createApi(store: Store, queue: Queue) {
     const files = [form.files].flat().filter((file) => file instanceof File);
     if (!body && files.length === 0) return c.json({ error: "A message needs some text or a file." }, 400);
     const uploads = await Promise.all(files.map(async (file) => ({ name: file.name, bytes: new Uint8Array(await file.arrayBuffer()) })));
-    const message = store.addMessage(agent.id, "person", body, "queued", uploads);
+    const replyTo = typeof form.replyTo === "string" ? store.message(agent.id, form.replyTo)?.id : undefined;
+    const message = store.addMessage(agent.id, "person", body, "queued", { files: uploads, replyTo });
     void queue.kick(agent.id);
     return c.json(message, 201);
   });

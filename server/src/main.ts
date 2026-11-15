@@ -40,6 +40,7 @@ if (process.argv[2] === "push-key") {
 store.installStarterPets(join(dirname(fileURLToPath(import.meta.url)), "..", "..", "pets"));
 const queue = createQueue(store, claudeTurn);
 for (const agentId of store.requeueInterrupted()) void queue.kick(agentId);
+queue.startClock();
 
 const pushKey = store.pushKey();
 if (pushKey) startPush(store, apns(pushKey));

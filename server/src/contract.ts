@@ -1,5 +1,5 @@
-// The shapes the server sends over HTTP. The mobile app imports these types,
-// so this file imports nothing.
+// The shapes the server sends over HTTP, and how they read in words. The
+// mobile app imports this file, so it imports nothing.
 
 export type Sender = "person" | "agent" | "simon";
 export type Status = "queued" | "running" | "done" | "failed";
@@ -16,11 +16,39 @@ export type Message = {
    * start, the state of replacing the session. A failure notice is `failed`.
    */
   status: Status;
+  /** The earlier message this one answers, when the person replied to one. */
+  reply_to: string | null;
+  /** The job whose run sent it, for a message the agent sent by itself. */
+  job_id: string | null;
   created_at: number;
 };
 
-/** `read_at` is the time up to which the person has read the chat. */
-export type Agent = { id: string; person_id: string; name: string; pet_id: string; session_id: string | null; read_at: number; created_at: number };
+/**
+ * The models an agent can run on, by the names Claude Code gives them and the
+ * names the app shows. Each name always means the newest model of its kind.
+ */
+export const MODELS = { fable: "Fable", opus: "Opus", sonnet: "Sonnet", haiku: "Haiku" } as const;
+export type Model = keyof typeof MODELS;
+/** The model a new agent starts on. */
+export const DEFAULT_MODEL: Model = "opus";
+
+/**
+ * `read_at` is the time up to which the person has read the chat. A `muted`
+ * agent sends no notifications. A `hidden` one is kept off the home screen
+ * until it next has something to say.
+ */
+export type Agent = {
+  id: string;
+  person_id: string;
+  name: string;
+  pet_id: string;
+  model: Model;
+  muted: boolean;
+  hidden: boolean;
+  session_id: string | null;
+  read_at: number;
+  created_at: number;
+};
 /**
  * An agent as the home screen shows it. `working` is true while it has a turn
  * queued or running. `unread` counts the replies and failure notices the
@@ -29,6 +57,32 @@ export type Agent = { id: string; person_id: string; name: string; pet_id: strin
 export type AgentWithLatest = Agent & { latest: Message | null; working: boolean; unread: number };
 /** A message found by a search, with the name of the agent whose chat it is in. */
 export type Found = { id: string; agent_id: string; agent: string; sender: Sender; body: string; created_at: number };
+/**
+ * When a job runs, by the server's clock: every so many minutes, at a time of
+ * day on some weekdays (0 is Sunday) or on all of them, or once.
+ */
+export type Schedule = { type: "every"; minutes: number } | { type: "daily"; time: string; weekdays?: number[] } | { type: "once"; at: number };
+/** Work an agent does by itself. `what` is the agent's own instructions for a run, and `next_at` is when it next runs. */
+export type Job = { id: string; agent_id: string; what: string; schedule: Schedule; next_at: number; created_at: number };
+/** Something an agent has learned, from its memory folder. */
+export type Memory = { name: string; description: string; body: string };
+/** What an agent's page shows about it: the instructions it follows, what it remembers and its jobs. */
+export type About = { instructions: string; memories: Memory[]; jobs: Job[] };
+
+const WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+
+/** A schedule in words, such as "Every 5 minutes" or "Mon, Wed at 08:00". */
+export function scheduleWords(schedule: Schedule): string {
+  if (schedule.type === "every") return schedule.minutes === 1 ? "Every minute" : `Every ${schedule.minutes} minutes`;
+  if (schedule.type === "daily") {
+    const days = schedule.weekdays?.length ? [...schedule.weekdays].sort().map((day) => WEEKDAYS[day]).join(", ") : "Every day";
+    return `${days} at ${schedule.time}`;
+  }
+  const at = new Date(schedule.at);
+  const two = (value: number) => String(value).padStart(2, "0");
+  return `Once, ${at.getDate()} ${at.toLocaleString("en", { month: "short" })} at ${two(at.getHours())}:${two(at.getMinutes())}`;
+}
+
 /** What the event stream sends when a message is added or changes status. */
 export type MessageEvent = { message: Message; agent: AgentWithLatest };
 /** A phone that takes notifications: its Apple device token, the app identifier Apple delivers to, and which of Apple's push services issued the token. */

@@ -1,16 +1,21 @@
 // The store owns the database and the agent folders. Nothing else touches
 // SQLite or ~/.simon.
 
-import { cpSync, existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { basename, join } from "node:path";
 import { randomUUID } from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
 
-import type { Agent, AgentWithLatest, Device, Found, Message, Pet, Sender, Status } from "./contract.ts";
+import { DEFAULT_MODEL } from "./contract.ts";
+import type { About, Agent, AgentWithLatest, Device, Found, Job, Memory, Message, Pet, Schedule, Sender, Status } from "./contract.ts";
 
 export type Person = { id: string; name: string; tailscale_login: string; claude_config_dir: string };
 /** A file as it arrives with a message. */
 export type Upload = { name: string; bytes: Uint8Array };
+/** What a message can carry besides its text: files, the message it answers, and the job that sent it. */
+export type Extras = { files?: Upload[]; replyTo?: string; jobId?: string };
+/** What the person can change about an agent. */
+export type AgentChanges = Partial<Pick<Agent, "name" | "pet_id" | "model" | "muted" | "hidden">>;
 /** The key Apple gives a developer account for sending notifications, with the key's ID and the account's team ID. */
 export type PushKey = { keyId: string; teamId: string; key: string };
 
@@ -26,6 +31,9 @@ create table if not exists agents (
   person_id   text not null references people(id),
   name        text not null,
   pet_id      text not null,
+  model       text not null default 'opus',
+  muted       integer not null default 0,
+  hidden      integer not null default 0,
   session_id  text,
   read_at     integer not null default 0,
   created_at  integer not null
@@ -37,6 +45,16 @@ create table if not exists messages (
   body        text not null,
   attachments text not null default '[]',
   status      text not null check (status in ('queued', 'running', 'done', 'failed')),
+  reply_to    text,
+  job_id      text,
+  created_at  integer not null
+);
+create table if not exists jobs (
+  id          text primary key,
+  agent_id    text not null references agents(id),
+  what        text not null,
+  schedule    text not null,
+  next_at     integer not null,
   created_at  integer not null
 );
 create table if not exists devices (
@@ -47,6 +65,17 @@ create table if not exists devices (
 );
 `;
 
+// Columns added to tables since the first database. A database made before one
+// gets it here, in order, and counts how many it has in `user_version`. A new
+// database has them all from SCHEMA.
+const ADDED_COLUMNS = [
+  "alter table agents add column model text not null default 'opus'",
+  "alter table agents add column muted integer not null default 0",
+  "alter table agents add column hidden integer not null default 0",
+  "alter table messages add column reply_to text",
+  "alter table messages add column job_id text",
+];
+
 const PAGE = 50;
 const SEARCH_LIMIT = 20;
 const PET_ID = /^[a-z0-9-]+$/;
@@ -56,6 +85,18 @@ const ATTACHMENT_NAME = /^[\w-][\w.-]*$/;
 /** A message as SQLite holds it, with its attachments as JSON text. */
 type Row = Omit<Message, "attachments"> & { attachments: string };
 const toMessage = (row: Row): Message => ({ ...row, attachments: JSON.parse(row.attachments) as string[] });
+/** An agent as SQLite holds it, with yes and no as 1 and 0. */
+type AgentRow = Omit<Agent, "muted" | "hidden"> & { muted: number; hidden: number };
+const toAgent = (row: AgentRow): Agent => ({ ...row, muted: row.muted === 1, hidden: row.hidden === 1 });
+type JobRow = Omit<Job, "schedule"> & { schedule: string };
+const toJob = (row: JobRow): Job => ({ ...row, schedule: JSON.parse(row.schedule) as Schedule });
+
+/** A memory file as Claude Code writes one: a name and a description between `---` lines, then the memory itself. */
+function toMemory(file: string, text: string): Memory {
+  const [, head = "", body = text] = /^---\n([\s\S]*?)\n---\n?([\s\S]*)$/.exec(text) ?? [];
+  const field = (name: string) => new RegExp(`^${name}:\\s*"?(.*?)"?\\s*$`, "m").exec(head)?.[1] ?? "";
+  return { name: field("name") || file.replace(/\.md$/, ""), description: field("description"), body: body.trim() };
+}
 
 function instructions(agentName: string, personName: string): string {
   return `# ${agentName}
@@ -74,7 +115,11 @@ export function openStore(home: string) {
   mkdirSync(join(home, "agents"), { recursive: true });
   const db = new DatabaseSync(join(home, "simon.sqlite"));
   db.exec("pragma journal_mode = wal; pragma foreign_keys = on;");
+  const made = db.prepare("select 1 from sqlite_master where name = 'agents'").get() !== undefined;
   db.exec(SCHEMA);
+  const { user_version: has } = db.prepare("pragma user_version").get() as { user_version: number };
+  for (const column of made ? ADDED_COLUMNS.slice(has) : []) db.exec(column);
+  db.exec(`pragma user_version = ${ADDED_COLUMNS.length}`);
 
   const agentHome = (agentId: string) => join(home, "agents", agentId);
   const petsHome = join(home, "pets");
@@ -93,6 +138,11 @@ export function openStore(home: string) {
   const unread = db.prepare(
     "select count(*) as unread from messages where agent_id = ? and created_at > ? and (sender = 'agent' or (sender = 'simon' and status = 'failed'))",
   );
+  const agentById = (id: string): Agent | undefined => {
+    const row = db.prepare("select * from agents where id = ?").get(id) as AgentRow | undefined;
+    return row && toAgent(row);
+  };
+  const jobsFor = (agentId: string): Job[] => (db.prepare("select * from jobs where agent_id = ? order by next_at").all(agentId) as JobRow[]).map(toJob);
   const withLatest = (agent: Agent): AgentWithLatest => ({
     ...agent,
     latest: one("select * from messages where agent_id = ? order by rowid desc limit 1", agent.id) ?? null,
@@ -152,16 +202,28 @@ export function openStore(home: string) {
 
     createAgent(person: Person, name: string, petId: string): Agent {
       const now = Date.now();
-      const agent: Agent = { id: randomUUID(), person_id: person.id, name, pet_id: petId, session_id: null, read_at: now, created_at: now };
+      const agent: Agent = {
+        id: randomUUID(),
+        person_id: person.id,
+        name,
+        pet_id: petId,
+        model: DEFAULT_MODEL,
+        muted: false,
+        hidden: false,
+        session_id: null,
+        read_at: now,
+        created_at: now,
+      };
       const folder = agentHome(agent.id);
       mkdirSync(join(folder, "memory"), { recursive: true });
       mkdirSync(join(folder, "attachments"), { recursive: true });
       writeFileSync(join(folder, "CLAUDE.md"), instructions(name, person.name));
-      db.prepare("insert into agents (id, person_id, name, pet_id, session_id, read_at, created_at) values (?, ?, ?, ?, ?, ?, ?)").run(
+      db.prepare("insert into agents (id, person_id, name, pet_id, model, session_id, read_at, created_at) values (?, ?, ?, ?, ?, ?, ?, ?)").run(
         agent.id,
         agent.person_id,
         agent.name,
         agent.pet_id,
+        agent.model,
         null,
         agent.read_at,
         agent.created_at,
@@ -169,21 +231,96 @@ export function openStore(home: string) {
       return agent;
     },
 
-    agent(id: string): Agent | undefined {
-      return db.prepare("select * from agents where id = ?").get(id) as Agent | undefined;
-    },
+    agent: agentById,
 
     agentWithLatest(id: string): AgentWithLatest | undefined {
-      const agent = db.prepare("select * from agents where id = ?").get(id) as Agent | undefined;
+      const agent = agentById(id);
       return agent && withLatest(agent);
     },
 
     /** The person's agents, each with its latest message, most recent chat first. */
     agentsFor(personId: string): AgentWithLatest[] {
-      const agents = db.prepare("select * from agents where person_id = ?").all(personId) as Agent[];
+      const agents = (db.prepare("select * from agents where person_id = ?").all(personId) as AgentRow[]).map(toAgent);
       return agents
         .map(withLatest)
         .sort((a, b) => (b.latest?.created_at ?? b.created_at) - (a.latest?.created_at ?? a.created_at));
+    },
+
+    /** Changes an agent's name, pet, model, or whether it is muted or hidden. A new name is written into the agent's instructions where they say who it is. */
+    updateAgent(agent: Agent, changes: AgentChanges): void {
+      const columns = Object.keys(changes) as (keyof AgentChanges)[];
+      if (columns.length === 0) return;
+      const values = columns.map((column) => (typeof changes[column] === "boolean" ? Number(changes[column]) : changes[column]!));
+      db.prepare(`update agents set ${columns.map((column) => `${column} = ?`).join(", ")} where id = ?`).run(...values, agent.id);
+      if (changes.name === undefined || changes.name === agent.name) return;
+      const path = join(agentHome(agent.id), "CLAUDE.md");
+      const text = readFileSync(path, "utf8");
+      writeFileSync(path, text.replace(`# ${agent.name}\n`, `# ${changes.name}\n`).replace(`You are ${agent.name},`, `You are ${changes.name},`));
+    },
+
+    /**
+     * Removes an agent and everything it had: its messages, its jobs, its home
+     * folder, and the sessions Claude Code kept for it. Claude Code keeps a
+     * folder's sessions in its config folder, under `projects`, in a folder
+     * named after the path with every other character turned into a dash.
+     */
+    deleteAgent(agent: Agent, person: Person): void {
+      db.prepare("delete from jobs where agent_id = ?").run(agent.id);
+      db.prepare("delete from messages where agent_id = ?").run(agent.id);
+      db.prepare("delete from agents where id = ?").run(agent.id);
+      rmSync(agentHome(agent.id), { recursive: true, force: true });
+      rmSync(join(person.claude_config_dir, "projects", agentHome(agent.id).replace(/[^a-zA-Z0-9]/g, "-")), { recursive: true, force: true });
+    },
+
+    /** The instructions an agent follows, what it remembers and its jobs. */
+    about(agentId: string): About {
+      const folder = agentHome(agentId);
+      const read = (path: string) => (existsSync(path) ? readFileSync(path, "utf8") : "");
+      const memory = join(folder, "memory");
+      // MEMORY.md is Claude Code's list of the other files.
+      const files = existsSync(memory) ? readdirSync(memory).filter((file) => file.endsWith(".md") && file !== "MEMORY.md") : [];
+      return {
+        instructions: read(join(folder, "CLAUDE.md")),
+        memories: files.sort().map((file) => toMemory(file, read(join(memory, file)))),
+        jobs: jobsFor(agentId),
+      };
+    },
+
+    addJob(agentId: string, what: string, schedule: Schedule, nextAt: number): Job {
+      const job: Job = { id: randomUUID().slice(0, 8), agent_id: agentId, what, schedule, next_at: nextAt, created_at: Date.now() };
+      db.prepare("insert into jobs (id, agent_id, what, schedule, next_at, created_at) values (?, ?, ?, ?, ?, ?)").run(
+        job.id,
+        job.agent_id,
+        job.what,
+        JSON.stringify(schedule),
+        job.next_at,
+        job.created_at,
+      );
+      return job;
+    },
+
+    /** The agent's jobs, the next to run first. */
+    jobs: jobsFor,
+
+    /** Removes one of the agent's jobs. False when the agent has no such job. */
+    removeJob(agentId: string, jobId: string): boolean {
+      return db.prepare("delete from jobs where id = ? and agent_id = ?").run(jobId, agentId).changes > 0;
+    },
+
+    setJobNext(jobId: string, nextAt: number): void {
+      db.prepare("update jobs set next_at = ? where id = ?").run(nextAt, jobId);
+    },
+
+    /** The agent's job that has waited longest past its time. */
+    dueJob(agentId: string, now: number): Job | undefined {
+      const row = db.prepare("select * from jobs where agent_id = ? and next_at <= ? order by next_at limit 1").get(agentId, now) as JobRow | undefined;
+      return row && toJob(row);
+    },
+
+    /** The agents with a job whose time has come. */
+    agentsWithDueJobs(now: number): string[] {
+      const rows = db.prepare("select distinct agent_id from jobs where next_at <= ?").all(now) as { agent_id: string }[];
+      return rows.map((row) => row.agent_id);
     },
 
     /** Records that the person has read everything in the chat so far. */
@@ -195,24 +332,43 @@ export function openStore(home: string) {
       db.prepare("update agents set session_id = ? where id = ?").run(sessionId, agentId);
     },
 
-    /** Saves a message, with any files sent with it written into the agent's `attachments/` folder. */
-    addMessage(agentId: string, sender: Sender, body: string, status: Status, files: Upload[] = []): Message {
+    /**
+     * Saves a message, with any files sent with it written into the agent's
+     * `attachments/` folder. A reply or a failure notice brings a hidden agent
+     * back to the home screen, unless the agent is muted.
+     */
+    addMessage(agentId: string, sender: Sender, body: string, status: Status, { files = [], replyTo, jobId }: Extras = {}): Message {
       const attachments = files.map((file) => {
         // A name keeps its letters, digits, dots and dashes. Anything else becomes a dash, as does a %20 the phone wrote for a space.
         const name = `${randomUUID().slice(0, 8)}-${basename(file.name).replace(/(?:%[0-9a-f]{2}|[^\w.-])+/gi, "-")}`;
         writeFileSync(join(agentHome(agentId), "attachments", name), file.bytes);
         return `attachments/${name}`;
       });
-      const message: Message = { id: randomUUID(), agent_id: agentId, sender, body, attachments, status, created_at: Date.now() };
-      db.prepare("insert into messages (id, agent_id, sender, body, attachments, status, created_at) values (?, ?, ?, ?, ?, ?, ?)").run(
+      const message: Message = {
+        id: randomUUID(),
+        agent_id: agentId,
+        sender,
+        body,
+        attachments,
+        status,
+        reply_to: replyTo ?? null,
+        job_id: jobId ?? null,
+        created_at: Date.now(),
+      };
+      db.prepare("insert into messages (id, agent_id, sender, body, attachments, status, reply_to, job_id, created_at) values (?, ?, ?, ?, ?, ?, ?, ?, ?)").run(
         message.id,
         message.agent_id,
         message.sender,
         message.body,
         JSON.stringify(attachments),
         message.status,
+        message.reply_to,
+        message.job_id,
         message.created_at,
       );
+      if (sender === "agent" || (sender === "simon" && status === "failed")) {
+        db.prepare("update agents set hidden = 0 where id = ? and muted = 0").run(agentId);
+      }
       changed(message);
       return message;
     },
@@ -230,12 +386,41 @@ export function openStore(home: string) {
       if (message) changed(message);
     },
 
-    /** Everything after a known message, oldest first, or the latest page. */
-    messages(agentId: string, after?: string): Message[] {
+    /** Oldest first: everything after a known message, the page before one, or the latest page. */
+    messages(agentId: string, { after, before }: { after?: string; before?: string } = {}): Message[] {
       if (after) {
         return many("select * from messages where agent_id = ? and rowid > (select rowid from messages where id = ?) order by rowid", agentId, after);
       }
+      if (before) {
+        return many(
+          "select * from messages where agent_id = ? and rowid < (select rowid from messages where id = ?) order by rowid desc limit ?",
+          agentId,
+          before,
+          PAGE,
+        ).reverse();
+      }
       return many("select * from messages where agent_id = ? order by rowid desc limit ?", agentId, PAGE).reverse();
+    },
+
+    /** A message, if it is in the agent's chat. */
+    message(agentId: string, id: string): Message | undefined {
+      return one("select * from messages where id = ? and agent_id = ?", id, agentId);
+    },
+
+    /**
+     * What the agent's jobs have sent since the agent last replied in the
+     * chat, before a message, oldest first. The session a reply comes from
+     * never saw them.
+     */
+    sentByJobsBefore(messageId: string): Message[] {
+      return many(
+        `select * from messages where sender = 'agent' and job_id is not null
+           and agent_id = (select agent_id from messages where id = ?1) and rowid < (select rowid from messages where id = ?1)
+           and rowid > coalesce((select max(rowid) from messages where sender = 'agent' and job_id is null
+             and agent_id = (select agent_id from messages where id = ?1) and rowid < (select rowid from messages where id = ?1)), 0)
+         order by rowid`,
+        messageId,
+      );
     },
 
     /** The last few things the person and the agent said before a message, oldest first. */

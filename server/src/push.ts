@@ -21,13 +21,14 @@ const BODY_CHARS = 600;
 // The app's own sound, which it carries in its bundle.
 const SOUND = "simon.wav";
 
-/** Tells the person's phones when an agent replies or a turn fails. Returns a function that stops it. */
+/** Tells the person's phones when an agent replies or a turn fails, unless the agent is muted. Returns a function that stops it. */
 export function startPush(store: Store, send: SendPush): () => void {
   return store.onMessage((message) => {
     const finished = message.sender === "agent" || (message.sender === "simon" && message.status === "failed");
     const agent = finished ? store.agent(message.agent_id) : undefined;
-    if (!agent) return;
-    const badge = store.agentsFor(agent.person_id).reduce((total, each) => total + each.unread, 0);
+    if (!agent || agent.muted) return;
+    // A muted agent's unread replies show on its own row, and never on the app's icon.
+    const badge = store.agentsFor(agent.person_id).reduce((total, each) => total + (each.muted ? 0 : each.unread), 0);
     const notice: Notice = { title: agent.name, body: message.body.slice(0, BODY_CHARS), badge, agentId: agent.id, messageId: message.id };
     for (const device of store.devicesFor(agent.person_id)) {
       void send(device, notice).then((result) => {
