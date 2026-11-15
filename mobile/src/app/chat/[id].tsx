@@ -188,8 +188,8 @@ function ChatWith({ agent }: { agent: AgentWithLatest }) {
         onFreshStart={() => void freshStart(agent.id).catch((failure) => problem("Couldn't start fresh", failure))}
       />
       <KeyboardStickyView offset={{ closed: 0, opened: keyboardOffset }} style={styles.sticky}>
-        {/* Messages show through the glass composer, and fade out in the gap below it, solid over the home indicator. */}
-        <EdgeFade edge="bottom" height={insets.bottom + COMPOSER_GAP + 16} solid={insets.bottom} />
+        {/* Messages show through the glass composer, and fade out evenly from it to the screen's bottom edge. */}
+        <EdgeFade edge="bottom" height={insets.bottom + COMPOSER_GAP + 16} solid={0} />
         <View style={[styles.composer, { paddingBottom: insets.bottom + COMPOSER_GAP }]} onLayout={(event) => contentInsetEndAdjustment.set(event.nativeEvent.layout.height)}>
           {replyTo ? (
             <Glass style={[styles.replying, { borderColor: theme.line }]}>
