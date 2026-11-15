@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, statSync, writeFileSync } from "node:fs";
 import { DatabaseSync } from "node:sqlite";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -122,6 +122,59 @@ test("a failed turn keeps the message and adds a note from Simon saying why", as
       ["simon", "Simon couldn't finish this. You've reached your usage limit.", "failed"],
     ],
   );
+});
+
+test("a person with an API key has every turn, job and fresh start run on it, and the key reaches nothing the phone sees", async () => {
+  const KEY = "sk-ant-robins-key";
+  let time = new Date(2026, 10, 16, 9, 0).getTime();
+  const turns: Turn[] = [];
+  const { home, store, queue, call, say } = setup(async (turn) => {
+    turns.push(turn);
+    if (turn.prompt.text === "watch the price") turn.scheduleJob({ what: "Check the price.", every_minutes: 5 });
+    if (turn.prompt.text.endsWith("buy it")) throw new Error(`Anthropic refused ${KEY}.`);
+    return reply("ok");
+  }, () => time);
+  store.setApiKey(store.personByLogin(HER)!.id, KEY);
+  assert.equal(statSync(join(home, "api-keys.json")).mode & 0o777, 0o600);
+  const notices: Notice[] = [];
+  startPush(store, async (_device, notice) => {
+    notices.push(notice);
+    return "sent";
+  });
+  await call(HER, "POST", "/devices", { token: "c".repeat(64), topic: "com.example.simon", environment: "production" });
+
+  const hers = (await call(HER, "POST", "/agents", { name: "Scout", avatarId: "moss" })).json;
+  await say(HER, hers.id, "watch the price");
+  await queue.kick(hers.id);
+  time += 5 * 60_000;
+  await queue.kick(hers.id);
+  await call(HER, "POST", `/agents/${hers.id}/fresh-start`);
+  await queue.kick(hers.id);
+  await say(HER, hers.id, "buy it");
+  await queue.kick(hers.id);
+
+  // A message, a job's run, the save before a fresh start, and a turn that fails.
+  assert.deepEqual(
+    turns.map((turn) => [turn.prompt.text.slice(0, 20), turn.apiKey, turn.configDir]),
+    [
+      ["watch the price", KEY, "/config/robin"],
+      ["This is a run of one", KEY, "/config/robin"],
+      ["This session is abou", KEY, "/config/robin"],
+      ["This is a fresh sess", KEY, "/config/robin"],
+    ],
+  );
+
+  // Alex has no key, so his turns run on the Claude login in his config folder.
+  const mine = (await call(ME, "POST", "/agents", { name: "Gym", avatarId: "hop" })).json;
+  await say(ME, mine.id, "hello");
+  await queue.kick(mine.id);
+  assert.deepEqual([turns[4].apiKey, turns[4].configDir], [undefined, "/config/alex"]);
+
+  const messages = (await call(HER, "GET", `/agents/${hers.id}/messages`)).json;
+  assert.equal(messages.at(-1).body, "Simon couldn't finish this. Anthropic refused your API key.");
+  // The same notice goes to the home screen and to the phone as a notification.
+  const sent = [messages, (await call(HER, "GET", "/agents")).json, notices];
+  assert.equal(JSON.stringify(sent).includes(KEY), false);
 });
 
 test("each person only reaches their own agents", async () => {

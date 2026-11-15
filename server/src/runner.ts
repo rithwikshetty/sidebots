@@ -32,6 +32,8 @@ export type Turn = {
   cwd: string;
   sessionId: string | null;
   configDir: string;
+  /** The person's Anthropic API key. Without one, the turn runs on the Claude login in `configDir`. */
+  apiKey?: string;
   model: Model;
   effort: Effort;
   /** False for a job's run, whose session nothing comes back to. */
@@ -102,10 +104,11 @@ function inbox() {
 }
 
 /**
- * Runs a turn through Claude Code, signed in as the person who owns the
- * agent. The session stays open while the turn runs, so a message the person
- * sends meanwhile goes into it: Claude Code reads it at its next pause between
- * steps, and its reply answers both. One that arrives as the turn is finishing
+ * Runs a turn through Claude Code, paid for by the person who owns the agent:
+ * on their API key when they have one, and otherwise on the Claude login in
+ * their config folder. The session stays open while the turn runs, so a
+ * message the person sends meanwhile goes into it: Claude Code reads it at its
+ * next pause between steps, and its reply answers both. One that arrives as the turn is finishing
  * gets a reply of its own in the same session. The session closes once every
  * message sent to it has its reply and no background work the agent started,
  * such as a long command, is still running. When such work finishes, Claude
@@ -120,6 +123,7 @@ export const claudeTurn: RunTurn = async ({
   cwd,
   sessionId,
   configDir,
+  apiKey,
   model,
   effort,
   keepSession,
@@ -206,7 +210,8 @@ export const claudeTurn: RunTurn = async ({
       model,
       effort,
       abortController: stop,
-      env: { ...process.env, CLAUDE_CONFIG_DIR: configDir },
+      // Claude Code uses a key in its environment ahead of a login in the config folder.
+      env: { ...process.env, CLAUDE_CONFIG_DIR: configDir, ...(apiKey && { ANTHROPIC_API_KEY: apiKey }) },
       settingSources: ["user", "project"],
       // Claude Code's full prompt. Left out, the SDK gives a short one that says nothing of memory.
       systemPrompt: { type: "preset", preset: "claude_code" },
@@ -355,6 +360,7 @@ export function createQueue(store: Store, runTurn: RunTurn, now: () => number = 
       const agent = store.agent(agentId);
       const person = agent && store.person(agent.person_id);
       if (!agent || !person) return;
+      const apiKey = store.apiKey(person.id);
       const message = store.nextQueued(agentId);
       const job = message ? undefined : store.dueJob(agentId, now());
       const turn = (text: string, rest: Pick<Turn, "followUps" | "seen" | "replied" | "sendUpdate"> & { id?: string; ofJob?: boolean }) =>
@@ -367,6 +373,7 @@ export function createQueue(store: Store, runTurn: RunTurn, now: () => number = 
           cwd: store.agentHome(agent.id),
           sessionId: rest.ofJob ? null : agent.session_id,
           configDir: person.claude_config_dir,
+          apiKey,
           model: agent.model,
           effort: agent.effort,
           keepSession: !rest.ofJob,
@@ -385,7 +392,11 @@ export function createQueue(store: Store, runTurn: RunTurn, now: () => number = 
           },
           cancelJob: (id) => (store.removeJob(agent.id, id) ? "Removed." : "You have no job with that id."),
         });
-      const reason = (error: unknown) => (error instanceof Error ? error.message : String(error));
+      // Why a turn failed, as the chat says it. An error can quote what the turn ran with, and the person's API key never goes with it.
+      const reason = (error: unknown) => {
+        const words = error instanceof Error ? error.message : String(error);
+        return apiKey ? words.replaceAll(apiKey, "your API key") : words;
+      };
 
       if (job) {
         try {

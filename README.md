@@ -17,7 +17,7 @@ The full design is in [docs/specs/2026-11-15-simon.md](docs/specs/2026-11-15-sim
 
 - A machine that stays on, with [Node](https://nodejs.org) 24 or later, [pnpm](https://pnpm.io) and [Claude Code](https://claude.com/claude-code). It has been run on a Mac.
 - [Tailscale](https://tailscale.com) on that machine and on each phone, in the same tailnet.
-- A Claude subscription for each person.
+- For each person, a Claude subscription or an Anthropic API key.
 - An iPhone, and a Mac with Xcode to build the app. There is no Android build today.
 - A paid Apple Developer account. The app uses push notifications, which a free account can't sign.
 
@@ -34,13 +34,23 @@ Add each person once, with their Tailscale login, their name, and a Claude Code 
 pnpm add-person alex@example.com Alex ~/.claude
 ```
 
-Each person signs in to Claude Code in their own folder themselves:
+Claude Code keeps the person's sessions in that folder and loads their own rules, skills and connections from it. A second person needs a folder of their own, such as `~/.claude-robin`.
+
+Each person's agents then sign in to Claude in one of two ways. [Who pays for the model](#who-pays-for-the-model) says which to use.
+
+With a Claude subscription, the person signs in to Claude Code in their own folder themselves:
 
 ```sh
 CLAUDE_CONFIG_DIR=~/.claude claude
 ```
 
-A second person needs a folder of their own, such as `~/.claude-robin`.
+With an Anthropic API key, the agents sign in with the key and nobody signs in to Claude Code. Put the key in a file, with nothing else in it, and save it for the person:
+
+```sh
+pnpm api-key robin@example.com ~/robin-key.txt
+```
+
+Simon copies the key into `~/.simon/api-keys.json`, which only your account can read, so delete your file afterwards. The person's agents run on the key from their next turn, even if their folder is also signed in to a subscription. Saving another key replaces it. Simon never puts the key in a log, a reply or a failure notice, but an agent's own commands can read the key it runs on, as they can any of your account's files.
 
 Start the server, then publish it to your tailnet:
 
@@ -51,7 +61,7 @@ tailscale serve --bg --https=443 http://127.0.0.1:4317
 
 The server listens on `127.0.0.1:4317` only. The app's server address is the machine's Tailscale name, such as `macbook.your-tailnet.ts.net`. If something else on the machine already uses port 443, publish Simon on another one, such as `--https=8443`, and add it to the address: `macbook.your-tailnet.ts.net:8443`.
 
-Two settings change where things live: `PORT` for the port, and `SIMON_HOME` for the data folder, which is `~/.simon` unless you set it. That folder holds the database, each agent's home folder with its instructions, memory and attachments, the avatars and the push key. If you set `SIMON_HOME` for the server, set it for `add-person` and `push-key` too.
+Two settings change where things live: `PORT` for the port, and `SIMON_HOME` for the data folder, which is `~/.simon` unless you set it. That folder holds the database, each agent's home folder with its instructions, memory and attachments, the avatars, the API keys and the push key. If you set `SIMON_HOME` for the server, set it for `add-person`, `api-key` and `push-key` too.
 
 To keep the server running on a Mac, use a launchd agent with `RunAtLoad` and `KeepAlive` set, `server/` as its working directory, and the full path to `node` running `src/main.ts`. Keep the code outside `~/Downloads`, `~/Documents` and `~/Desktop`, which macOS doesn't let a background service read.
 
@@ -87,7 +97,12 @@ The app asks for the server's address the first time it opens. For other people'
 
 ## Who pays for the model
 
-Each person's agents run on that person's own Claude subscription, through their own Claude Code sign-in. Simon never reads, stores or passes on a sign-in. Anthropic's terms decide what a subscription may be used for, so read them before you set Simon up for anyone but yourself.
+Each person pays for their own agents, in one of two ways:
+
+- **A Claude subscription.** The agents run through the person's own Claude Code sign-in and use that subscription's limits. Simon never reads, stores or passes on a sign-in.
+- **An Anthropic API key.** Anthropic bills the key's account for what the agents use. The key is from the [Claude Console](https://platform.claude.com), and Simon keeps it in `~/.simon` on your machine.
+
+Anthropic's terms decide which you may use. A subscription is for the subscriber's own use. For a product built on the Agent SDK, as Simon is, Anthropic [asks for API keys](https://code.claude.com/docs/en/agent-sdk/overview) and doesn't allow Claude sign-ins to be offered to its users without its approval. So read the terms before you set Simon up for anyone but yourself, and when in doubt give each person an API key.
 
 ## Working on Simon
 
@@ -96,7 +111,7 @@ Each person's agents run on that person's own Claude subscription, through their
 (cd mobile && pnpm typecheck)
 ```
 
-The server's tests run through its HTTP routes with the model swapped for a fake, so they need no Claude sign-in. The app imports the server's wire types from `server/src/contract.ts`.
+The server's tests run through its HTTP routes with the model swapped for a fake, so they need no Claude sign-in or API key. The app imports the server's wire types from `server/src/contract.ts`.
 
 ## Licence
 
