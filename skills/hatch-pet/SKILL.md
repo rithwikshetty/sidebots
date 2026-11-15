@@ -1,6 +1,6 @@
 ---
 name: hatch-pet
-description: Make a new animated pixel pet for a Julius agent from a drawing, a photo or a description. Use when the person sends a drawing or picture for a pet or avatar, asks for a new pet or one that looks like something, or wants a pet's look changed.
+description: Make a new animated pixel pet for a Simon agent from a drawing, a photo or a description. Use when the person sends a drawing or picture for a pet or avatar, asks for a new pet or one that looks like something, or wants a pet's look changed.
 ---
 
 # Hatch pet
@@ -10,9 +10,9 @@ A pet is a 16 by 16 pixel character. You draw it once as a grid of letters. `ren
 ## Steps
 
 1. Pick a short name and a one-sentence description. If the person sent a drawing or photo, look at it and take the shape, colours and one or two signature details from it. A drawing is the person's own design, so keep its silhouette and colours as close as 16 by 16 pixels allow.
-2. Make a folder `~/.julius/pets/<id>/`, where `<id>` is the name in lowercase with hyphens.
+2. Make a folder `~/.simon/pets/<id>/`, where `<id>` is the name in lowercase with hyphens.
 3. Write `design.json` in that folder, following the format below.
-4. Run `node <this skill's folder>/render.ts ~/.julius/pets/<id>`. Fix any error it prints and run it again.
+4. Run `node <this skill's folder>/render.ts ~/.simon/pets/<id>`. Fix any error it prints and run it again.
 5. Open `spritesheet.png` and look at it. Check that the pet reads as one clear character, that the eyes sit on the face in every row, and that nothing is cut off at the top. Redraw and render again until it does.
 6. Reply that the pet is ready, using its name.
 
