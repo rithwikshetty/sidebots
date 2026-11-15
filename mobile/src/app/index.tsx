@@ -106,7 +106,7 @@ export default function Home() {
       />
       <EdgeFade edge="top" height={insets.top + SEARCH_HEIGHT + 16} solid={insets.top + SEARCH_HEIGHT} />
       <View style={[styles.search, { top: insets.top }]}>
-        <Glass style={[styles.searchGlass, { borderColor: theme.line }]}>
+        <Glass style={styles.searchGlass}>
           <Search size={18} strokeWidth={2.25} color={theme.ink2} />
           <TextInput
             value={typed}
@@ -243,7 +243,7 @@ function foundLine(found: Found, search: string): string {
 const styles = StyleSheet.create({
   screen: { flex: 1 },
   search: { position: "absolute", left: 16, right: 16, zIndex: 2 },
-  searchGlass: { height: SEARCH_HEIGHT, borderRadius: SEARCH_HEIGHT / 2, flexDirection: "row", alignItems: "center", gap: 8, paddingLeft: 14, paddingRight: 8, borderWidth: StyleSheet.hairlineWidth, overflow: "hidden" },
+  searchGlass: { height: SEARCH_HEIGHT, borderRadius: SEARCH_HEIGHT / 2, flexDirection: "row", alignItems: "center", gap: 8, paddingLeft: 14, paddingRight: 8, overflow: "hidden" },
   searchText: { flex: 1, height: SEARCH_HEIGHT, fontSize: 17, padding: 0 },
   empty: { textAlign: "center", fontSize: 15, marginTop: 32 },
   add: { position: "absolute", right: 20, zIndex: 2 },

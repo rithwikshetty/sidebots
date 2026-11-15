@@ -73,7 +73,7 @@ export function ChatHeader({ name, petId, petState, dimmed, onBack, onAbout, onF
           <View style={styles.pet}>
             <PetView petId={petId} state={petState} size={PET} dimmed={dimmed} />
           </View>
-          <Glass interactive style={[styles.pill, { borderColor: theme.line }]}>
+          <Glass interactive style={styles.pill}>
             <Text numberOfLines={1} style={[styles.name, { color: theme.ink }]}>
               {name}
             </Text>
@@ -96,7 +96,6 @@ const styles = StyleSheet.create({
     paddingHorizontal: 11,
     paddingVertical: 3,
     borderRadius: 999,
-    borderWidth: StyleSheet.hairlineWidth,
     overflow: "hidden",
     maxWidth: 220,
   },
