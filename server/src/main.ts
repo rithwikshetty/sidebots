@@ -37,7 +37,7 @@ if (process.argv[2] === "push-key") {
   process.exit(0);
 }
 
-store.installStarterPets(join(dirname(fileURLToPath(import.meta.url)), "..", "..", "pets"));
+store.installStarterAvatars(join(dirname(fileURLToPath(import.meta.url)), "..", "..", "avatars"));
 const queue = createQueue(store, claudeTurn);
 for (const agentId of store.requeueInterrupted()) void queue.kick(agentId);
 queue.startClock();

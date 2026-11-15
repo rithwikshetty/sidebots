@@ -22,8 +22,8 @@ export function serverUrl(): string | null {
   return Storage.getItemSync(SERVER_KEY);
 }
 
-export function petSheetUrl(petId: string): string {
-  return `${serverUrl()}/pets/${petId}/spritesheet`;
+export function avatarSheetUrl(avatarId: string): string {
+  return `${serverUrl()}/avatars/${avatarId}/spritesheet`;
 }
 
 /** The address of a file sent with a message, from its path in the agent's folder. */
@@ -63,7 +63,7 @@ export async function connect(address: string): Promise<void> {
   const trimmed = address.trim().replace(/\/+$/, "");
   if (!trimmed) throw new ApiError("Enter the server's address.", 0);
   const base = /^https?:\/\//.test(trimmed) ? trimmed : `https://${trimmed}`;
-  const pets = await request<unknown>("/pets", { base });
-  if (!Array.isArray(pets)) throw new ApiError("That address isn't a Simon server.", 0);
+  const avatars = await request<unknown>("/avatars", { base });
+  if (!Array.isArray(avatars)) throw new ApiError("That address isn't a Simon server.", 0);
   Storage.setItemSync(SERVER_KEY, base);
 }

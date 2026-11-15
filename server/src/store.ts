@@ -1,13 +1,13 @@
 // The store owns the database and the agent folders. Nothing else touches
 // SQLite or ~/.simon.
 
-import { cpSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { basename, join } from "node:path";
 import { randomUUID } from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
 
 import { DEFAULT_EFFORT, DEFAULT_MODEL } from "./contract.ts";
-import type { About, Agent, AgentWithLatest, Device, Found, Job, Memory, Message, Pet, Schedule, Sender, Status } from "./contract.ts";
+import type { About, Agent, AgentWithLatest, Avatar, Device, Found, Job, Memory, Message, Schedule, Sender, Status } from "./contract.ts";
 
 export type Person = { id: string; name: string; tailscale_login: string; claude_config_dir: string };
 /** A file as it arrives with a message. */
@@ -15,7 +15,7 @@ export type Upload = { name: string; bytes: Uint8Array };
 /** What a message can carry besides its text: files, the message it answers, and the job that sent it. */
 export type Extras = { files?: Upload[]; replyTo?: string; jobId?: string; interim?: boolean };
 /** What the person can change about an agent. */
-export type AgentChanges = Partial<Pick<Agent, "name" | "pet_id" | "model" | "effort" | "muted" | "hidden">>;
+export type AgentChanges = Partial<Pick<Agent, "name" | "avatar_id" | "model" | "effort" | "muted" | "hidden">>;
 /** The key Apple gives a developer account for sending notifications, with the key's ID and the account's team ID. */
 export type PushKey = { keyId: string; teamId: string; key: string };
 
@@ -30,7 +30,7 @@ create table if not exists agents (
   id          text primary key,
   person_id   text not null references people(id),
   name        text not null,
-  pet_id      text not null,
+  avatar_id   text not null,
   model       text not null default 'opus',
   effort      text not null default 'medium',
   muted       integer not null default 0,
@@ -68,10 +68,10 @@ create table if not exists devices (
 );
 `;
 
-// Columns added to tables since the first database. A database made before one
+// Changes to tables since the first database. A database made before one
 // gets it here, in order, and counts how many it has in `user_version`. A new
 // database has them all from SCHEMA.
-const ADDED_COLUMNS = [
+const TABLE_CHANGES = [
   "alter table agents add column model text not null default 'opus'",
   "alter table agents add column muted integer not null default 0",
   "alter table agents add column hidden integer not null default 0",
@@ -80,11 +80,12 @@ const ADDED_COLUMNS = [
   "alter table agents add column effort text not null default 'medium'",
   "alter table messages add column seen_at integer",
   "alter table messages add column interim integer not null default 0",
+  "alter table agents rename column pet_id to avatar_id",
 ];
 
 const PAGE = 50;
 const SEARCH_LIMIT = 20;
-const PET_ID = /^[a-z0-9-]+$/;
+const AVATAR_ID = /^[a-z0-9-]+$/;
 // A stored attachment's file name: no folders, and never a dot first.
 const ATTACHMENT_NAME = /^[\w-][\w.-]*$/;
 
@@ -124,11 +125,19 @@ export function openStore(home: string) {
   const made = db.prepare("select 1 from sqlite_master where name = 'agents'").get() !== undefined;
   db.exec(SCHEMA);
   const { user_version: has } = db.prepare("pragma user_version").get() as { user_version: number };
-  for (const column of made ? ADDED_COLUMNS.slice(has) : []) db.exec(column);
-  db.exec(`pragma user_version = ${ADDED_COLUMNS.length}`);
+  for (const change of made ? TABLE_CHANGES.slice(has) : []) db.exec(change);
+  db.exec(`pragma user_version = ${TABLE_CHANGES.length}`);
 
   const agentHome = (agentId: string) => join(home, "agents", agentId);
+  const avatarsHome = join(home, "avatars");
+  // A home that keeps its avatars in `pets`, each described by a `pet.json`, has them moved to `avatars`.
   const petsHome = join(home, "pets");
+  if (existsSync(petsHome)) {
+    for (const id of readdirSync(petsHome)) {
+      if (existsSync(join(petsHome, id, "pet.json"))) renameSync(join(petsHome, id, "pet.json"), join(petsHome, id, "avatar.json"));
+    }
+    renameSync(petsHome, avatarsHome);
+  }
   const pushKeyPath = join(home, "push.json");
   const listeners = new Set<(message: Message) => void>();
   const changed = (message: Message) => listeners.forEach((listener) => listener(message));
@@ -165,25 +174,25 @@ export function openStore(home: string) {
       return () => listeners.delete(listener);
     },
 
-    /** Copies the starter pets in `from` that this server doesn't have yet. */
-    installStarterPets(from: string): void {
+    /** Copies the starter avatars in `from` that this server doesn't have yet. */
+    installStarterAvatars(from: string): void {
       for (const id of readdirSync(from)) {
-        if (PET_ID.test(id) && !existsSync(join(petsHome, id))) cpSync(join(from, id), join(petsHome, id), { recursive: true });
+        if (AVATAR_ID.test(id) && !existsSync(join(avatarsHome, id))) cpSync(join(from, id), join(avatarsHome, id), { recursive: true });
       }
     },
 
-    pets(): Pet[] {
-      if (!existsSync(petsHome)) return [];
-      return readdirSync(petsHome)
-        .filter((id) => PET_ID.test(id) && existsSync(join(petsHome, id, "pet.json")))
-        .map((id) => JSON.parse(readFileSync(join(petsHome, id, "pet.json"), "utf8")) as Pet);
+    avatars(): Avatar[] {
+      if (!existsSync(avatarsHome)) return [];
+      return readdirSync(avatarsHome)
+        .filter((id) => AVATAR_ID.test(id) && existsSync(join(avatarsHome, id, "avatar.json")))
+        .map((id) => JSON.parse(readFileSync(join(avatarsHome, id, "avatar.json"), "utf8")) as Avatar);
     },
 
-    /** The path of a pet's spritesheet, if the pet exists. */
-    petSheet(id: string): string | undefined {
-      if (!PET_ID.test(id) || !existsSync(join(petsHome, id, "pet.json"))) return undefined;
-      const pet = JSON.parse(readFileSync(join(petsHome, id, "pet.json"), "utf8")) as Pet;
-      const path = join(petsHome, id, pet.spritesheetPath);
+    /** The path of an avatar's spritesheet, if the avatar exists. */
+    avatarSheet(id: string): string | undefined {
+      if (!AVATAR_ID.test(id) || !existsSync(join(avatarsHome, id, "avatar.json"))) return undefined;
+      const avatar = JSON.parse(readFileSync(join(avatarsHome, id, "avatar.json"), "utf8")) as Avatar;
+      const path = join(avatarsHome, id, avatar.spritesheetPath);
       return existsSync(path) ? path : undefined;
     },
 
@@ -206,13 +215,13 @@ export function openStore(home: string) {
       return db.prepare("select * from people where id = ?").get(id) as Person | undefined;
     },
 
-    createAgent(person: Person, name: string, petId: string): Agent {
+    createAgent(person: Person, name: string, avatarId: string): Agent {
       const now = Date.now();
       const agent: Agent = {
         id: randomUUID(),
         person_id: person.id,
         name,
-        pet_id: petId,
+        avatar_id: avatarId,
         model: DEFAULT_MODEL,
         effort: DEFAULT_EFFORT,
         muted: false,
@@ -225,11 +234,11 @@ export function openStore(home: string) {
       mkdirSync(join(folder, "memory"), { recursive: true });
       mkdirSync(join(folder, "attachments"), { recursive: true });
       writeFileSync(join(folder, "CLAUDE.md"), instructions(name, person.name));
-      db.prepare("insert into agents (id, person_id, name, pet_id, model, effort, session_id, read_at, created_at) values (?, ?, ?, ?, ?, ?, ?, ?, ?)").run(
+      db.prepare("insert into agents (id, person_id, name, avatar_id, model, effort, session_id, read_at, created_at) values (?, ?, ?, ?, ?, ?, ?, ?, ?)").run(
         agent.id,
         agent.person_id,
         agent.name,
-        agent.pet_id,
+        agent.avatar_id,
         agent.model,
         agent.effort,
         null,
@@ -254,7 +263,7 @@ export function openStore(home: string) {
         .sort((a, b) => (b.latest?.created_at ?? b.created_at) - (a.latest?.created_at ?? a.created_at));
     },
 
-    /** Changes an agent's name, pet, model, effort, or whether it is muted or hidden. A new name is written into the agent's instructions where they say who it is. */
+    /** Changes an agent's name, avatar, model, effort, or whether it is muted or hidden. A new name is written into the agent's instructions where they say who it is. */
     updateAgent(agent: Agent, changes: AgentChanges): void {
       const columns = Object.keys(changes) as (keyof AgentChanges)[];
       if (columns.length === 0) return;

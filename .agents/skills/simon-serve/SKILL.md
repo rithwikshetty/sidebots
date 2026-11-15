@@ -13,7 +13,7 @@ Only one Simon server runs at a time. The phone reaches port 4317 through `tails
 
 1. Note what is being served: `git rev-parse --show-toplevel`, `git status --short --branch` and `git log -1 --oneline`.
 2. In a fresh worktree, `server/` or `mobile/` has no `node_modules`. Run `pnpm install --frozen-lockfile` in each folder that lacks it.
-3. If this checkout changes the database, ask before starting. A change to `ADDED_COLUMNS` or `SCHEMA` in `server/src/store.ts` against main (`git diff main -- server/src/store.ts`) migrates `~/.simon/simon.sqlite` as soon as the server starts. Main can't undo it, and serving main again afterwards can break.
+3. If this checkout changes the database, ask before starting. A change to `TABLE_CHANGES` or `SCHEMA` in `server/src/store.ts` against main (`git diff main -- server/src/store.ts`) migrates `~/.simon/simon.sqlite` as soon as the server starts. Main can't undo it, and serving main again afterwards can break.
 4. Find the running server with `lsof -tiTCP:4317 -sTCP:LISTEN`, and its checkout with `lsof -a -p <pid> -d cwd -Fn`, which prints `<checkout>/server`. Stop it with `kill <pid>`, whether it is another checkout's or this one's. Node doesn't reload changed code, so this one restarts too. A turn cut off by the stop is queued again when the next server starts.
 5. Start this checkout's server detached, so it outlives the session's limit on background jobs:
 

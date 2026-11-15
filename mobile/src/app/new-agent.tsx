@@ -1,12 +1,12 @@
 import { useState } from "react";
 import { ActivityIndicator, Pressable, StyleSheet, Text, TextInput, View } from "react-native";
 import { useRouter } from "expo-router";
+import { AvatarPicker } from "@/components/AvatarPicker";
 import { FadingText } from "@/components/FadingText";
-import { PetPicker } from "@/components/PetPicker";
-import { createAgent, usePets } from "@/lib/state";
+import { createAgent, useAvatars } from "@/lib/state";
 import { useTheme } from "@/lib/theme";
 
-/** A stable number from a name, so a name always suggests the same pet. */
+/** A stable number from a name, so a name always suggests the same avatar. */
 function hash(text: string): number {
   let sum = 0;
   for (const letter of text) sum = (sum * 31 + letter.charCodeAt(0)) >>> 0;
@@ -16,22 +16,22 @@ function hash(text: string): number {
 export default function NewAgent() {
   const theme = useTheme();
   const router = useRouter();
-  const pets = usePets();
+  const avatars = useAvatars();
   const [name, setName] = useState("");
   const [picked, setPicked] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
   const trimmed = name.trim();
-  // Until the person picks, the name suggests a pet.
-  const petId = picked ?? pets[hash(trimmed) % Math.max(pets.length, 1)]?.id;
+  // Until the person picks, the name suggests an avatar.
+  const avatarId = picked ?? avatars[hash(trimmed) % Math.max(avatars.length, 1)]?.id;
 
   async function onCreate() {
-    if (!trimmed || !petId) return;
+    if (!trimmed || !avatarId) return;
     setBusy(true);
     setError(null);
     try {
-      const agent = await createAgent(trimmed, petId);
+      const agent = await createAgent(trimmed, avatarId);
       router.dismiss();
       router.push(`/chat/${agent.id}`);
     } catch (failure) {
@@ -54,11 +54,11 @@ export default function NewAgent() {
         onSubmitEditing={onCreate}
         style={[styles.name, { color: theme.ink, borderBottomColor: theme.line }]}
       />
-      <PetPicker value={petId} onChange={setPicked} />
+      <AvatarPicker value={avatarId} onChange={setPicked} />
       <FadingText style={[styles.hint, { color: error ? theme.danger : theme.ink2 }]}>{error ?? "Tell it what it's for in the chat."}</FadingText>
       <Pressable
         onPress={onCreate}
-        disabled={busy || !trimmed || !petId}
+        disabled={busy || !trimmed || !avatarId}
         style={({ pressed }) => [styles.button, { backgroundColor: theme.tint, opacity: pressed || busy || !trimmed ? 0.5 : 1 }]}>
         {busy ? <ActivityIndicator color={theme.onTint} /> : <Text style={[styles.buttonText, { color: theme.onTint }]}>Create agent</Text>}
       </Pressable>

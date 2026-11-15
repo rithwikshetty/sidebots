@@ -47,24 +47,24 @@ export function createApi(store: Store, queue: Queue) {
   app.get("/agents", (c) => c.json(store.agentsFor(c.var.person.id)));
 
   app.post("/agents", async (c) => {
-    const { name, petId } = await c.req.json<{ name?: string; petId?: string }>();
-    if (!name?.trim() || !petId?.trim()) return c.json({ error: "An agent needs a name and a pet." }, 400);
-    return c.json(store.createAgent(c.var.person, name.trim(), petId.trim()), 201);
+    const { name, avatarId } = await c.req.json<{ name?: string; avatarId?: string }>();
+    if (!name?.trim() || !avatarId?.trim()) return c.json({ error: "An agent needs a name and an avatar." }, 400);
+    return c.json(store.createAgent(c.var.person, name.trim(), avatarId.trim()), 201);
   });
 
-  /** Changes any of an agent's name, pet, model and effort, and whether it is muted or hidden. */
+  /** Changes any of an agent's name, avatar, model and effort, and whether it is muted or hidden. */
   app.patch("/agents/:id", async (c) => {
     const agent = ownAgent(c.var.person, c.req.param("id"));
     if (!agent) return c.json({ error: "No such agent." }, 404);
-    const { name, petId, model, effort, muted, hidden } = await c.req.json<{ name?: string; petId?: string; model?: string; effort?: string; muted?: boolean; hidden?: boolean }>();
+    const { name, avatarId, model, effort, muted, hidden } = await c.req.json<{ name?: string; avatarId?: string; model?: string; effort?: string; muted?: boolean; hidden?: boolean }>();
     const changes: AgentChanges = {};
     if (name !== undefined) {
       if (!name.trim()) return c.json({ error: "An agent needs a name." }, 400);
       changes.name = name.trim();
     }
-    if (petId !== undefined) {
-      if (!store.petSheet(petId)) return c.json({ error: "No such pet." }, 400);
-      changes.pet_id = petId;
+    if (avatarId !== undefined) {
+      if (!store.avatarSheet(avatarId)) return c.json({ error: "No such avatar." }, 400);
+      changes.avatar_id = avatarId;
     }
     if (model !== undefined) {
       if (!Object.hasOwn(MODELS, model)) return c.json({ error: "No such model." }, 400);
@@ -163,11 +163,11 @@ export function createApi(store: Store, queue: Queue) {
     return c.json(device, 201);
   });
 
-  app.get("/pets", (c) => c.json(store.pets()));
+  app.get("/avatars", (c) => c.json(store.avatars()));
 
-  app.get("/pets/:id/spritesheet", (c) => {
-    const path = store.petSheet(c.req.param("id"));
-    if (!path) return c.json({ error: "No such pet." }, 404);
+  app.get("/avatars/:id/spritesheet", (c) => {
+    const path = store.avatarSheet(c.req.param("id"));
+    if (!path) return c.json({ error: "No such avatar." }, 404);
     return c.body(readFileSync(path), 200, { "Content-Type": "image/png", "Cache-Control": "max-age=3600" });
   });
 
