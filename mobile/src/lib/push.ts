@@ -78,7 +78,7 @@ export function showChatOnScreen(agentId: string): () => void {
  * app, and a tapped notification opens its chat.
  */
 export function usePush(): void {
-  const unread = useAgents().reduce((total, agent) => total + agent.unread, 0);
+  const unread = useAgents().reduce((total, agent) => total + (agent.muted ? 0 : agent.unread), 0);
   useEffect(() => {
     void Notifications.setBadgeCountAsync(unread).catch(() => undefined);
   }, [unread]);
@@ -89,7 +89,6 @@ export function usePush(): void {
     const sync = () => void register().catch(() => undefined);
     sync();
     const active = AppState.addEventListener("change", (next) => next === "active" && sync());
-    const tokens = Notifications.addPushTokenListener(sync);
 
     const open = (response: Notifications.NotificationResponse | null) => {
       const agentId = response && agentOf(response.notification);
@@ -106,7 +105,6 @@ export function usePush(): void {
 
     return () => {
       active.remove();
-      tokens.remove();
       taps.remove();
     };
   }, []);
