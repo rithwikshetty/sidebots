@@ -138,17 +138,26 @@ export async function loadOlder(agentId: string): Promise<boolean> {
 }
 
 async function refresh(): Promise<void> {
+  const [agents, pets] = await Promise.all([request<AgentWithLatest[]>("/agents"), request<Pet[]>("/pets")]);
+  // What the phone kept of an agent that is gone, as one deleted on another phone, goes with it.
+  const kept = new Set(agents.map((agent) => agent.id));
+  const ofKept = <T>(record: Record<string, T>) => Object.fromEntries(Object.entries(record).filter(([agentId]) => kept.has(agentId)));
+  set({ pending: ofKept(state.pending), messages: ofKept(state.messages), about: ofKept(state.about) });
+  set({ agents: agents.map(withPending), pets });
   // Changes made while the server was out of reach go now.
   for (const agentId of Object.keys(state.pending)) void sendChanges(agentId).catch(() => undefined);
-  const [agents, pets] = await Promise.all([request<AgentWithLatest[]>("/agents"), request<Pet[]>("/pets")]);
-  set({ agents: agents.map(withPending), pets });
   await Promise.all(Object.keys(state.messages).map(loadMessages));
 }
 
-/** Puts a message the server just answered with into its chat. */
+/**
+ * Puts a message the server just answered with into its chat. The answer is
+ * the message as it was made, so a copy the event stream already brought,
+ * which may be newer, as when the agent has read it, stays.
+ */
 function keep(message: Message): void {
   const known = state.messages[message.agent_id] ?? NO_MESSAGES;
-  set({ messages: { ...state.messages, [message.agent_id]: upsert(known, message) } });
+  if (known.some((item) => item.id === message.id)) return;
+  set({ messages: { ...state.messages, [message.agent_id]: [...known, message] } });
 }
 
 /** Sends a message, with any files, and the id of the message it answers when it is a reply. */

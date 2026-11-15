@@ -3,7 +3,7 @@ import { Pressable, StyleSheet, Text, View } from "react-native";
 import { Stack, useFocusEffect, useLocalSearchParams, useRouter } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { KeyboardStickyView } from "react-native-keyboard-controller";
-import { useSharedValue } from "react-native-reanimated";
+import Animated, { FadeIn, useSharedValue } from "react-native-reanimated";
 import { KeyboardAwareLegendList } from "@legendapp/list/keyboard";
 import type { LegendListRef } from "@legendapp/list/react-native";
 import { Reply, X } from "lucide-react-native";
@@ -11,6 +11,7 @@ import type { AgentWithLatest, Message } from "@server/contract";
 import { BAR_HEIGHT, ChatHeader, HEADER_CLEARANCE, HEADER_OVERHANG } from "@/components/ChatHeader";
 import { Composer } from "@/components/Composer";
 import { IconButton } from "@/components/IconButton";
+import { Markdown } from "@/components/Markdown";
 import { FileCard, MessagePhotos, type Shown } from "@/components/MessageAttachments";
 import { PetView } from "@/components/PetView";
 import { SwipeToReply } from "@/components/SwipeToReply";
@@ -23,7 +24,7 @@ import { preview } from "@/lib/messages";
 import { askForPush, showChatOnScreen } from "@/lib/push";
 import { changeAgent, freshStart, loadMessages, loadOlder, markRead, petStateOf, send, useAgent, useMessages, useOnline } from "@/lib/state";
 import { type Theme, useTheme } from "@/lib/theme";
-import { dayLabel, sameDay } from "@/lib/time";
+import { dayLabel, listTime, sameDay } from "@/lib/time";
 
 export default function Chat() {
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -38,6 +39,8 @@ function ChatWith({ agent }: { agent: AgentWithLatest }) {
   const online = useOnline();
   const petState = petStateOf(agent);
   const messages = useMessages(agent.id);
+  // The person's newest message, which carries the chat's receipt.
+  const newestMine = messages.findLast((message) => message.sender === "person")?.id;
   const [draft, setDraft] = useState("");
   const [picked, setPicked] = useState<Picked[]>([]);
   // The message the next one answers, set by a swipe on it.
@@ -117,6 +120,8 @@ function ChatWith({ agent }: { agent: AgentWithLatest }) {
         ref={list}
         style={styles.screen}
         data={messages}
+        // The receipt moves to each newest message, so the rows draw again when it does.
+        extraData={newestMine}
         keyExtractor={(message) => message.id}
         estimatedItemSize={72}
         alignItemsAtEnd
@@ -163,6 +168,7 @@ function ChatWith({ agent }: { agent: AgentWithLatest }) {
                 message={item}
                 quoted={item.reply_to ? messages.find((message) => message.id === item.reply_to) : undefined}
                 theme={theme}
+                receipt={item.id === newestMine}
                 onReply={() => setReplyTo(item)}
                 onResend={() => onSend(item.body)}
               />
@@ -227,7 +233,22 @@ function WorkingRow({ agent }: { agent: AgentWithLatest }) {
  * A message in the chat. A swipe right on it replies to it. `quoted` is the
  * message it answers, when it answers one the app has.
  */
-function Bubble({ message, quoted, theme, onReply, onResend }: { message: Message; quoted: Message | undefined; theme: Theme; onReply: () => void; onResend: () => void }) {
+function Bubble({
+  message,
+  quoted,
+  theme,
+  receipt,
+  onReply,
+  onResend,
+}: {
+  message: Message;
+  quoted: Message | undefined;
+  theme: Theme;
+  /** Whether the message carries the chat's receipt, as the person's newest does. */
+  receipt: boolean;
+  onReply: () => void;
+  onResend: () => void;
+}) {
   if (message.sender === "simon") return <Text style={[styles.note, { color: theme.ink2 }]}>{message.body}</Text>;
   const mine = message.sender === "person";
   const shown = message.attachments.map((path) => ({ uri: attachmentUrl(message.agent_id, path), name: fileName(path) }));
@@ -246,6 +267,8 @@ function Bubble({ message, quoted, theme, onReply, onResend }: { message: Messag
           <Pressable onPress={onResend} hitSlop={8}>
             <Text style={[styles.resend, { color: theme.tintInk }]}>Send again</Text>
           </Pressable>
+        ) : receipt ? (
+          <Receipt message={message} theme={theme} />
         ) : null}
       </View>
     </SwipeToReply>
@@ -253,8 +276,23 @@ function Bubble({ message, quoted, theme, onReply, onResend }: { message: Messag
 }
 
 /**
+ * Under the person's newest message, as Assist and Messages show it:
+ * "Delivered" while it waits for the agent, and "Read" with the time once the
+ * agent has taken it in. The words fade in as they change.
+ */
+function Receipt({ message, theme }: { message: Message; theme: Theme }) {
+  const read = message.status !== "queued";
+  return (
+    <Animated.Text key={read ? "read" : "delivered"} entering={FadeIn.duration(300)} style={[styles.receipt, { color: theme.ink2 }]}>
+      {read ? `Read ${listTime(message.seen_at ?? message.created_at)}` : "Delivered"}
+    </Animated.Text>
+  );
+}
+
+/**
  * A message as the chat draws it: its photos and files above its bubble, as
  * Assist draws one, and the message it answers quoted at the bubble's top.
+ * The agent's words are markdown; the person's are as they typed them.
  */
 function Sent({ body, quote, photos, files, mine, theme }: { body: string; quote?: string; photos: Shown[]; files: Shown[]; mine: boolean; theme: Theme }) {
   const quiet = mine ? theme.onTint : theme.ink2;
@@ -273,10 +311,12 @@ function Sent({ body, quote, photos, files, mine, theme }: { body: string; quote
               </Text>
             </View>
           ) : null}
-          {body ? (
-            <Text selectable style={[styles.text, { color: mine ? theme.onTint : theme.ink }]}>
+          {body && mine ? (
+            <Text selectable style={[styles.text, { color: theme.onTint }]}>
               {body}
             </Text>
+          ) : body ? (
+            <Markdown text={body} />
           ) : null}
         </View>
       ) : null}
@@ -329,6 +369,7 @@ const styles = StyleSheet.create({
   replyingTitle: { fontSize: 13, fontWeight: "600" },
   replyingQuote: { fontSize: 13, lineHeight: 18 },
   note: { alignSelf: "center", textAlign: "center", fontSize: 13, lineHeight: 18, marginTop: 10, paddingHorizontal: 24 },
+  receipt: { fontSize: 11, lineHeight: 15, marginTop: 2, marginRight: 4 },
   resend: { fontSize: 13, fontWeight: "600", marginTop: 4, marginRight: 4 },
   workingRow: { flexDirection: "row", alignItems: "center", gap: 10, marginTop: 10, paddingLeft: 2 },
   workingText: { fontSize: 15, fontStyle: "italic" },

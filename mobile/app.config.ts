@@ -43,6 +43,7 @@ const config: ExpoConfig = {
       },
     ],
     "expo-document-picker",
+    "expo-web-browser",
   ],
   experiments: { typedRoutes: true },
 };
