@@ -4,6 +4,7 @@ import { useLocalSearchParams, useRouter } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { ChevronRight, Trash2 } from "lucide-react-native";
 import { EFFORTS, MODELS, scheduleWords, type AgentWithLatest, type Job } from "@server/contract";
+import { Choices } from "@/components/Choices";
 import { IconButton } from "@/components/IconButton";
 import { PetPicker } from "@/components/PetPicker";
 import { PetView } from "@/components/PetView";
@@ -146,25 +147,6 @@ function Section({ title, note, children }: { title?: string; note?: string; chi
   );
 }
 
-/** A row of choices where one is in effect, as for the model. */
-function Choices<Id extends string>({ options, value, onChange }: { options: Record<Id, string>; value: Id; onChange: (value: Id) => void }) {
-  const theme = useTheme();
-  return (
-    <View style={styles.choices}>
-      {(Object.keys(options) as Id[]).map((id) => (
-        <Pressable
-          key={id}
-          onPress={() => onChange(id)}
-          accessibilityRole="button"
-          accessibilityState={{ selected: id === value }}
-          style={[styles.choice, id === value && { backgroundColor: theme.tint }]}>
-          <Text style={[styles.choiceText, { color: id === value ? theme.onTint : theme.ink }]}>{options[id]}</Text>
-        </Pressable>
-      ))}
-    </View>
-  );
-}
-
 function Toggle({ title, note, value, onChange }: { title: string; note: string; value: boolean; onChange: (value: boolean) => void }) {
   const theme = useTheme();
   return (
@@ -200,7 +182,4 @@ const styles = StyleSheet.create({
   rowTitle: { fontSize: 16, lineHeight: 21 },
   rowNote: { fontSize: 14, lineHeight: 19 },
   rule: { height: StyleSheet.hairlineWidth, marginLeft: 16 },
-  choices: { flexDirection: "row", padding: 4, gap: 4 },
-  choice: { flex: 1, height: 38, borderRadius: 12, borderCurve: "continuous", alignItems: "center", justifyContent: "center" },
-  choiceText: { fontSize: 15, fontWeight: "600" },
 });

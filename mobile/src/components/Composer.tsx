@@ -1,10 +1,11 @@
 import { useEffect, useRef, useState } from "react";
 import { PixelRatio, Pressable, StyleSheet, Text, TextInput, View, type TextInputInstance, type TextStyle } from "react-native";
-import Animated, { FadeIn, LinearTransition, useReducedMotion } from "react-native-reanimated";
-import { ArrowUp, ChevronDown, Plus } from "lucide-react-native";
+import Animated, { FadeIn, FadeOut, LinearTransition, useReducedMotion } from "react-native-reanimated";
+import { ArrowUp, ChevronDown, ChevronUp, Plus } from "lucide-react-native";
 import { EFFORTS, MODELS, type Effort, type Model } from "@server/contract";
 import { MessageMenuView, type MessageMenuAction } from "../../modules/message-menu/src";
 import { AttachmentTray, TRAY_HEIGHT, TRAY_TILE_EXIT_MS } from "@/components/AttachmentTray";
+import { Choices } from "@/components/Choices";
 import { IconButton } from "@/components/IconButton";
 import type { Picked, PickSource } from "@/lib/files";
 import { useTheme } from "@/lib/theme";
@@ -35,8 +36,6 @@ const ATTACH_ACTIONS: (MessageMenuAction & { id: PickSource })[] = [
   { id: "files", title: "Files", systemImage: "folder" },
 ];
 
-const MODEL_IDS = Object.keys(MODELS) as Model[];
-const EFFORT_IDS = Object.keys(EFFORTS) as Effort[];
 
 /**
  * The message field, as Assist's: + at the bottom left, which opens a menu
@@ -46,7 +45,10 @@ const EFFORT_IDS = Object.keys(EFFORTS) as Effort[];
  * buttons, growing with the text up to about six lines, then scrolling;
  * picked photos and files sit in a tray above the text. A message can go
  * with only photos or files. Open, the card names the agent's model and
- * effort beside the +, and a tap on them opens one menu that changes either.
+ * effort beside the +. A tap on them opens a panel above the card with a row
+ * of models and a row of efforts. Picking an effort closes it, as does typing,
+ * so a model and an effort are chosen in one go. The panel is drawn here
+ * rather than as the system's menu, whose glass bends the text as it closes.
  */
 export function Composer({
   value,
@@ -71,7 +73,7 @@ export function Composer({
   onRemoveAttachment: (file: Picked) => void;
   /** The + rests, as once the message holds as many files as it can. */
   attachDisabled?: boolean;
-  /** The model the agent answers with, how hard it thinks first, and what a choice from their menu does. */
+  /** The model the agent answers with, how hard it thinks first, and what a choice from their panel does. */
   model: Model;
   effort: Effort;
   onThinking: (change: { model: Model } | { effort: Effort }) => void;
@@ -91,6 +93,9 @@ export function Composer({
     return () => clearTimeout(timer);
   }, [attachments.length, hasTray, reduceMotion]);
   const open = typing || hasTray;
+  // The model and effort panel, which goes when the card closes.
+  const [choosing, setChoosing] = useState(false);
+  if (choosing && !open) setChoosing(false);
   // An invisible copy of the text, laid out at the text's width, gives the field its height.
   const [contentHeight, setContentHeight] = useState(0);
   // The field's font as this phone draws it, which says where its capitals sit.
@@ -119,102 +124,116 @@ export function Composer({
   };
 
   return (
-    <Animated.View layout={layout} style={[styles.field, { height: fieldHeight, borderColor: theme.line, backgroundColor: theme.card }]}>
-      <View
-        style={[styles.measure, { left: frame.left, right: frame.right }]}
-        pointerEvents="none"
-        importantForAccessibility="no-hide-descendants"
-        accessibilityElementsHidden>
-        <Text
-          style={styles.text}
-          maxFontSizeMultiplier={FIELD_MAX_SCALE}
-          onLayout={(event) => setContentHeight(event.nativeEvent.layout.height)}
-          onTextLayout={(event) => {
-            const line = event.nativeEvent.lines[0];
-            if (line) {
-              setFont((current) =>
-                current?.ascender === line.ascender && current.capHeight === line.capHeight ? current : { ascender: line.ascender, capHeight: line.capHeight },
-              );
-            }
-          }}>
-          {value}
-          {"​"}
-        </Text>
-      </View>
-      <Animated.View layout={layout} style={[styles.textFrame, { left: frame.left, right: frame.right, top: textTop, height: textHeight }]}>
-        <TextInput
-          ref={inputRef}
-          value={value}
-          onChangeText={onChangeText}
-          onFocus={() => setTyping(true)}
-          onBlur={() => setTyping(false)}
-          placeholder={placeholder}
-          placeholderTextColor={theme.faint}
-          multiline
-          scrollEnabled={open && contentHeight > maxHeight}
-          style={[styles.text, styles.input, { color: theme.ink }, open ? styles.openLines : restingLine(font, lineHeight)]}
-          selectionColor={theme.tintInk}
-          maxFontSizeMultiplier={FIELD_MAX_SCALE}
-          // iOS reads an empty field's placeholder after its label, so the
-          // placeholder names the field until there is text to read.
-          accessibilityLabel={value ? placeholder : undefined}
-          enablesReturnKeyAutomatically
-        />
-      </Animated.View>
-      {/* Above the text, on the card's colour, so text moving as the tray opens or closes passes under it. */}
-      {hasTray ? (
-        <Animated.View entering={reduceMotion ? undefined : FadeIn.duration(180)} style={[styles.tray, { backgroundColor: theme.card }]}>
-          <AttachmentTray files={attachments} onRemove={onRemoveAttachment} />
+    <View>
+      {choosing ? (
+        <Animated.View
+          entering={reduceMotion ? undefined : FadeIn.duration(150)}
+          exiting={reduceMotion ? undefined : FadeOut.duration(120)}
+          style={[styles.panel, { borderColor: theme.line, backgroundColor: theme.card }]}>
+          <Choices options={MODELS} value={model} onChange={(id) => onThinking({ model: id })} />
+          <Choices
+            options={EFFORTS}
+            value={effort}
+            onChange={(id) => {
+              onThinking({ effort: id });
+              setChoosing(false);
+            }}
+          />
         </Animated.View>
       ) : null}
-      <View style={[styles.corner, styles.leading]}>
-        {/* The native menu button over the + takes the tap and reads to VoiceOver. */}
-        <MessageMenuView
-          actions={attachDisabled ? [] : ATTACH_ACTIONS}
-          opensOnTap
-          label="Add photos and files"
-          onAction={({ nativeEvent }) => attach(nativeEvent.id as PickSource)}
-          style={styles.attach}>
-          <View accessibilityElementsHidden importantForAccessibility="no-hide-descendants" pointerEvents="none" style={{ opacity: attachDisabled ? 0.35 : 1 }}>
-            <IconButton icon={Plus} label="Add photos and files" iconSize={19} color={theme.ink2} onPress={() => undefined} />
-          </View>
-        </MessageMenuView>
-        {open ? (
-          <Animated.View entering={reduceMotion ? undefined : FadeIn.duration(180)}>
-            {/* The native menu button over the names takes the tap and reads to VoiceOver. */}
-            <MessageMenuView
-              actions={[
-                ...MODEL_IDS.map((id) => ({ id, title: MODELS[id], checked: id === model, group: "model" })),
-                ...EFFORT_IDS.map((id) => ({ id, title: `${EFFORTS[id]} effort`, checked: id === effort, group: "effort" })),
-              ]}
-              opensOnTap
-              immediate
-              label={`Model, ${MODELS[model]}, ${EFFORTS[effort]} effort`}
-              onAction={({ nativeEvent: { id } }) => onThinking(id in MODELS ? { model: id as Model } : { effort: id as Effort })}
-              style={styles.model}>
-              <View accessibilityElementsHidden importantForAccessibility="no-hide-descendants" pointerEvents="none" style={styles.modelName}>
+      <Animated.View layout={layout} style={[styles.field, { height: fieldHeight, borderColor: theme.line, backgroundColor: theme.card }]}>
+        <View
+          style={[styles.measure, { left: frame.left, right: frame.right }]}
+          pointerEvents="none"
+          importantForAccessibility="no-hide-descendants"
+          accessibilityElementsHidden>
+          <Text
+            style={styles.text}
+            maxFontSizeMultiplier={FIELD_MAX_SCALE}
+            onLayout={(event) => setContentHeight(event.nativeEvent.layout.height)}
+            onTextLayout={(event) => {
+              const line = event.nativeEvent.lines[0];
+              if (line) {
+                setFont((current) =>
+                  current?.ascender === line.ascender && current.capHeight === line.capHeight ? current : { ascender: line.ascender, capHeight: line.capHeight },
+                );
+              }
+            }}>
+            {value}
+            {"​"}
+          </Text>
+        </View>
+        <Animated.View layout={layout} style={[styles.textFrame, { left: frame.left, right: frame.right, top: textTop, height: textHeight }]}>
+          <TextInput
+            ref={inputRef}
+            value={value}
+            onChangeText={(text) => {
+              setChoosing(false);
+              onChangeText(text);
+            }}
+            onFocus={() => setTyping(true)}
+            onBlur={() => setTyping(false)}
+            placeholder={placeholder}
+            placeholderTextColor={theme.faint}
+            multiline
+            scrollEnabled={open && contentHeight > maxHeight}
+            style={[styles.text, styles.input, { color: theme.ink }, open ? styles.openLines : restingLine(font, lineHeight)]}
+            selectionColor={theme.tintInk}
+            maxFontSizeMultiplier={FIELD_MAX_SCALE}
+            // iOS reads an empty field's placeholder after its label, so the
+            // placeholder names the field until there is text to read.
+            accessibilityLabel={value ? placeholder : undefined}
+            enablesReturnKeyAutomatically
+          />
+        </Animated.View>
+        {/* Above the text, on the card's colour, so text moving as the tray opens or closes passes under it. */}
+        {hasTray ? (
+          <Animated.View entering={reduceMotion ? undefined : FadeIn.duration(180)} style={[styles.tray, { backgroundColor: theme.card }]}>
+            <AttachmentTray files={attachments} onRemove={onRemoveAttachment} />
+          </Animated.View>
+        ) : null}
+        <View style={[styles.corner, styles.leading]}>
+          {/* The native menu button over the + takes the tap and reads to VoiceOver. */}
+          <MessageMenuView
+            actions={attachDisabled ? [] : ATTACH_ACTIONS}
+            opensOnTap
+            label="Add photos and files"
+            onAction={({ nativeEvent }) => attach(nativeEvent.id as PickSource)}
+            style={styles.attach}>
+            <View accessibilityElementsHidden importantForAccessibility="no-hide-descendants" pointerEvents="none" style={{ opacity: attachDisabled ? 0.35 : 1 }}>
+              <IconButton icon={Plus} label="Add photos and files" iconSize={19} color={theme.ink2} onPress={() => undefined} />
+            </View>
+          </MessageMenuView>
+          {open ? (
+            <Animated.View entering={reduceMotion ? undefined : FadeIn.duration(180)}>
+              <Pressable
+                onPress={() => setChoosing((shown) => !shown)}
+                accessibilityRole="button"
+                accessibilityLabel={`Model, ${MODELS[model]}, ${EFFORTS[effort]} effort`}
+                accessibilityState={{ expanded: choosing }}
+                style={({ pressed }) => [styles.model, { opacity: pressed ? 0.5 : 1 }]}>
                 <Text style={[styles.modelText, { color: theme.ink2 }]}>
                   {MODELS[model]} · {EFFORTS[effort]}
                 </Text>
-                <ChevronDown size={14} strokeWidth={2.25} color={theme.ink2} />
-              </View>
-            </MessageMenuView>
-          </Animated.View>
-        ) : null}
-      </View>
-      <View style={[styles.corner, styles.trailing]}>
-        <Pressable
-          onPress={() => canSend && onSend()}
-          disabled={!canSend}
-          accessibilityRole="button"
-          accessibilityLabel="Send message"
-          accessibilityState={{ disabled: !canSend }}
-          hitSlop={8}
-          style={({ pressed }) => [styles.round, { backgroundColor: theme.tint, opacity: !canSend ? 0.4 : pressed ? 0.75 : 1 }]}>
-          <ArrowUp size={18} strokeWidth={2.5} color={theme.onTint} />
-        </Pressable>
-      </View>
-    </Animated.View>
+                {choosing ? <ChevronUp size={14} strokeWidth={2.25} color={theme.ink2} /> : <ChevronDown size={14} strokeWidth={2.25} color={theme.ink2} />}
+              </Pressable>
+            </Animated.View>
+          ) : null}
+        </View>
+        <View style={[styles.corner, styles.trailing]}>
+          <Pressable
+            onPress={() => canSend && onSend()}
+            disabled={!canSend}
+            accessibilityRole="button"
+            accessibilityLabel="Send message"
+            accessibilityState={{ disabled: !canSend }}
+            hitSlop={8}
+            style={({ pressed }) => [styles.round, { backgroundColor: theme.tint, opacity: !canSend ? 0.4 : pressed ? 0.75 : 1 }]}>
+            <ArrowUp size={18} strokeWidth={2.5} color={theme.onTint} />
+          </Pressable>
+        </View>
+      </Animated.View>
+    </View>
   );
 }
 
@@ -246,8 +265,20 @@ const styles = StyleSheet.create({
   // The + takes a full 44pt tap around its 36pt button, reaching past it into the card's edge.
   attach: { width: 44, height: 44, margin: -4, alignItems: "center", justifyContent: "center" },
   // As tall as the +'s tap, with the name set a little in from it.
-  model: { height: 44, marginVertical: -4, paddingHorizontal: 8, justifyContent: "center" },
-  modelName: { flexDirection: "row", alignItems: "center", gap: 3 },
+  model: { height: 44, marginVertical: -4, paddingHorizontal: 8, flexDirection: "row", alignItems: "center", gap: 3 },
+  // It floats above the card, over the chat, so opening and closing it moves nothing.
+  panel: {
+    position: "absolute",
+    left: 0,
+    right: 0,
+    bottom: "100%",
+    marginBottom: 8,
+    padding: 4,
+    gap: 2,
+    borderRadius: RADIUS,
+    borderCurve: "continuous",
+    borderWidth: StyleSheet.hairlineWidth,
+  },
   modelText: { fontSize: 15, fontWeight: "500" },
   trailing: { right: INSET },
   round: { width: BUTTON, height: BUTTON, borderRadius: BUTTON / 2, alignItems: "center", justifyContent: "center" },
