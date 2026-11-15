@@ -1,4 +1,5 @@
-// Starts the Simon server. `add-person` adds a person and `push-key` sets the key for notifications.
+// Starts the Simon server. `add-person` adds a person, `api-key` has a person's agents run on an
+// Anthropic API key, and `push-key` sets the key for notifications.
 
 import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
@@ -21,6 +22,24 @@ if (process.argv[2] === "add-person") {
   }
   const person = store.addPerson({ login, name, configDir });
   console.log(`Added ${person.name} (${person.tailscale_login}).`);
+  process.exit(0);
+}
+
+if (process.argv[2] === "api-key") {
+  const [login, path] = process.argv.slice(3);
+  // The key comes in a file, so it is never typed into a command the shell remembers.
+  const key = path && readFileSync(path, "utf8").trim();
+  if (!login || !key) {
+    console.error("usage: node src/main.ts api-key <tailscale-login> <file-holding-the-key>");
+    process.exit(1);
+  }
+  const person = store.personByLogin(login);
+  if (!person) {
+    console.error(`Nobody on this server has the Tailscale login ${login}. Add them first with \`pnpm add-person\`.`);
+    process.exit(1);
+  }
+  store.setApiKey(person.id, key);
+  console.log(`${person.name}'s agents now run on that API key.`);
   process.exit(0);
 }
 

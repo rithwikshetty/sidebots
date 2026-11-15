@@ -139,6 +139,9 @@ export function openStore(home: string) {
     renameSync(petsHome, avatarsHome);
   }
   const pushKeyPath = join(home, "push.json");
+  const apiKeysPath = join(home, "api-keys.json");
+  /** Each person's Anthropic API key, by the person's id, for the people who have one. */
+  const apiKeys = (): Record<string, string> => (existsSync(apiKeysPath) ? (JSON.parse(readFileSync(apiKeysPath, "utf8")) as Record<string, string>) : {});
   const listeners = new Set<(message: Message) => void>();
   const changed = (message: Message) => listeners.forEach((listener) => listener(message));
 
@@ -213,6 +216,22 @@ export function openStore(home: string) {
 
     person(id: string): Person | undefined {
       return db.prepare("select * from people where id = ?").get(id) as Person | undefined;
+    },
+
+    /**
+     * Has the person's agents run on this Anthropic API key, from their next
+     * turn. The file is swapped in whole, since the server reads it for a turn
+     * that may start while a key is being saved.
+     */
+    setApiKey(personId: string, key: string): void {
+      const written = `${apiKeysPath}.new`;
+      writeFileSync(written, JSON.stringify({ ...apiKeys(), [personId]: key }), { mode: 0o600 });
+      renameSync(written, apiKeysPath);
+    },
+
+    /** The Anthropic API key the person's agents run on. A person without one uses the Claude login in their config folder. */
+    apiKey(personId: string): string | undefined {
+      return apiKeys()[personId];
     },
 
     createAgent(person: Person, name: string, avatarId: string): Agent {

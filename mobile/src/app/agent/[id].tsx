@@ -142,7 +142,7 @@ function SettingsTab({ agent, change }: { agent: AgentWithLatest; change: (chang
   const router = useRouter();
   return (
     <>
-      <Section title="Model" note="What it answers with, and how hard it thinks first. Fable and High are the most capable, the slowest, and use the most of your subscription.">
+      <Section title="Model" note="What it answers with, and how hard it thinks first. Fable and High are the most capable, the slowest, and use the most of your Claude subscription or API credit.">
         <Choices options={MODELS} value={agent.model} onChange={(model) => change({ model })} />
         <Rule />
         <Choices options={EFFORTS} value={agent.effort} onChange={(effort) => change({ effort })} />
