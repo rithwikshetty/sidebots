@@ -22,7 +22,7 @@ import { haptics } from "@/lib/haptics";
 import { useWorkingLine } from "@/lib/lines";
 import { preview } from "@/lib/messages";
 import { askForPush, showChatOnScreen } from "@/lib/push";
-import { changeAgent, freshStart, loadMessages, loadOlder, markRead, petStateOf, send, useAgent, useMessages, useOnline } from "@/lib/state";
+import { freshStart, loadMessages, loadOlder, markRead, petStateOf, send, useAgent, useMessages, useOnline } from "@/lib/state";
 import { type Theme, useTheme } from "@/lib/theme";
 import { dayLabel, listTime, sameDay } from "@/lib/time";
 
@@ -203,9 +203,6 @@ function ChatWith({ agent }: { agent: AgentWithLatest }) {
             value={draft}
             onChangeText={setDraft}
             onSend={() => void onSend(draft, picked, replyTo)}
-            model={agent.model}
-            effort={agent.effort}
-            onThinking={(change) => void changeAgent(agent.id, change).catch((failure) => problem("Couldn't change that", failure))}
             placeholder={`Message ${agent.name}`}
             attachments={picked}
             onAttach={onAttach}
