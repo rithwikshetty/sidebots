@@ -31,6 +31,15 @@ export const MODELS = { fable: "Fable", opus: "Opus", sonnet: "Sonnet", haiku: "
 export type Model = keyof typeof MODELS;
 /** The model a new agent starts on. */
 export const DEFAULT_MODEL: Model = "opus";
+/**
+ * How hard an agent thinks before it answers, by Claude Code's names for the
+ * levels and the names the app shows. More effort is slower and uses more of
+ * the subscription.
+ */
+export const EFFORTS = { low: "Low", medium: "Medium", high: "High" } as const;
+export type Effort = keyof typeof EFFORTS;
+/** The effort a new agent starts on. */
+export const DEFAULT_EFFORT: Effort = "medium";
 
 /**
  * `read_at` is the time up to which the person has read the chat. A `muted`
@@ -43,6 +52,7 @@ export type Agent = {
   name: string;
   pet_id: string;
   model: Model;
+  effort: Effort;
   muted: boolean;
   hidden: boolean;
   session_id: string | null;

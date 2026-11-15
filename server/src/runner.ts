@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { createSdkMcpServer, query, tool } from "@anthropic-ai/claude-agent-sdk";
 import { z } from "zod";
 import { scheduleWords } from "./contract.ts";
-import type { Found, Job, Message, Model, Schedule } from "./contract.ts";
+import type { Effort, Found, Job, Message, Model, Schedule } from "./contract.ts";
 import type { Person, Store } from "./store.ts";
 
 /** A job as an agent asks for one: what to do on each run, and one of three ways to say when. */
@@ -16,6 +16,7 @@ export type Turn = {
   sessionId: string | null;
   configDir: string;
   model: Model;
+  effort: Effort;
   /** False for a job's run, whose session nothing comes back to. */
   keepSession: boolean;
   /** Stops the turn part way, as when its agent is deleted. */
@@ -49,7 +50,7 @@ const TOOLS = ["search_history", "schedule_job", "list_jobs", "cancel_job"];
 const text = (words: string) => ({ content: [{ type: "text" as const, text: words }] });
 
 /** Runs one turn through Claude Code, signed in as the person who owns the agent. */
-export const claudeTurn: RunTurn = async ({ prompt, cwd, sessionId, configDir, model, keepSession, stop, searchHistory, scheduleJob, listJobs, cancelJob }) => {
+export const claudeTurn: RunTurn = async ({ prompt, cwd, sessionId, configDir, model, effort, keepSession, stop, searchHistory, scheduleJob, listJobs, cancelJob }) => {
   const simon = createSdkMcpServer({
     name: "simon",
     tools: [
@@ -82,6 +83,7 @@ export const claudeTurn: RunTurn = async ({ prompt, cwd, sessionId, configDir, m
       resume: sessionId ?? undefined,
       persistSession: keepSession,
       model,
+      effort,
       abortController: stop,
       env: { ...process.env, CLAUDE_CONFIG_DIR: configDir },
       settingSources: ["user", "project"],
@@ -221,6 +223,7 @@ export function createQueue(store: Store, runTurn: RunTurn, now: () => number = 
           sessionId: ofJob ? null : agent.session_id,
           configDir: person.claude_config_dir,
           model: agent.model,
+          effort: agent.effort,
           keepSession: !ofJob,
           stop,
           searchHistory: (search) => found(store.searchMessages(person.id, search)),

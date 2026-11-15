@@ -5,8 +5,8 @@ import { extname } from "node:path";
 import { Hono } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import { streamSSE } from "hono/streaming";
-import { MODELS } from "./contract.ts";
-import type { Device, MessageEvent, Model } from "./contract.ts";
+import { EFFORTS, MODELS } from "./contract.ts";
+import type { Device, Effort, MessageEvent, Model } from "./contract.ts";
 import type { AgentChanges, Person, Store } from "./store.ts";
 import type { Queue } from "./runner.ts";
 
@@ -52,11 +52,11 @@ export function createApi(store: Store, queue: Queue) {
     return c.json(store.createAgent(c.var.person, name.trim(), petId.trim()), 201);
   });
 
-  /** Changes any of an agent's name, pet and model, and whether it is muted or hidden. */
+  /** Changes any of an agent's name, pet, model and effort, and whether it is muted or hidden. */
   app.patch("/agents/:id", async (c) => {
     const agent = ownAgent(c.var.person, c.req.param("id"));
     if (!agent) return c.json({ error: "No such agent." }, 404);
-    const { name, petId, model, muted, hidden } = await c.req.json<{ name?: string; petId?: string; model?: string; muted?: boolean; hidden?: boolean }>();
+    const { name, petId, model, effort, muted, hidden } = await c.req.json<{ name?: string; petId?: string; model?: string; effort?: string; muted?: boolean; hidden?: boolean }>();
     const changes: AgentChanges = {};
     if (name !== undefined) {
       if (!name.trim()) return c.json({ error: "An agent needs a name." }, 400);
@@ -69,6 +69,10 @@ export function createApi(store: Store, queue: Queue) {
     if (model !== undefined) {
       if (!Object.hasOwn(MODELS, model)) return c.json({ error: "No such model." }, 400);
       changes.model = model as Model;
+    }
+    if (effort !== undefined) {
+      if (!Object.hasOwn(EFFORTS, effort)) return c.json({ error: "No such effort." }, 400);
+      changes.effort = effort as Effort;
     }
     if (typeof muted === "boolean") changes.muted = muted;
     if (typeof hidden === "boolean") changes.hidden = hidden;

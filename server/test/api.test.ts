@@ -308,24 +308,25 @@ test("a reply or a failed turn notifies the person's phones, and a phone Apple h
   assert.equal((await call(HER, "POST", `/agents/${agent.id}/read`)).status, 404);
 });
 
-test("an agent's name, pet and model can be changed, and its turns run on its model", async () => {
-  const models: string[] = [];
+test("an agent's name, pet, model and effort can be changed, and its turns run on its model at its effort", async () => {
+  const models: string[][] = [];
   const { store, queue, call, say } = setup(async (turn) => {
-    models.push(turn.model);
+    models.push([turn.model, turn.effort]);
     return reply("ok");
   });
   store.installStarterPets(join(import.meta.dirname, "..", "..", "pets"));
   const agent = (await call(ME, "POST", "/agents", { name: "Money", petId: "cog" })).json;
-  assert.equal(agent.model, "opus");
+  assert.deepEqual([agent.model, agent.effort], ["opus", "medium"]);
 
-  const changed = await call(ME, "PATCH", `/agents/${agent.id}`, { name: "Budget", petId: "moss", model: "haiku" });
-  assert.deepEqual([changed.json.name, changed.json.pet_id, changed.json.model], ["Budget", "moss", "haiku"]);
+  const changed = await call(ME, "PATCH", `/agents/${agent.id}`, { name: "Budget", petId: "moss", model: "haiku", effort: "high" });
+  assert.deepEqual([changed.json.name, changed.json.pet_id, changed.json.model, changed.json.effort], ["Budget", "moss", "haiku", "high"]);
   assert.match(readFileSync(join(store.agentHome(agent.id), "CLAUDE.md"), "utf8"), /^# Budget\n\nYou are Budget, one of Alex's agents/);
   await say(ME, agent.id, "hello");
   await queue.kick(agent.id);
-  assert.deepEqual(models, ["haiku"]);
+  assert.deepEqual(models, [["haiku", "high"]]);
 
   assert.equal((await call(ME, "PATCH", `/agents/${agent.id}`, { model: "gpt" })).status, 400);
+  assert.equal((await call(ME, "PATCH", `/agents/${agent.id}`, { effort: "ultracode" })).status, 400);
   assert.equal((await call(ME, "PATCH", `/agents/${agent.id}`, { petId: "dragon" })).status, 400);
   assert.equal((await call(HER, "PATCH", `/agents/${agent.id}`, { name: "Mine" })).status, 404);
 });
@@ -509,7 +510,7 @@ test("a database from before a column was added gets it, with what it held kept"
 
   for (const _open of [1, 2]) {
     const store = openStore(home);
-    assert.deepEqual(store.agent("a"), { id: "a", person_id: "p", name: "Scout", pet_id: "moss", model: "opus", muted: false, hidden: false, session_id: "s", read_at: 0, created_at: 1 });
+    assert.deepEqual(store.agent("a"), { id: "a", person_id: "p", name: "Scout", pet_id: "moss", model: "opus", effort: "medium", muted: false, hidden: false, session_id: "s", read_at: 0, created_at: 1 });
     assert.deepEqual(store.messages("a").map((m) => [m.body, m.reply_to, m.job_id]), [["hello", null, null]]);
     store.close();
   }

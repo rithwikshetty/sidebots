@@ -6,7 +6,7 @@ import { basename, join } from "node:path";
 import { randomUUID } from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
 
-import { DEFAULT_MODEL } from "./contract.ts";
+import { DEFAULT_EFFORT, DEFAULT_MODEL } from "./contract.ts";
 import type { About, Agent, AgentWithLatest, Device, Found, Job, Memory, Message, Pet, Schedule, Sender, Status } from "./contract.ts";
 
 export type Person = { id: string; name: string; tailscale_login: string; claude_config_dir: string };
@@ -15,7 +15,7 @@ export type Upload = { name: string; bytes: Uint8Array };
 /** What a message can carry besides its text: files, the message it answers, and the job that sent it. */
 export type Extras = { files?: Upload[]; replyTo?: string; jobId?: string };
 /** What the person can change about an agent. */
-export type AgentChanges = Partial<Pick<Agent, "name" | "pet_id" | "model" | "muted" | "hidden">>;
+export type AgentChanges = Partial<Pick<Agent, "name" | "pet_id" | "model" | "effort" | "muted" | "hidden">>;
 /** The key Apple gives a developer account for sending notifications, with the key's ID and the account's team ID. */
 export type PushKey = { keyId: string; teamId: string; key: string };
 
@@ -32,6 +32,7 @@ create table if not exists agents (
   name        text not null,
   pet_id      text not null,
   model       text not null default 'opus',
+  effort      text not null default 'medium',
   muted       integer not null default 0,
   hidden      integer not null default 0,
   session_id  text,
@@ -74,6 +75,7 @@ const ADDED_COLUMNS = [
   "alter table agents add column hidden integer not null default 0",
   "alter table messages add column reply_to text",
   "alter table messages add column job_id text",
+  "alter table agents add column effort text not null default 'medium'",
 ];
 
 const PAGE = 50;
@@ -208,6 +210,7 @@ export function openStore(home: string) {
         name,
         pet_id: petId,
         model: DEFAULT_MODEL,
+        effort: DEFAULT_EFFORT,
         muted: false,
         hidden: false,
         session_id: null,
@@ -218,12 +221,13 @@ export function openStore(home: string) {
       mkdirSync(join(folder, "memory"), { recursive: true });
       mkdirSync(join(folder, "attachments"), { recursive: true });
       writeFileSync(join(folder, "CLAUDE.md"), instructions(name, person.name));
-      db.prepare("insert into agents (id, person_id, name, pet_id, model, session_id, read_at, created_at) values (?, ?, ?, ?, ?, ?, ?, ?)").run(
+      db.prepare("insert into agents (id, person_id, name, pet_id, model, effort, session_id, read_at, created_at) values (?, ?, ?, ?, ?, ?, ?, ?, ?)").run(
         agent.id,
         agent.person_id,
         agent.name,
         agent.pet_id,
         agent.model,
+        agent.effort,
         null,
         agent.read_at,
         agent.created_at,
@@ -246,7 +250,7 @@ export function openStore(home: string) {
         .sort((a, b) => (b.latest?.created_at ?? b.created_at) - (a.latest?.created_at ?? a.created_at));
     },
 
-    /** Changes an agent's name, pet, model, or whether it is muted or hidden. A new name is written into the agent's instructions where they say who it is. */
+    /** Changes an agent's name, pet, model, effort, or whether it is muted or hidden. A new name is written into the agent's instructions where they say who it is. */
     updateAgent(agent: Agent, changes: AgentChanges): void {
       const columns = Object.keys(changes) as (keyof AgentChanges)[];
       if (columns.length === 0) return;
