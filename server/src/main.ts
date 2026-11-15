@@ -1,13 +1,14 @@
-// Starts the Julius server, or adds a person with `add-person`.
+// Starts the Simon server, or adds a person with `add-person`.
 
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { serve } from "@hono/node-server";
 import { openStore } from "./store.ts";
 import { claudeTurn, createQueue } from "./runner.ts";
 import { createApi } from "./api.ts";
 
-const home = process.env.JULIUS_HOME ?? join(homedir(), ".julius");
+const home = process.env.SIMON_HOME ?? join(homedir(), ".simon");
 const store = openStore(home);
 
 if (process.argv[2] === "add-person") {
@@ -21,11 +22,12 @@ if (process.argv[2] === "add-person") {
   process.exit(0);
 }
 
+store.installStarterPets(join(dirname(fileURLToPath(import.meta.url)), "..", "..", "pets"));
 const queue = createQueue(store, claudeTurn);
 for (const agentId of store.requeueInterrupted()) void queue.kick(agentId);
 
 const port = Number(process.env.PORT ?? 4317);
 // Local only. `tailscale serve` publishes it to our own devices.
 serve({ fetch: createApi(store, queue).fetch, hostname: "127.0.0.1", port }, () => {
-  console.log(`Julius is listening on http://127.0.0.1:${port}, with data in ${home}`);
+  console.log(`Simon is listening on http://127.0.0.1:${port}, with data in ${home}`);
 });

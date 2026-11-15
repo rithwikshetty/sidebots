@@ -60,7 +60,7 @@ export function createQueue(store: Store, runTurn: RunTurn) {
         store.setStatus(message.id, "done");
       } catch (error) {
         const reason = error instanceof Error ? error.message : String(error);
-        store.addMessage(agent.id, "julius", `Julius couldn't finish this. ${reason}`, "done");
+        store.addMessage(agent.id, "simon", `Simon couldn't finish this. ${reason}`, "done");
         store.setStatus(message.id, "failed");
       }
     }

@@ -1,24 +1,14 @@
 // The store owns the database and the agent folders. Nothing else touches
-// SQLite or ~/.julius.
+// SQLite or ~/.simon.
 
-import { mkdirSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
 
+import type { Agent, AgentWithLatest, Message, Pet, Sender, Status } from "./contract.ts";
+
 export type Person = { id: string; name: string; tailscale_login: string; claude_config_dir: string };
-export type Agent = { id: string; person_id: string; name: string; pet_id: string; session_id: string | null; created_at: number };
-export type Sender = "person" | "agent" | "julius";
-export type Status = "queued" | "running" | "done" | "failed";
-export type Message = {
-  id: string;
-  agent_id: string;
-  sender: Sender;
-  body: string;
-  attachment_path: string | null;
-  status: Status;
-  created_at: number;
-};
 
 const SCHEMA = `
 create table if not exists people (
@@ -38,7 +28,7 @@ create table if not exists agents (
 create table if not exists messages (
   id              text primary key,
   agent_id        text not null references agents(id),
-  sender          text not null check (sender in ('person', 'agent', 'julius')),
+  sender          text not null check (sender in ('person', 'agent', 'simon')),
   body            text not null,
   attachment_path text,
   status          text not null check (status in ('queued', 'running', 'done', 'failed')),
@@ -52,11 +42,12 @@ create table if not exists devices (
 `;
 
 const PAGE = 50;
+const PET_ID = /^[a-z0-9-]+$/;
 
 function instructions(agentName: string, personName: string): string {
   return `# ${agentName}
 
-You are ${agentName}, one of ${personName}'s agents in Julius. Julius is a messaging app on their iPhone, and each agent is one chat in it.
+You are ${agentName}, one of ${personName}'s agents in Simon. Simon is a messaging app on their iPhone, and each agent is one chat in it.
 
 ${personName} only sees your final reply, as a text message on their phone. They never see your tool calls or working steps. Write the way a capable person texts: short, plain sentences, no headings or tables unless they ask for them.
 
@@ -68,14 +59,53 @@ You don't know what you're for yet. If this is a new chat, ask what ${personName
 
 export function openStore(home: string) {
   mkdirSync(join(home, "agents"), { recursive: true });
-  const db = new DatabaseSync(join(home, "julius.sqlite"));
+  const db = new DatabaseSync(join(home, "simon.sqlite"));
   db.exec("pragma journal_mode = wal; pragma foreign_keys = on;");
   db.exec(SCHEMA);
 
   const agentHome = (agentId: string) => join(home, "agents", agentId);
+  const petsHome = join(home, "pets");
+  const listeners = new Set<(message: Message) => void>();
+  const changed = (message: Message) => listeners.forEach((listener) => listener(message));
+
+  const latestMessage = db.prepare("select * from messages where agent_id = ? order by rowid desc limit 1");
+  const pendingTurn = db.prepare("select 1 from messages where agent_id = ? and sender = 'person' and status in ('queued', 'running') limit 1");
+  const withLatest = (agent: Agent): AgentWithLatest => ({
+    ...agent,
+    latest: (latestMessage.get(agent.id) as Message | undefined) ?? null,
+    working: pendingTurn.get(agent.id) !== undefined,
+  });
 
   return {
     agentHome,
+
+    /** Calls `listener` with every message that is added or changes status. Returns a function that stops it. */
+    onMessage(listener: (message: Message) => void): () => void {
+      listeners.add(listener);
+      return () => listeners.delete(listener);
+    },
+
+    /** Copies the starter pets in `from` that this server doesn't have yet. */
+    installStarterPets(from: string): void {
+      for (const id of readdirSync(from)) {
+        if (PET_ID.test(id) && !existsSync(join(petsHome, id))) cpSync(join(from, id), join(petsHome, id), { recursive: true });
+      }
+    },
+
+    pets(): Pet[] {
+      if (!existsSync(petsHome)) return [];
+      return readdirSync(petsHome)
+        .filter((id) => PET_ID.test(id) && existsSync(join(petsHome, id, "pet.json")))
+        .map((id) => JSON.parse(readFileSync(join(petsHome, id, "pet.json"), "utf8")) as Pet);
+    },
+
+    /** The path of a pet's spritesheet, if the pet exists. */
+    petSheet(id: string): string | undefined {
+      if (!PET_ID.test(id) || !existsSync(join(petsHome, id, "pet.json"))) return undefined;
+      const pet = JSON.parse(readFileSync(join(petsHome, id, "pet.json"), "utf8")) as Pet;
+      const path = join(petsHome, id, pet.spritesheetPath);
+      return existsSync(path) ? path : undefined;
+    },
 
     addPerson(input: { name: string; login: string; configDir: string }): Person {
       const person: Person = { id: randomUUID(), name: input.name, tailscale_login: input.login, claude_config_dir: input.configDir };
@@ -117,12 +147,16 @@ export function openStore(home: string) {
       return db.prepare("select * from agents where id = ?").get(id) as Agent | undefined;
     },
 
+    agentWithLatest(id: string): AgentWithLatest | undefined {
+      const agent = db.prepare("select * from agents where id = ?").get(id) as Agent | undefined;
+      return agent && withLatest(agent);
+    },
+
     /** The person's agents, each with its latest message, most recent chat first. */
-    agentsFor(personId: string): (Agent & { latest: Message | null })[] {
+    agentsFor(personId: string): AgentWithLatest[] {
       const agents = db.prepare("select * from agents where person_id = ?").all(personId) as Agent[];
-      const latest = db.prepare("select * from messages where agent_id = ? order by rowid desc limit 1");
       return agents
-        .map((agent) => ({ ...agent, latest: (latest.get(agent.id) as Message | undefined) ?? null }))
+        .map(withLatest)
         .sort((a, b) => (b.latest?.created_at ?? b.created_at) - (a.latest?.created_at ?? a.created_at));
     },
 
@@ -141,11 +175,14 @@ export function openStore(home: string) {
         message.status,
         message.created_at,
       );
+      changed(message);
       return message;
     },
 
     setStatus(messageId: string, status: Status): void {
       db.prepare("update messages set status = ? where id = ?").run(status, messageId);
+      const message = db.prepare("select * from messages where id = ?").get(messageId) as Message | undefined;
+      if (message) changed(message);
     },
 
     /** Everything after a known message, oldest first, or the latest page. */

@@ -8,7 +8,7 @@ import { createQueue, type RunTurn } from "../src/runner.ts";
 import { createApi } from "../src/api.ts";
 
 function setup(runTurn: RunTurn) {
-  const home = mkdtempSync(join(tmpdir(), "julius-test-"));
+  const home = mkdtempSync(join(tmpdir(), "simon-test-"));
   const store = openStore(home);
   store.addPerson({ name: "Alex", login: "alex@example.com", configDir: "/config/alex" });
   store.addPerson({ name: "Robin", login: "robin@example.com", configDir: "/config/robin" });
@@ -22,7 +22,7 @@ function setup(runTurn: RunTurn) {
     });
     return { status: response.status, json: await response.json() };
   };
-  return { store, queue, call };
+  return { store, queue, call, app };
 }
 
 const ME = "alex@example.com";
@@ -80,7 +80,7 @@ test("messages sent while the agent is busy run one at a time, in order, on the 
   ]);
 });
 
-test("a failed turn keeps the message and adds a note from Julius saying why", async () => {
+test("a failed turn keeps the message and adds a note from Simon saying why", async () => {
   const { queue, call } = setup(async () => {
     throw new Error("You've reached your usage limit.");
   });
@@ -94,7 +94,7 @@ test("a failed turn keeps the message and adds a note from Julius saying why", a
     messages.map((m: { sender: string; body: string; status: string }) => [m.sender, m.body, m.status]),
     [
       ["person", "find me a flat", "failed"],
-      ["julius", "Julius couldn't finish this. You've reached your usage limit.", "done"],
+      ["simon", "Simon couldn't finish this. You've reached your usage limit.", "done"],
     ],
   );
 });
@@ -107,6 +107,38 @@ test("each person only reaches their own agents", async () => {
   assert.equal((await call(HER, "GET", `/agents/${mine.id}/messages`)).status, 404);
   assert.equal((await call(HER, "POST", `/agents/${mine.id}/messages`, { body: "hi" })).status, 404);
   assert.equal((await call("stranger@example.com", "GET", "/agents")).status, 403);
+});
+
+test("the event stream carries the person's own messages and their status changes, and nobody else's", async () => {
+  let finish!: () => void;
+  const { queue, call, app } = setup(() => new Promise((resolve) => (finish = () => resolve({ reply: "done", sessionId: "s" }))));
+  const mine = (await call(ME, "POST", "/agents", { name: "Wedding", petId: "mochi" })).json;
+  const hers = (await call(HER, "POST", "/agents", { name: "Garden", petId: "moss" })).json;
+
+  const response = await app.request("/events", { headers: { "Tailscale-User-Login": ME } });
+  const reader = response.body!.pipeThrough(new TextDecoderStream()).getReader();
+  await call(HER, "POST", `/agents/${hers.id}/messages`, { body: "not for you" });
+  await call(ME, "POST", `/agents/${mine.id}/messages`, { body: "hello" });
+  while (!finish) await new Promise((resolve) => setTimeout(resolve, 1));
+  finish();
+  await queue.kick(mine.id);
+
+  let text = "";
+  while ((text.match(/event: message/g) ?? []).length < 4) text += (await reader.read()).value;
+  await reader.cancel();
+  const events = text
+    .split("\n")
+    .filter((line) => line.startsWith("data: {"))
+    .map((line) => JSON.parse(line.slice(6)) as { message: { sender: string; body: string; status: string }; agent: { name: string; working: boolean } });
+  assert.deepEqual(
+    events.map(({ message, agent }) => [message.sender, message.body, message.status, agent.name, agent.working]),
+    [
+      ["person", "hello", "queued", "Wedding", true],
+      ["person", "hello", "running", "Wedding", true],
+      ["agent", "done", "done", "Wedding", true],
+      ["person", "hello", "done", "Wedding", false],
+    ],
+  );
 });
 
 test("after a known message returns only what came later", async () => {
