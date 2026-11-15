@@ -4,7 +4,7 @@ import { ChevronLeft, Ellipsis } from "lucide-react-native";
 import type { PetState } from "@server/contract";
 import { Glass } from "@/components/Glass";
 import { PetView } from "@/components/PetView";
-import { TopFade } from "@/components/TopFade";
+import { EdgeFade } from "@/components/EdgeFade";
 import { useTheme } from "@/lib/theme";
 import { MessageMenuView, type MessageMenuAction } from "../../modules/message-menu/src";
 
@@ -45,7 +45,7 @@ export function ChatHeader({ name, petId, petState, dimmed, onBack, onAbout, onF
   const height = insets.top + BAR_HEIGHT + HEADER_OVERHANG + HEADER_CLEARANCE;
   return (
     <>
-      <TopFade height={height} solid={insets.top} />
+      <EdgeFade edge="top" height={height} solid={insets.top} />
       <Pressable
         onPress={onBack}
         accessibilityRole="button"

@@ -7,7 +7,7 @@ import { Bell, BellOff, ChevronDown, ChevronRight, Eye, EyeOff, Plus, Search, Tr
 import type { AgentWithLatest, Found } from "@server/contract";
 import { Glass } from "@/components/Glass";
 import { PetView } from "@/components/PetView";
-import { TopFade } from "@/components/TopFade";
+import { EdgeFade } from "@/components/EdgeFade";
 import { confirmDelete, problem } from "@/lib/alerts";
 import { serverUrl } from "@/lib/api";
 import { useWorkingLine } from "@/lib/lines";
@@ -104,7 +104,7 @@ export default function Home() {
           )
         }
       />
-      <TopFade height={insets.top + SEARCH_HEIGHT + 16} solid={insets.top + SEARCH_HEIGHT} />
+      <EdgeFade edge="top" height={insets.top + SEARCH_HEIGHT + 16} solid={insets.top + SEARCH_HEIGHT} />
       <View style={[styles.search, { top: insets.top }]}>
         <Glass style={[styles.searchGlass, { borderColor: theme.line }]}>
           <Search size={18} strokeWidth={2.25} color={theme.ink2} />

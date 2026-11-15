@@ -10,6 +10,8 @@ import { Reply, X } from "lucide-react-native";
 import type { AgentWithLatest, Message } from "@server/contract";
 import { BAR_HEIGHT, ChatHeader, HEADER_CLEARANCE, HEADER_OVERHANG } from "@/components/ChatHeader";
 import { Composer } from "@/components/Composer";
+import { EdgeFade } from "@/components/EdgeFade";
+import { Glass } from "@/components/Glass";
 import { IconButton } from "@/components/IconButton";
 import { Markdown } from "@/components/Markdown";
 import { FileCard, MessagePhotos, type Shown } from "@/components/MessageAttachments";
@@ -186,9 +188,11 @@ function ChatWith({ agent }: { agent: AgentWithLatest }) {
         onFreshStart={() => void freshStart(agent.id).catch((failure) => problem("Couldn't start fresh", failure))}
       />
       <KeyboardStickyView offset={{ closed: 0, opened: keyboardOffset }} style={styles.sticky}>
-        <View style={[styles.composer, { paddingBottom: insets.bottom + 8 }]} onLayout={(event) => contentInsetEndAdjustment.set(event.nativeEvent.layout.height)}>
+        {/* Messages show through the glass composer, and fade out in the gap below it, solid over the home indicator. */}
+        <EdgeFade edge="bottom" height={insets.bottom + COMPOSER_GAP + 16} solid={insets.bottom} />
+        <View style={[styles.composer, { paddingBottom: insets.bottom + COMPOSER_GAP }]} onLayout={(event) => contentInsetEndAdjustment.set(event.nativeEvent.layout.height)}>
           {replyTo ? (
-            <View style={[styles.replying, { backgroundColor: theme.card, borderColor: theme.line }]}>
+            <Glass style={[styles.replying, { borderColor: theme.line }]}>
               <Reply size={16} strokeWidth={2} color={theme.ink2} />
               <View style={styles.replyingText}>
                 <Text style={[styles.replyingTitle, { color: theme.ink }]}>Replying to {replyTo.sender === "person" ? "yourself" : agent.name}</Text>
@@ -197,7 +201,7 @@ function ChatWith({ agent }: { agent: AgentWithLatest }) {
                 </Text>
               </View>
               <IconButton icon={X} label="Cancel reply" size={28} iconSize={16} color={theme.ink2} onPress={() => setReplyTo(null)} />
-            </View>
+            </Glass>
           ) : null}
           <Composer
             value={draft}
@@ -333,6 +337,8 @@ type Outgoing = { body: string; files: Picked[]; quote?: string };
 
 // The resting composer's height above the home indicator, used until it is measured.
 const COMPOSER_ESTIMATE = 64;
+// The room between the composer and the home indicator, or the keyboard.
+const COMPOSER_GAP = 8;
 // Keeps the list at its end when a message arrives, a row changes height or the list resizes.
 const FOLLOW_END = { animated: false, on: { dataChange: true, itemLayout: true, layout: true } } as const;
 
@@ -361,6 +367,7 @@ const styles = StyleSheet.create({
     borderRadius: 18,
     borderCurve: "continuous",
     borderWidth: StyleSheet.hairlineWidth,
+    overflow: "hidden",
   },
   replyingText: { flex: 1 },
   replyingTitle: { fontSize: 13, fontWeight: "600" },

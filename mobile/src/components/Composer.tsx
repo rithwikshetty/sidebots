@@ -4,6 +4,7 @@ import Animated, { FadeIn, LinearTransition, useReducedMotion } from "react-nati
 import { ArrowUp, Plus } from "lucide-react-native";
 import { MessageMenuView, type MessageMenuAction } from "../../modules/message-menu/src";
 import { AttachmentTray, TRAY_HEIGHT, TRAY_TILE_EXIT_MS } from "@/components/AttachmentTray";
+import { Glass } from "@/components/Glass";
 import { IconButton } from "@/components/IconButton";
 import type { Picked, PickSource } from "@/lib/files";
 import { useTheme } from "@/lib/theme";
@@ -41,7 +42,8 @@ const ATTACH_ACTIONS: (MessageMenuAction & { id: PickSource })[] = [
  * once something is attached, it opens into a card with the text above the
  * buttons, growing with the text up to about six lines, then scrolling;
  * picked photos and files sit in a tray above the text. A message can go
- * with only photos or files.
+ * with only photos or files. The card is glass, so messages scrolling behind
+ * it show through.
  */
 export function Composer({
   value,
@@ -107,7 +109,8 @@ export function Composer({
   };
 
   return (
-    <Animated.View layout={layout} style={[styles.field, { height: fieldHeight, borderColor: theme.line, backgroundColor: theme.card }]}>
+    <Animated.View layout={layout} style={[styles.field, { height: fieldHeight }]}>
+      <Glass style={[StyleSheet.absoluteFill, styles.surface, { borderColor: theme.line }]} />
       <View
         style={[styles.measure, { left: frame.left, right: frame.right }]}
         pointerEvents="none"
@@ -149,9 +152,8 @@ export function Composer({
           enablesReturnKeyAutomatically
         />
       </Animated.View>
-      {/* Above the text, on the card's colour, so text moving as the tray opens or closes passes under it. */}
       {hasTray ? (
-        <Animated.View entering={reduceMotion ? undefined : FadeIn.duration(180)} style={[styles.tray, { backgroundColor: theme.card }]}>
+        <Animated.View entering={reduceMotion ? undefined : FadeIn.duration(180)} style={styles.tray}>
           <AttachmentTray files={attachments} onRemove={onRemoveAttachment} />
         </Animated.View>
       ) : null}
@@ -199,7 +201,8 @@ function restingLine(font: LineFont | null, lineHeight: number): TextStyle {
 }
 
 const styles = StyleSheet.create({
-  field: { borderRadius: RADIUS, borderCurve: "continuous", borderWidth: StyleSheet.hairlineWidth, overflow: "hidden" },
+  field: { borderRadius: RADIUS, borderCurve: "continuous", overflow: "hidden" },
+  surface: { borderRadius: RADIUS, borderCurve: "continuous", borderWidth: StyleSheet.hairlineWidth },
   measure: { position: "absolute", top: 0, opacity: 0 },
   text: { includeFontPadding: false, fontWeight: "400", fontSize: FONT_SIZE },
   textFrame: { position: "absolute" },
