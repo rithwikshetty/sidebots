@@ -5,11 +5,11 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import Animated, { LayoutAnimationConfig } from "react-native-reanimated";
 import { ChevronRight, Trash2 } from "lucide-react-native";
 import { EFFORTS, MODELS, scheduleWords, type AgentWithLatest, type Job } from "@server/contract";
+import { AvatarPicker } from "@/components/AvatarPicker";
+import { AvatarView } from "@/components/AvatarView";
 import { Choices } from "@/components/Choices";
 import { FadingText } from "@/components/FadingText";
 import { IconButton } from "@/components/IconButton";
-import { PetPicker } from "@/components/PetPicker";
-import { PetView } from "@/components/PetView";
 import { confirmDelete, problem } from "@/lib/alerts";
 import { HIDE, MOVE, POP_IN, SHOW } from "@/lib/motion";
 import { changeAgent, loadAbout, removeJob, useAbout, useAgent, type AgentChanges } from "@/lib/state";
@@ -26,9 +26,9 @@ export default function AgentPage() {
 }
 
 /**
- * An agent's page, opened from its pet at the top of its chat. It opens on
- * the agent's pet, large, with its name and the model it answers with. Edit
- * turns the name into a field and brings up the pets to choose from, and
+ * An agent's page, opened from its avatar at the top of its chat. It opens on
+ * the agent's avatar, large, with its name and the model it answers with. Edit
+ * turns the name into a field and brings up the avatars to choose from, and
  * Save keeps both. Below are two tabs. Settings holds the model and effort,
  * Mute and Hide, and Delete. Jobs & memory holds what the agent works from:
  * its jobs, which can be removed here, the instructions it follows and what
@@ -43,7 +43,7 @@ function AgentAbout({ agent }: { agent: AgentWithLatest }) {
   const [tab, setTab] = useState<Tab>("settings");
   const [editing, setEditing] = useState(false);
   const [name, setName] = useState(agent.name);
-  const [petId, setPetId] = useState(agent.pet_id);
+  const [avatarId, setAvatarId] = useState(agent.avatar_id);
 
   useEffect(() => {
     loadAbout(agent.id).catch(() => {});
@@ -52,14 +52,14 @@ function AgentAbout({ agent }: { agent: AgentWithLatest }) {
   const change = (changes: AgentChanges) => void changeAgent(agent.id, changes).catch((failure) => problem("Couldn't change that", failure));
   const edit = () => {
     setName(agent.name);
-    setPetId(agent.pet_id);
+    setAvatarId(agent.avatar_id);
     setEditing(true);
   };
   const save = () => {
     const trimmed = name.trim();
     const changes: AgentChanges = {};
     if (trimmed !== agent.name) changes.name = trimmed;
-    if (petId !== agent.pet_id) changes.petId = petId;
+    if (avatarId !== agent.avatar_id) changes.avatarId = avatarId;
     if (Object.keys(changes).length) change(changes);
     Keyboard.dismiss();
     setEditing(false);
@@ -68,7 +68,7 @@ function AgentAbout({ agent }: { agent: AgentWithLatest }) {
     Keyboard.dismiss();
     setEditing(false);
   };
-  const shownPet = editing ? petId : agent.pet_id;
+  const shownAvatar = editing ? avatarId : agent.avatar_id;
 
   return (
     <View style={[styles.sheet, { backgroundColor: theme.bg }]}>
@@ -81,9 +81,9 @@ function AgentAbout({ agent }: { agent: AgentWithLatest }) {
         <ScrollView contentContainerStyle={[styles.page, { paddingBottom: insets.bottom + 32 }]} keyboardShouldPersistTaps="handled" keyboardDismissMode="on-drag">
           <View style={styles.hero}>
             <View style={[styles.halo, { backgroundColor: theme.field }]}>
-              {/* A newly picked pet pops in where the last one was. */}
-              <Animated.View key={shownPet} entering={POP_IN}>
-                <PetView petId={shownPet} state="resting" size={88} />
+              {/* A newly picked avatar pops in where the last one was. */}
+              <Animated.View key={shownAvatar} entering={POP_IN}>
+                <AvatarView avatarId={shownAvatar} state="resting" size={88} />
               </Animated.View>
             </View>
             {editing ? (
@@ -112,8 +112,8 @@ function AgentAbout({ agent }: { agent: AgentWithLatest }) {
 
           {editing ? (
             <Animated.View key="editing" entering={SHOW} exiting={HIDE} style={styles.section}>
-              <Text style={[styles.sectionTitle, { color: theme.ink2 }]}>Pet</Text>
-              <PetPicker value={petId} onChange={setPetId} />
+              <Text style={[styles.sectionTitle, { color: theme.ink2 }]}>Avatar</Text>
+              <AvatarPicker value={avatarId} onChange={setAvatarId} />
             </Animated.View>
           ) : (
             <Animated.View key="tabs" entering={SHOW} exiting={HIDE}>

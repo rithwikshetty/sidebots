@@ -1,4 +1,4 @@
-// What the app knows: the person's agents, their messages and the pets. The
+// What the app knows: the person's agents, their messages and the avatars. The
 // server is the source of truth; this copy is saved on the phone so chats open
 // instantly and can be read offline.
 
@@ -7,14 +7,14 @@ import { AppState } from "react-native";
 import { fetch as streamingFetch } from "expo/fetch";
 import { File } from "expo-file-system";
 import Storage from "expo-sqlite/kv-store";
-import type { About, Agent, AgentWithLatest, Effort, Found, Message, MessageEvent, Model, Pet, PetState } from "@server/contract";
+import type { About, Agent, AgentWithLatest, Avatar, AvatarState, Effort, Found, Message, MessageEvent, Model } from "@server/contract";
 import { ApiError, request, serverUrl } from "./api";
 import type { Picked } from "./files";
 
 type State = {
   agents: AgentWithLatest[];
   messages: Record<string, Message[]>;
-  pets: Pet[];
+  avatars: Avatar[];
   /** What each agent's page shows, for the agents whose page has been opened. */
   about: Record<string, About>;
   /**
@@ -27,10 +27,10 @@ type State = {
 };
 
 /** What the person can change about an agent. */
-export type AgentChanges = { name?: string; petId?: string; model?: Model; effort?: Effort; muted?: boolean; hidden?: boolean };
+export type AgentChanges = { name?: string; avatarId?: string; model?: Model; effort?: Effort; muted?: boolean; hidden?: boolean };
 
 // The number changes when the shape of what is saved does.
-const CACHE_KEY = "cache-4";
+const CACHE_KEY = "cache-5";
 const SAVE_DELAY_MS = 300;
 const NO_MESSAGES: Message[] = [];
 
@@ -42,7 +42,7 @@ function saved(): Partial<State> {
   }
 }
 
-let state: State = { agents: [], messages: {}, pets: [], about: {}, pending: {}, ...saved(), online: true };
+let state: State = { agents: [], messages: {}, avatars: [], about: {}, pending: {}, ...saved(), online: true };
 const listeners = new Set<() => void>();
 let saveTimer: ReturnType<typeof setTimeout> | null = null;
 
@@ -73,8 +73,8 @@ export function useMessages(agentId: string): Message[] {
   return useSyncExternalStore(subscribe, () => state.messages[agentId] ?? NO_MESSAGES);
 }
 
-export function usePets(): Pet[] {
-  return useSyncExternalStore(subscribe, () => state.pets);
+export function useAvatars(): Avatar[] {
+  return useSyncExternalStore(subscribe, () => state.avatars);
 }
 
 export function useAbout(agentId: string): About | undefined {
@@ -85,8 +85,8 @@ export function useOnline(): boolean {
   return useSyncExternalStore(subscribe, () => state.online);
 }
 
-/** Which animation an agent's pet plays. */
-export function petStateOf(agent: AgentWithLatest): PetState {
+/** Which animation an agent's avatar plays. */
+export function avatarStateOf(agent: AgentWithLatest): AvatarState {
   if (agent.working) return "working";
   if (agent.latest?.sender === "simon" && agent.latest.status === "failed") return "failed";
   if (agent.unread > 0) return "replied";
@@ -97,8 +97,8 @@ export function petStateOf(agent: AgentWithLatest): PetState {
 function withPending(agent: AgentWithLatest): AgentWithLatest {
   const changes = state.pending[agent.id];
   if (!changes) return agent;
-  const { petId, ...rest } = changes;
-  return { ...agent, ...rest, pet_id: petId ?? agent.pet_id };
+  const { avatarId, ...rest } = changes;
+  return { ...agent, ...rest, avatar_id: avatarId ?? agent.avatar_id };
 }
 
 function upsert(list: Message[], message: Message): Message[] {
@@ -138,12 +138,12 @@ export async function loadOlder(agentId: string): Promise<boolean> {
 }
 
 async function refresh(): Promise<void> {
-  const [agents, pets] = await Promise.all([request<AgentWithLatest[]>("/agents"), request<Pet[]>("/pets")]);
+  const [agents, avatars] = await Promise.all([request<AgentWithLatest[]>("/agents"), request<Avatar[]>("/avatars")]);
   // What the phone kept of an agent that is gone, as one deleted on another phone, goes with it.
   const kept = new Set(agents.map((agent) => agent.id));
   const ofKept = <T>(record: Record<string, T>) => Object.fromEntries(Object.entries(record).filter(([agentId]) => kept.has(agentId)));
   set({ pending: ofKept(state.pending), messages: ofKept(state.messages), about: ofKept(state.about) });
-  set({ agents: agents.map(withPending), pets });
+  set({ agents: agents.map(withPending), avatars });
   // Changes made while the server was out of reach go now.
   for (const agentId of Object.keys(state.pending)) void sendChanges(agentId).catch(() => undefined);
   await Promise.all(Object.keys(state.messages).map(loadMessages));
@@ -175,8 +175,8 @@ export async function freshStart(agentId: string): Promise<void> {
   keep(await request<Message>(`/agents/${agentId}/fresh-start`, { method: "POST" }));
 }
 
-export async function createAgent(name: string, petId: string): Promise<Agent> {
-  const agent = await request<Agent>("/agents", { method: "POST", body: { name, petId } });
+export async function createAgent(name: string, avatarId: string): Promise<Agent> {
+  const agent = await request<Agent>("/agents", { method: "POST", body: { name, avatarId } });
   set({ agents: [{ ...agent, latest: null, working: false, unread: 0 }, ...state.agents], messages: { ...state.messages, [agent.id]: [] } });
   return agent;
 }

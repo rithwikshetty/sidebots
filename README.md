@@ -51,7 +51,7 @@ tailscale serve --bg --https=443 http://127.0.0.1:4317
 
 The server listens on `127.0.0.1:4317` only. The app's server address is the machine's Tailscale name, such as `macbook.your-tailnet.ts.net`. If something else on the machine already uses port 443, publish Simon on another one, such as `--https=8443`, and add it to the address: `macbook.your-tailnet.ts.net:8443`.
 
-Two settings change where things live: `PORT` for the port, and `SIMON_HOME` for the data folder, which is `~/.simon` unless you set it. That folder holds the database, each agent's home folder with its instructions, memory and attachments, the pets and the push key. If you set `SIMON_HOME` for the server, set it for `add-person` and `push-key` too.
+Two settings change where things live: `PORT` for the port, and `SIMON_HOME` for the data folder, which is `~/.simon` unless you set it. That folder holds the database, each agent's home folder with its instructions, memory and attachments, the avatars and the push key. If you set `SIMON_HOME` for the server, set it for `add-person` and `push-key` too.
 
 To keep the server running on a Mac, use a launchd agent with `RunAtLoad` and `KeepAlive` set, `server/` as its working directory, and the full path to `node` running `src/main.ts`. Keep the code outside `~/Downloads`, `~/Documents` and `~/Desktop`, which macOS doesn't let a background service read.
 
@@ -65,9 +65,9 @@ pnpm push-key ~/Downloads/AuthKey_XXXXXXXXXX.p8 <apple-team-id>
 
 Until then notifications are off and everything else works.
 
-### New pets
+### New avatars
 
-Agents can draw new pets with the skill in `skills/hatch-pet`. Copy that folder into the `skills` folder of each person's Claude Code config folder. The skill saves pets in `~/.simon/pets`, so it needs the data folder left where it is.
+Agents can draw new avatars with the skill in `skills/make-avatar`. Copy that folder into the `skills` folder of each person's Claude Code config folder. The skill saves avatars in `~/.simon/avatars`, so it needs the data folder left where it is.
 
 ## Build the app
 
@@ -100,4 +100,4 @@ The server's tests run through its HTTP routes with the model swapped for a fake
 
 ## Licence
 
-[MIT](LICENSE). The pets, the app icon and the notification sound were made for Simon and are under the same licence.
+[MIT](LICENSE). The avatars, the app icon and the notification sound were made for Simon and are under the same licence.

@@ -1,21 +1,21 @@
 import { Pressable, StyleSheet, Text, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { ChevronLeft, Ellipsis } from "lucide-react-native";
-import type { PetState } from "@server/contract";
+import type { AvatarState } from "@server/contract";
 import { Glass } from "@/components/Glass";
-import { PetView } from "@/components/PetView";
+import { AvatarView } from "@/components/AvatarView";
 import { EdgeFade } from "@/components/EdgeFade";
 import { useTheme } from "@/lib/theme";
 import { MessageMenuView, type MessageMenuAction } from "../../modules/message-menu/src";
 
-/** The height of the bar the back button and the pet sit in, under the status bar. */
+/** The height of the bar the back button and the avatar sit in, under the status bar. */
 export const BAR_HEIGHT = 44;
-/** How far the pet's name reaches below the bar, which the chat clears. */
+/** How far the avatar's name reaches below the bar, which the chat clears. */
 export const HEADER_OVERHANG = 14;
 /** The room the messages leave below the header. */
 export const HEADER_CLEARANCE = 16;
 
-const PET = 40;
+const AVATAR = 40;
 const BAR_BUTTON = 44;
 const BAR_INSET = 16;
 
@@ -26,15 +26,15 @@ const MENU_ACTIONS: MessageMenuAction[] = [
 
 /**
  * The top of a chat, as Messages draws a conversation's: no bar, only
- * floating parts. A glass back button at the left, the agent's pet in the
+ * floating parts. A glass back button at the left, the agent's avatar in the
  * middle with its name in a glass pill under it, which a tap opens the
  * agent's page from, and a glass button at the right that opens the chat's menu. Behind them the screen fades from the
  * page colour, so messages scrolling up pass softly under them.
  */
-export function ChatHeader({ name, petId, petState, dimmed, onBack, onAbout, onFreshStart }: {
+export function ChatHeader({ name, avatarId, avatarState, dimmed, onBack, onAbout, onFreshStart }: {
   name: string;
-  petId: string;
-  petState: PetState;
+  avatarId: string;
+  avatarState: AvatarState;
   dimmed: boolean;
   onBack: () => void;
   onAbout: () => void;
@@ -70,8 +70,8 @@ export function ChatHeader({ name, petId, petState, dimmed, onBack, onAbout, onF
       </MessageMenuView>
       <View pointerEvents="box-none" style={[styles.header, { top: insets.top }]}>
         <Pressable onPress={onAbout} accessibilityRole="button" accessibilityLabel={`About ${name}`} hitSlop={6} style={styles.about}>
-          <View style={styles.pet}>
-            <PetView petId={petId} state={petState} size={PET} dimmed={dimmed} />
+          <View style={styles.avatar}>
+            <AvatarView avatarId={avatarId} state={avatarState} size={AVATAR} dimmed={dimmed} />
           </View>
           <Glass interactive style={styles.pill}>
             <Text numberOfLines={1} style={[styles.name, { color: theme.ink }]}>
@@ -90,7 +90,7 @@ const styles = StyleSheet.create({
   glass: { width: BAR_BUTTON, height: BAR_BUTTON, borderRadius: BAR_BUTTON / 2, alignItems: "center", justifyContent: "center", overflow: "hidden" },
   header: { position: "absolute", left: 0, right: 0, alignItems: "center", paddingTop: 2, zIndex: 2 },
   about: { alignItems: "center" },
-  pet: { shadowColor: "#000", shadowOpacity: 0.12, shadowRadius: 6, shadowOffset: { width: 0, height: 2 } },
+  avatar: { shadowColor: "#000", shadowOpacity: 0.12, shadowRadius: 6, shadowOffset: { width: 0, height: 2 } },
   pill: {
     marginTop: -5,
     paddingHorizontal: 11,

@@ -55,7 +55,7 @@ export type Agent = {
   id: string;
   person_id: string;
   name: string;
-  pet_id: string;
+  avatar_id: string;
   model: Model;
   effort: Effort;
   muted: boolean;
@@ -116,19 +116,19 @@ export function plainText(markdown: string): string {
 export type MessageEvent = { message: Message; agent: AgentWithLatest };
 /** A phone that takes notifications: its Apple device token, the app identifier Apple delivers to, and which of Apple's push services issued the token. */
 export type Device = { token: string; topic: string; environment: "sandbox" | "production" };
-export type Pet = { id: string; displayName: string; description: string; spritesheetPath: string };
+export type Avatar = { id: string; displayName: string; description: string; spritesheetPath: string };
 
 /**
- * A pet's spritesheet. One row per state, in this order, with how many
- * frames the row has and how long the app shows each one. The pet's 16 by 16
+ * An avatar's spritesheet. One row per state, in this order, with how many
+ * frames the row has and how long the app shows each one. The avatar's 16 by 16
  * drawing sits in `art` inside every cell, with one drawing pixel of room
  * above it for a hop.
  */
-export const PET_STATES = {
+export const AVATAR_STATES = {
   resting: { frames: 6, frameMs: 450 },
   working: { frames: 6, frameMs: 150 },
   replied: { frames: 6, frameMs: 300 },
   failed: { frames: 8, frameMs: 300 },
 } as const;
-export type PetState = keyof typeof PET_STATES;
-export const PET_SHEET = { columns: 8, cellWidth: 192, cellHeight: 208, art: { left: 24, top: 48, size: 144, pixel: 9 } } as const;
+export type AvatarState = keyof typeof AVATAR_STATES;
+export const AVATAR_SHEET = { columns: 8, cellWidth: 192, cellHeight: 208, art: { left: 24, top: 48, size: 144, pixel: 9 } } as const;

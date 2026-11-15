@@ -1,23 +1,23 @@
 import { useEffect, useState } from "react";
 import { Image } from "expo-image";
 import Animated, { useAnimatedStyle, withTiming } from "react-native-reanimated";
-import { PET_SHEET, PET_STATES, type PetState } from "@server/contract";
-import { petSheetUrl } from "@/lib/api";
+import { AVATAR_SHEET, AVATAR_STATES, type AvatarState } from "@server/contract";
+import { avatarSheetUrl } from "@/lib/api";
 import { EASE } from "@/lib/motion";
 
-const { columns, cellWidth, cellHeight, art } = PET_SHEET;
-const ROWS = Object.keys(PET_STATES) as PetState[];
+const { columns, cellWidth, cellHeight, art } = AVATAR_SHEET;
+const ROWS = Object.keys(AVATAR_STATES) as AvatarState[];
 // The window onto a cell: the drawing plus the room above it for a hop.
 const WINDOW_TOP = art.top - art.pixel;
 const WINDOW_HEIGHT = art.size + art.pixel;
 
 /**
- * An agent's pet, playing the animation for `state`. `size` is the width of
- * the pet's drawing in points; the view is one drawing pixel taller. A
- * `dimmed` pet, as while the server is out of reach, fades to grey and back.
+ * An agent's avatar, playing the animation for `state`. `size` is the width of
+ * the avatar's drawing in points; the view is one drawing pixel taller. A
+ * `dimmed` avatar, as while the server is out of reach, fades to grey and back.
  */
-export function PetView({ petId, state, size, dimmed = false }: { petId: string; state: PetState; size: number; dimmed?: boolean }) {
-  const { frames, frameMs } = PET_STATES[state];
+export function AvatarView({ avatarId, state, size, dimmed = false }: { avatarId: string; state: AvatarState; size: number; dimmed?: boolean }) {
+  const { frames, frameMs } = AVATAR_STATES[state];
   const [frame, setFrame] = useState(0);
   useEffect(() => {
     setFrame(0);
@@ -32,7 +32,7 @@ export function PetView({ petId, state, size, dimmed = false }: { petId: string;
   return (
     <Animated.View style={[{ width: size, height: WINDOW_HEIGHT * scale, overflow: "hidden" }, fade]}>
       <Image
-        source={{ uri: petSheetUrl(petId) }}
+        source={{ uri: avatarSheetUrl(avatarId) }}
         cachePolicy="disk"
         contentFit="fill"
         style={{

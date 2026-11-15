@@ -1,10 +1,10 @@
-// Turns a pet design into pet.json and spritesheet.png.
+// Turns an avatar design into avatar.json and spritesheet.png.
 //
-//   node render.ts <pet-folder>
+//   node render.ts <avatar-folder>
 //
 // The folder holds design.json. Every animation frame is the design's one
-// 16 by 16 grid with a different expression, offset or effect, so a pet is
-// drawn once and moves the same way as every other pet.
+// 16 by 16 grid with a different expression, offset or effect, so an avatar is
+// drawn once and moves the same way as every other avatar.
 
 import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -48,7 +48,7 @@ const EFFECTS: Record<Effect, { row: number; col: number; art: string[] }> = {
   sweat: { row: 2, col: 13, art: ["s.", "ss"] },
 };
 
-// One row per pet state, in the order the app reads them.
+// One row per avatar state, in the order the app reads them.
 const ROWS: { state: string; frames: Frame[] }[] = [
   { state: "resting", frames: [{}, {}, {}, { eyes: "closed" }, {}, {}] },
   { state: "working", frames: [0, -1, 0, -1, 0, -1].map((dy, i) => ({ dy, eyes: "down", effect: i > 1 ? "sweat" : undefined })) },
@@ -173,12 +173,12 @@ function png(width: number, height: number, rgba: Buffer): Buffer {
 
 const folder = process.argv[2];
 if (!folder) {
-  console.error("usage: node render.ts <pet-folder>");
+  console.error("usage: node render.ts <avatar-folder>");
   process.exit(1);
 }
 const design: Design = JSON.parse(readFileSync(join(folder, "design.json"), "utf8"));
 check(design);
 writeFileSync(join(folder, "spritesheet.png"), render(design));
 const manifest = { id: design.id, displayName: design.displayName, description: design.description, spritesheetPath: "spritesheet.png" };
-writeFileSync(join(folder, "pet.json"), JSON.stringify(manifest, null, 2) + "\n");
+writeFileSync(join(folder, "avatar.json"), JSON.stringify(manifest, null, 2) + "\n");
 console.log(`${design.displayName}: ${join(folder, "spritesheet.png")}`);

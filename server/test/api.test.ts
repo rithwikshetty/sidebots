@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { DatabaseSync } from "node:sqlite";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -59,7 +59,7 @@ test("a message gets the agent's reply, run in the agent's folder under its owne
     turns.push(turn);
     return reply(`You said: ${turn.prompt.text}`);
   });
-  const agent = (await call(ME, "POST", "/agents", { name: "Wedding", petId: "mochi" })).json;
+  const agent = (await call(ME, "POST", "/agents", { name: "Wedding", avatarId: "mochi" })).json;
 
   const sent = await say(ME, agent.id, "hello");
   assert.equal(sent.status, 201);
@@ -92,7 +92,7 @@ test("messages sent while the agent is busy run one at a time, in order, on the 
     running--;
     return reply("ok");
   });
-  const agent = (await call(ME, "POST", "/agents", { name: "Money", petId: "cog" })).json;
+  const agent = (await call(ME, "POST", "/agents", { name: "Money", avatarId: "cog" })).json;
 
   for (const body of ["one", "two", "three"]) await say(ME, agent.id, body);
   await queue.kick(agent.id);
@@ -109,7 +109,7 @@ test("a failed turn keeps the message and adds a note from Simon saying why", as
   const { queue, call, say } = setup(async () => {
     throw new Error("You've reached your usage limit.");
   });
-  const agent = (await call(ME, "POST", "/agents", { name: "Scout", petId: "moss" })).json;
+  const agent = (await call(ME, "POST", "/agents", { name: "Scout", avatarId: "moss" })).json;
 
   await say(ME, agent.id, "find me a flat");
   await queue.kick(agent.id);
@@ -126,7 +126,7 @@ test("a failed turn keeps the message and adds a note from Simon saying why", as
 
 test("each person only reaches their own agents", async () => {
   const { call, say } = setup(async () => reply("ok"));
-  const mine = (await call(ME, "POST", "/agents", { name: "Gym", petId: "hop" })).json;
+  const mine = (await call(ME, "POST", "/agents", { name: "Gym", avatarId: "hop" })).json;
 
   assert.deepEqual((await call(HER, "GET", "/agents")).json, []);
   assert.equal((await call(HER, "GET", `/agents/${mine.id}/messages`)).status, 404);
@@ -137,8 +137,8 @@ test("each person only reaches their own agents", async () => {
 test("the event stream carries the person's own messages and their status changes, and nobody else's", async () => {
   let finish!: () => void;
   const { queue, call, say, app } = setup(() => new Promise((resolve) => (finish = () => resolve(reply("done")))));
-  const mine = (await call(ME, "POST", "/agents", { name: "Wedding", petId: "mochi" })).json;
-  const hers = (await call(HER, "POST", "/agents", { name: "Garden", petId: "moss" })).json;
+  const mine = (await call(ME, "POST", "/agents", { name: "Wedding", avatarId: "mochi" })).json;
+  const hers = (await call(HER, "POST", "/agents", { name: "Garden", avatarId: "moss" })).json;
 
   const response = await app.request("/events", { headers: { "Tailscale-User-Login": ME } });
   const reader = response.body!.pipeThrough(new TextDecoderStream()).getReader();
@@ -168,7 +168,7 @@ test("the event stream carries the person's own messages and their status change
 
 test("after a known message returns only what came later", async () => {
   const { queue, call, say } = setup(async (turn) => reply(`re: ${turn.prompt.text}`));
-  const agent = (await call(ME, "POST", "/agents", { name: "Books", petId: "wisp" })).json;
+  const agent = (await call(ME, "POST", "/agents", { name: "Books", avatarId: "wisp" })).json;
   const first = (await say(ME, agent.id, "first")).json;
   await queue.kick(agent.id);
 
@@ -182,7 +182,7 @@ test("files sent with a message go into the agent's folder, the agent is told wh
     prompts.push(turn.prompt.text);
     return reply("nice");
   });
-  const agent = (await call(ME, "POST", "/agents", { name: "Scout", petId: "moss" })).json;
+  const agent = (await call(ME, "POST", "/agents", { name: "Scout", avatarId: "moss" })).json;
 
   const sent = await say(ME, agent.id, "what is this?", [new File(["jpeg bytes"], "IMG%20 0042.jpg", { type: "image/jpeg" })]);
   await queue.kick(agent.id);
@@ -207,7 +207,7 @@ test("a fresh start has the agent save its memory, then gives the next message a
     turns.push(turn);
     return reply("sure", `session-${turns.length}`);
   });
-  const agent = (await call(ME, "POST", "/agents", { name: "Wedding", petId: "mochi" })).json;
+  const agent = (await call(ME, "POST", "/agents", { name: "Wedding", avatarId: "mochi" })).json;
   await say(ME, agent.id, "book the band");
   await queue.kick(agent.id);
 
@@ -241,7 +241,7 @@ test("a session that has grown large gets a fresh start by itself after its repl
     sessions.push(turn.sessionId);
     return reply("ok", "big", 150_000);
   });
-  const agent = (await call(ME, "POST", "/agents", { name: "Money", petId: "cog" })).json;
+  const agent = (await call(ME, "POST", "/agents", { name: "Money", avatarId: "cog" })).json;
   await say(ME, agent.id, "budget");
   await queue.kick(agent.id);
 
@@ -257,9 +257,9 @@ test("a search, by an agent or from the app, reaches all of the person's chats a
     if (turn.prompt.text === "search") searches.push(turn.searchHistory("florist"));
     return reply("ok");
   });
-  const wedding = (await call(ME, "POST", "/agents", { name: "Wedding", petId: "mochi" })).json;
-  const money = (await call(ME, "POST", "/agents", { name: "Money", petId: "cog" })).json;
-  const hers = (await call(HER, "POST", "/agents", { name: "Garden", petId: "moss" })).json;
+  const wedding = (await call(ME, "POST", "/agents", { name: "Wedding", avatarId: "mochi" })).json;
+  const money = (await call(ME, "POST", "/agents", { name: "Money", avatarId: "cog" })).json;
+  const hers = (await call(HER, "POST", "/agents", { name: "Garden", avatarId: "moss" })).json;
   await say(ME, wedding.id, "The florist quoted 400");
   await say(HER, hers.id, "my florist is a secret");
   await queue.kick(wedding.id);
@@ -295,7 +295,7 @@ test("a reply or a failed turn notifies the person's phones, and a phone Apple h
     assert.equal((await call(login, "POST", "/devices", { token, topic: "com.example.simon", environment: "production" })).status, 201);
   }
   assert.equal((await call(ME, "POST", "/devices", { token: "nope", topic: "com.example.simon", environment: "production" })).status, 400);
-  const agent = (await call(ME, "POST", "/agents", { name: "Wedding", petId: "mochi" })).json;
+  const agent = (await call(ME, "POST", "/agents", { name: "Wedding", avatarId: "mochi" })).json;
   // A reply counts as unread when it is newer than the chat was read, which begins at the agent's creation.
   await new Promise((resolve) => setTimeout(resolve, 1));
 
@@ -323,18 +323,18 @@ test("a reply or a failed turn notifies the person's phones, and a phone Apple h
   assert.equal((await call(HER, "POST", `/agents/${agent.id}/read`)).status, 404);
 });
 
-test("an agent's name, pet, model and effort can be changed, and its turns run on its model at its effort", async () => {
+test("an agent's name, avatar, model and effort can be changed, and its turns run on its model at its effort", async () => {
   const models: string[][] = [];
   const { store, queue, call, say } = setup(async (turn) => {
     models.push([turn.model, turn.effort]);
     return reply("ok");
   });
-  store.installStarterPets(join(import.meta.dirname, "..", "..", "pets"));
-  const agent = (await call(ME, "POST", "/agents", { name: "Money", petId: "cog" })).json;
+  store.installStarterAvatars(join(import.meta.dirname, "..", "..", "avatars"));
+  const agent = (await call(ME, "POST", "/agents", { name: "Money", avatarId: "cog" })).json;
   assert.deepEqual([agent.model, agent.effort], ["opus", "medium"]);
 
-  const changed = await call(ME, "PATCH", `/agents/${agent.id}`, { name: "Budget", petId: "moss", model: "haiku", effort: "high" });
-  assert.deepEqual([changed.json.name, changed.json.pet_id, changed.json.model, changed.json.effort], ["Budget", "moss", "haiku", "high"]);
+  const changed = await call(ME, "PATCH", `/agents/${agent.id}`, { name: "Budget", avatarId: "moss", model: "haiku", effort: "high" });
+  assert.deepEqual([changed.json.name, changed.json.avatar_id, changed.json.model, changed.json.effort], ["Budget", "moss", "haiku", "high"]);
   assert.match(readFileSync(join(store.agentHome(agent.id), "CLAUDE.md"), "utf8"), /^# Budget\n\nYou are Budget, one of Alex's agents/);
   await say(ME, agent.id, "hello");
   await queue.kick(agent.id);
@@ -342,7 +342,7 @@ test("an agent's name, pet, model and effort can be changed, and its turns run o
 
   assert.equal((await call(ME, "PATCH", `/agents/${agent.id}`, { model: "gpt" })).status, 400);
   assert.equal((await call(ME, "PATCH", `/agents/${agent.id}`, { effort: "ultracode" })).status, 400);
-  assert.equal((await call(ME, "PATCH", `/agents/${agent.id}`, { petId: "dragon" })).status, 400);
+  assert.equal((await call(ME, "PATCH", `/agents/${agent.id}`, { avatarId: "dragon" })).status, 400);
   assert.equal((await call(HER, "PATCH", `/agents/${agent.id}`, { name: "Mine" })).status, 404);
 });
 
@@ -353,7 +353,7 @@ test("deleting an agent removes its messages, its jobs, its folder and its Claud
   });
   const configDir = join(home, "claude");
   store.addPerson({ name: "Sam", login: "sam@example.com", configDir });
-  const agent = (await call("sam@example.com", "POST", "/agents", { name: "Scout", petId: "moss" })).json;
+  const agent = (await call("sam@example.com", "POST", "/agents", { name: "Scout", avatarId: "moss" })).json;
   const folder = store.agentHome(agent.id);
   const sessions = join(configDir, "projects", folder.replace(/[^a-zA-Z0-9]/g, "-"));
   mkdirSync(sessions, { recursive: true });
@@ -385,7 +385,7 @@ test("a job runs when its time comes, in a session of its own, and only a run wi
     runs.push([turn.prompt.text, turn.sessionId, turn.keepSession]);
     return turn.prompt.text.startsWith("This is a run of one of your jobs") ? reply(found, "job-session") : reply("ok");
   }, () => time);
-  const agent = (await call(ME, "POST", "/agents", { name: "Scout", petId: "moss" })).json;
+  const agent = (await call(ME, "POST", "/agents", { name: "Scout", avatarId: "moss" })).json;
   await say(ME, agent.id, "watch the price");
   await queue.kick(agent.id);
   const bodies = async () => (await call(ME, "GET", `/agents/${agent.id}/messages`)).json.map((m: { body: string }) => m.body);
@@ -437,7 +437,7 @@ test("a job set for one time runs once, a daily one keeps to its days, and a job
     if (fail) throw new Error("You've reached your usage limit.");
     return reply("Time to call the garage.");
   }, () => time);
-  const agent = (await call(ME, "POST", "/agents", { name: "Errands", petId: "hop" })).json;
+  const agent = (await call(ME, "POST", "/agents", { name: "Errands", avatarId: "hop" })).json;
   await say(ME, agent.id, "set up");
   await queue.kick(agent.id);
 
@@ -465,7 +465,7 @@ test("a reply to a message tells the agent which one, and the chat pages back th
     prompts.push(turn.prompt.text);
     return reply("The florist is Petal & Co.");
   });
-  const agent = (await call(ME, "POST", "/agents", { name: "Wedding", petId: "mochi" })).json;
+  const agent = (await call(ME, "POST", "/agents", { name: "Wedding", avatarId: "mochi" })).json;
   await say(ME, agent.id, "who is the florist?");
   await queue.kick(agent.id);
   const [, answer] = (await call(ME, "GET", `/agents/${agent.id}/messages`)).json;
@@ -494,8 +494,8 @@ test("a muted agent notifies nobody, and a hidden one comes back when it has som
     return "sent";
   });
   await call(ME, "POST", "/devices", { token: "a".repeat(64), topic: "com.example.simon", environment: "production" });
-  const loud = (await call(ME, "POST", "/agents", { name: "Errands", petId: "hop" })).json;
-  const quiet = (await call(ME, "POST", "/agents", { name: "Scout", petId: "moss" })).json;
+  const loud = (await call(ME, "POST", "/agents", { name: "Errands", avatarId: "hop" })).json;
+  const quiet = (await call(ME, "POST", "/agents", { name: "Scout", avatarId: "moss" })).json;
   await call(ME, "PATCH", `/agents/${loud.id}`, { hidden: true });
   await call(ME, "PATCH", `/agents/${quiet.id}`, { hidden: true, muted: true });
 
@@ -510,7 +510,7 @@ test("a muted agent notifies nobody, and a hidden one comes back when it has som
   assert.deepEqual(sent.map((notice) => [notice.agentId, notice.badge]), [[loud.id, 1]]);
 });
 
-test("a database from before a column was added gets it, with what it held kept", () => {
+test("an older home is brought up to date, with what it held kept", () => {
   const home = mkdtempSync(join(tmpdir(), "simon-test-"));
   const old = new DatabaseSync(join(home, "simon.sqlite"));
   old.exec(`
@@ -522,11 +522,16 @@ test("a database from before a column was added gets it, with what it held kept"
     insert into messages values ('m', 'a', 'person', 'hello', '[]', 'done', 1);
   `);
   old.close();
+  cpSync(join(import.meta.dirname, "..", "..", "avatars", "moss"), join(home, "pets", "moss"), { recursive: true });
+  renameSync(join(home, "pets", "moss", "avatar.json"), join(home, "pets", "moss", "pet.json"));
 
   for (const _open of [1, 2]) {
     const store = openStore(home);
-    assert.deepEqual(store.agent("a"), { id: "a", person_id: "p", name: "Scout", pet_id: "moss", model: "opus", effort: "medium", muted: false, hidden: false, session_id: "s", read_at: 0, created_at: 1 });
+    assert.deepEqual(store.agent("a"), { id: "a", person_id: "p", name: "Scout", avatar_id: "moss", model: "opus", effort: "medium", muted: false, hidden: false, session_id: "s", read_at: 0, created_at: 1 });
     assert.deepEqual(store.messages("a").map((m) => [m.body, m.reply_to, m.job_id]), [["hello", null, null]]);
+    assert.deepEqual(store.avatars().map((avatar) => avatar.id), ["moss"]);
+    assert.equal(store.avatarSheet("moss"), join(home, "avatars", "moss", "spritesheet.png"));
+    assert.equal(existsSync(join(home, "pets")), false);
     store.close();
   }
 });
@@ -543,7 +548,7 @@ test("a message sent while the agent works goes into the turn it is running, and
     turn.replied("Booked the band and the florist.", [turn.prompt.id, later.id]);
     return { sessionId: "session-1", contextTokens: 0 };
   });
-  const agent = (await call(ME, "POST", "/agents", { name: "Wedding", petId: "mochi" })).json;
+  const agent = (await call(ME, "POST", "/agents", { name: "Wedding", avatarId: "mochi" })).json;
   await say(ME, agent.id, "book the band");
   const working = queue.kick(agent.id);
   while (!release) await new Promise((resolve) => setTimeout(resolve, 1));
@@ -584,7 +589,7 @@ test("an agent's updates while it works wait a minute, then come no more than ev
     return "sent";
   });
   await call(ME, "POST", "/devices", { token: "a".repeat(64), topic: "com.example.simon", environment: "production" });
-  const agent = (await call(ME, "POST", "/agents", { name: "Scout", petId: "moss" })).json;
+  const agent = (await call(ME, "POST", "/agents", { name: "Scout", avatarId: "moss" })).json;
   await new Promise((resolve) => setTimeout(resolve, 1));
   await say(ME, agent.id, "find me a flat");
   await queue.kick(agent.id);
@@ -612,7 +617,7 @@ test("a job's run can't send updates", async () => {
     else updates.push(turn.sendUpdate !== undefined);
     return reply("SILENT");
   }, () => time);
-  const agent = (await call(ME, "POST", "/agents", { name: "Scout", petId: "moss" })).json;
+  const agent = (await call(ME, "POST", "/agents", { name: "Scout", avatarId: "moss" })).json;
   await say(ME, agent.id, "set up");
   await queue.kick(agent.id);
   time += 5 * 60_000;

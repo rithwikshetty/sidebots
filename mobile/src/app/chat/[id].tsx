@@ -8,6 +8,7 @@ import { KeyboardAwareLegendList } from "@legendapp/list/keyboard";
 import type { LegendListRef } from "@legendapp/list/react-native";
 import { Reply, X } from "lucide-react-native";
 import type { AgentWithLatest, Message } from "@server/contract";
+import { AvatarView } from "@/components/AvatarView";
 import { BAR_HEIGHT, ChatHeader, HEADER_CLEARANCE, HEADER_OVERHANG } from "@/components/ChatHeader";
 import { Composer } from "@/components/Composer";
 import { EdgeFade } from "@/components/EdgeFade";
@@ -16,7 +17,6 @@ import { Glass } from "@/components/Glass";
 import { IconButton } from "@/components/IconButton";
 import { Markdown } from "@/components/Markdown";
 import { FileCard, MessagePhotos, type Shown } from "@/components/MessageAttachments";
-import { PetView } from "@/components/PetView";
 import { SwipeToReply } from "@/components/SwipeToReply";
 import { problem } from "@/lib/alerts";
 import { attachmentUrl } from "@/lib/api";
@@ -26,7 +26,7 @@ import { useWorkingLine } from "@/lib/lines";
 import { preview } from "@/lib/messages";
 import { EASE, HIDE, MOVE, SHOW, arrive } from "@/lib/motion";
 import { askForPush, showChatOnScreen } from "@/lib/push";
-import { freshStart, loadMessages, loadOlder, markRead, petStateOf, send, useAgent, useMessages, useOnline } from "@/lib/state";
+import { avatarStateOf, freshStart, loadMessages, loadOlder, markRead, send, useAgent, useMessages, useOnline } from "@/lib/state";
 import { type Theme, useTheme } from "@/lib/theme";
 import { dayLabel, listTime, sameDay } from "@/lib/time";
 
@@ -41,7 +41,7 @@ function ChatWith({ agent }: { agent: AgentWithLatest }) {
   const insets = useSafeAreaInsets();
   const router = useRouter();
   const online = useOnline();
-  const petState = petStateOf(agent);
+  const avatarState = avatarStateOf(agent);
   const messages = useMessages(agent.id);
   // The person's newest message, which carries the chat's receipt.
   const newestMine = messages.findLast((message) => message.sender === "person")?.id;
@@ -197,8 +197,8 @@ function ChatWith({ agent }: { agent: AgentWithLatest }) {
       />
       <ChatHeader
         name={agent.name}
-        petId={agent.pet_id}
-        petState={online ? (petState === "replied" ? "resting" : petState) : "resting"}
+        avatarId={agent.avatar_id}
+        avatarState={online ? (avatarState === "replied" ? "resting" : avatarState) : "resting"}
         dimmed={!online}
         onBack={() => router.back()}
         onAbout={() => router.push(`/agent/${agent.id}`)}
@@ -238,13 +238,13 @@ function ChatWith({ agent }: { agent: AgentWithLatest }) {
   );
 }
 
-/** The agent's pet at work with its playful line, fading in as the work starts and out as the reply comes. */
+/** The agent's avatar at work with its playful line, fading in as the work starts and out as the reply comes. */
 function WorkingRow({ agent }: { agent: AgentWithLatest }) {
   const theme = useTheme();
   const line = useWorkingLine();
   return (
     <Animated.View entering={SHOW} exiting={HIDE} style={styles.workingRow}>
-      <PetView petId={agent.pet_id} state="working" size={48} />
+      <AvatarView avatarId={agent.avatar_id} state="working" size={48} />
       <FadingText style={[styles.workingText, { color: theme.ink2 }]}>{line}</FadingText>
     </Animated.View>
   );

@@ -7,7 +7,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Bell, BellOff, ChevronRight, Eye, EyeOff, Plus, Search, Trash2 } from "lucide-react-native";
 import type { AgentWithLatest, Found } from "@server/contract";
 import { Glass } from "@/components/Glass";
-import { PetView } from "@/components/PetView";
+import { AvatarView } from "@/components/AvatarView";
 import { EdgeFade } from "@/components/EdgeFade";
 import { FadingText } from "@/components/FadingText";
 import { confirmDelete, problem } from "@/lib/alerts";
@@ -15,7 +15,7 @@ import { serverUrl } from "@/lib/api";
 import { useWorkingLine } from "@/lib/lines";
 import { preview } from "@/lib/messages";
 import { EASE, HIDE, MOVE, POP_IN, POP_OUT, SHOW } from "@/lib/motion";
-import { changeAgent, findMessages, petStateOf, useAgents, useOnline, type AgentChanges } from "@/lib/state";
+import { avatarStateOf, changeAgent, findMessages, useAgents, useOnline, type AgentChanges } from "@/lib/state";
 import { usePush } from "@/lib/push";
 import { useTheme } from "@/lib/theme";
 import { listTime } from "@/lib/time";
@@ -222,13 +222,13 @@ function RowAction({ icon: Icon, label, color, onPress }: { icon: ComponentType<
 /** An agent as a row of the list. With `found`, the row shows that message from its chat in place of the latest one. */
 function AgentRow({ agent, found, search, online, onPress }: { agent: AgentWithLatest; found?: Found; search: string; online: boolean; onPress: () => void }) {
   const theme = useTheme();
-  const petState = found ? "resting" : petStateOf(agent);
+  const avatarState = found ? "resting" : avatarStateOf(agent);
   const line = useWorkingLine();
-  const working = online && petState === "working";
+  const working = online && avatarState === "working";
   const unread = !found && agent.unread > 0;
   return (
     <Pressable onPress={onPress} style={({ pressed }) => [styles.row, { backgroundColor: pressed ? theme.field : theme.bg }]}>
-      <PetView petId={agent.pet_id} state={online ? petState : "resting"} size={48} dimmed={!online} />
+      <AvatarView avatarId={agent.avatar_id} state={online ? avatarState : "resting"} size={48} dimmed={!online} />
       <View style={[styles.body, { borderBottomColor: theme.line }]}>
         <View style={styles.top}>
           <View style={styles.title}>
