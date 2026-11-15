@@ -5,8 +5,8 @@ import { useTheme } from "@/lib/theme";
 
 /**
  * The surface of something that floats over the content: a bar button the
- * app draws itself, or a pill. It is Liquid Glass tinted with the card colour,
- * and `interactive` glass answers a touch as the system's does. An iOS without
+ * app draws itself, or a pill. It is the system's own Liquid Glass, as iOS
+ * draws it, and `interactive` glass answers a touch as the system's does. An iOS without
  * Liquid Glass gets the card itself with a hairline edge, and an `interactive`
  * card dims while a finger is on it.
  */
@@ -15,7 +15,7 @@ export function Glass({ interactive = false, style, children }: { interactive?: 
   const [touched, setTouched] = useState(false);
   if (isLiquidGlassAvailable()) {
     return (
-      <GlassView glassEffectStyle="regular" isInteractive={interactive} tintColor={theme.card} style={style}>
+      <GlassView glassEffectStyle="regular" isInteractive={interactive} style={style}>
         {children}
       </GlassView>
     );

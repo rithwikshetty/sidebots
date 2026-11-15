@@ -192,7 +192,7 @@ function ChatWith({ agent }: { agent: AgentWithLatest }) {
         <EdgeFade edge="bottom" height={insets.bottom + COMPOSER_GAP + 16} solid={0} />
         <View style={[styles.composer, { paddingBottom: insets.bottom + COMPOSER_GAP }]} onLayout={(event) => contentInsetEndAdjustment.set(event.nativeEvent.layout.height)}>
           {replyTo ? (
-            <Glass style={[styles.replying, { borderColor: theme.line }]}>
+            <Glass style={styles.replying}>
               <Reply size={16} strokeWidth={2} color={theme.ink2} />
               <View style={styles.replyingText}>
                 <Text style={[styles.replyingTitle, { color: theme.ink }]}>Replying to {replyTo.sender === "person" ? "yourself" : agent.name}</Text>
@@ -366,7 +366,6 @@ const styles = StyleSheet.create({
     paddingVertical: 8,
     borderRadius: 18,
     borderCurve: "continuous",
-    borderWidth: StyleSheet.hairlineWidth,
     overflow: "hidden",
   },
   replyingText: { flex: 1 },

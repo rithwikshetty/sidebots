@@ -133,7 +133,7 @@ export function Composer({
 
   return (
     <Animated.View layout={layout} style={[styles.field, { height: fieldHeight }]}>
-      <Glass style={[StyleSheet.absoluteFill, styles.surface, { borderColor: theme.line }]} />
+      <Glass style={[StyleSheet.absoluteFill, styles.surface]} />
       <View
         style={[styles.measure, { left: frame.left, right: frame.right }]}
         pointerEvents="none"
@@ -245,7 +245,7 @@ function restingLine(font: LineFont | null, lineHeight: number): TextStyle {
 
 const styles = StyleSheet.create({
   field: { borderRadius: RADIUS, borderCurve: "continuous", overflow: "hidden" },
-  surface: { borderRadius: RADIUS, borderCurve: "continuous", borderWidth: StyleSheet.hairlineWidth },
+  surface: { borderRadius: RADIUS, borderCurve: "continuous" },
   measure: { position: "absolute", top: 0, opacity: 0 },
   text: { includeFontPadding: false, fontWeight: "400", fontSize: FONT_SIZE },
   textFrame: { position: "absolute" },
