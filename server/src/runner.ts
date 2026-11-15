@@ -44,6 +44,8 @@ export type Turn = {
   scheduleJob: (request: JobRequest) => string;
   listJobs: () => string;
   cancelJob: (id: string) => string;
+  /** Sends the person a short update while the agent works, for a turn they are waiting on. Answers in words the agent reads. */
+  sendUpdate?: (text: string) => string;
 };
 /** `contextTokens` is how much the session held when the turn ended. */
 export type TurnResult = { sessionId: string; contextTokens: number };
@@ -60,6 +62,9 @@ const RECENT_MESSAGE_CHARS = 1500;
 const QUOTE_CHARS = 300;
 // How often the clock looks for jobs whose time has come.
 const CLOCK_MS = 15_000;
+// How long a turn runs before the agent may send an update, and how long between updates.
+const FIRST_UPDATE_MS = 60_000;
+const UPDATE_GAP_MS = 3 * 60_000;
 /** What a job's run replies when it has nothing to tell the person. */
 const SILENT = "SILENT";
 const TOOLS = ["search_history", "schedule_job", "list_jobs", "cancel_job"];
@@ -123,6 +128,7 @@ export const claudeTurn: RunTurn = async ({
   scheduleJob,
   listJobs,
   cancelJob,
+  sendUpdate,
 }) => {
   const simon = createSdkMcpServer({
     name: "simon",
@@ -147,6 +153,16 @@ export const claudeTurn: RunTurn = async ({
       ),
       tool("list_jobs", "List the jobs you have saved, with when each next runs and the time now.", {}, async () => text(listJobs())),
       tool("cancel_job", "Remove one of your jobs.", { id: z.string().describe("The job's id, as list_jobs gives it") }, async ({ id }) => text(cancelJob(id))),
+      ...(sendUpdate
+        ? [
+            tool(
+              "send_update",
+              "Send the person a short text while you are still working. Use it only when the work is taking a long time: after a minute or more, and then no more than every few minutes. Say in a sentence or two what you have done and what is left. It arrives quietly, without a notification; your final reply is what tells them you are done, so don't repeat the update there. Don't use it for work that will be done soon.",
+              { text: z.string().describe("The update, as a short plain text") },
+              async (update) => text(sendUpdate(update.text)),
+            ),
+          ]
+        : []),
     ],
   });
   const input = inbox();
@@ -183,7 +199,7 @@ export const claudeTurn: RunTurn = async ({
       settings: { autoMemoryEnabled: true, autoMemoryDirectory: join(cwd, "memory"), env: { CLAUDE_CODE_DISABLE_AUTO_MEMORY: "0" } },
       skills: "all",
       mcpServers: { simon },
-      allowedTools: TOOLS.map((name) => `mcp__simon__${name}`),
+      allowedTools: [...TOOLS, ...(sendUpdate ? ["send_update"] : [])].map((name) => `mcp__simon__${name}`),
       permissionMode: "auto",
       // Auto mode asks here when its classifier can't decide. Nobody is at
       // the keyboard, so the agent carries on without the action.
@@ -322,12 +338,13 @@ export function createQueue(store: Store, runTurn: RunTurn, now: () => number = 
       if (!agent || !person) return;
       const message = store.nextQueued(agentId);
       const job = message ? undefined : store.dueJob(agentId, now());
-      const turn = (text: string, rest: Pick<Turn, "followUps" | "seen" | "replied"> & { id?: string; ofJob?: boolean }) =>
+      const turn = (text: string, rest: Pick<Turn, "followUps" | "seen" | "replied" | "sendUpdate"> & { id?: string; ofJob?: boolean }) =>
         runTurn({
           prompt: { id: rest.id ?? randomUUID(), text },
           followUps: rest.followUps,
           seen: rest.seen,
           replied: rest.replied,
+          sendUpdate: rest.sendUpdate,
           cwd: store.agentHome(agent.id),
           sessionId: rest.ofJob ? null : agent.session_id,
           configDir: person.claude_config_dir,
@@ -399,6 +416,18 @@ export function createQueue(store: Store, runTurn: RunTurn, now: () => number = 
           return () => arrivals.delete(agent.id);
         },
       };
+      // Updates while the agent works: none in the first minute, then at most one every few minutes.
+      const started = now();
+      let lastUpdate: number | null = null;
+      const sendUpdate = (update: string) => {
+        const at = now();
+        if (!update.trim()) return "Say what the update is.";
+        if (at - started < FIRST_UPDATE_MS) return "Too soon for an update. Carry on, and send one only if the work runs well past a minute.";
+        if (lastUpdate !== null && at - lastUpdate < UPDATE_GAP_MS) return "You sent an update moments ago. Carry on, and tell the rest in your reply.";
+        lastUpdate = at;
+        store.addMessage(agent.id, "agent", update.trim(), "done", { interim: true });
+        return "Sent. Carry on with the work.";
+      };
       try {
         const result = await turn(
           promptFor(message, person, {
@@ -409,6 +438,7 @@ export function createQueue(store: Store, runTurn: RunTurn, now: () => number = 
           {
             id: message.id,
             followUps,
+            sendUpdate,
             seen: (ids) => store.markSeen(ids),
             replied: (reply, ids) => {
               store.addMessage(agent.id, "agent", reply, "done");

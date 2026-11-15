@@ -566,3 +566,56 @@ test("a message sent while the agent works goes into the turn it is running, and
   assert.equal(typeof status(after, followUp.id)?.seen_at, "number");
   assert.deepEqual(prompts, ["book the band", "and the florist"]);
 });
+
+test("an agent's updates while it works wait a minute, then come no more than every few minutes, and notify nobody; its reply does", async () => {
+  let time = new Date(2026, 10, 16, 9, 0).getTime();
+  const answers: string[] = [];
+  const { store, queue, call, say } = setup(async (turn) => {
+    answers.push(turn.sendUpdate!("Started."));
+    time += 2 * 60_000;
+    answers.push(turn.sendUpdate!("Found three flats, checking the third."));
+    time += 60_000;
+    answers.push(turn.sendUpdate!("Still checking."));
+    return reply("Here are the three flats.");
+  }, () => time);
+  const sent: Notice[] = [];
+  startPush(store, async (_device, notice) => {
+    sent.push(notice);
+    return "sent";
+  });
+  await call(ME, "POST", "/devices", { token: "a".repeat(64), topic: "com.example.simon", environment: "production" });
+  const agent = (await call(ME, "POST", "/agents", { name: "Scout", petId: "moss" })).json;
+  await new Promise((resolve) => setTimeout(resolve, 1));
+  await say(ME, agent.id, "find me a flat");
+  await queue.kick(agent.id);
+
+  assert.match(answers[0], /^Too soon/);
+  assert.equal(answers[1], "Sent. Carry on with the work.");
+  assert.match(answers[2], /^You sent an update moments ago/);
+  const messages = (await call(ME, "GET", `/agents/${agent.id}/messages`)).json;
+  assert.deepEqual(
+    messages.map((m: { sender: string; body: string; interim: boolean }) => [m.sender, m.body, m.interim]),
+    [
+      ["person", "find me a flat", false],
+      ["agent", "Found three flats, checking the third.", true],
+      ["agent", "Here are the three flats.", false],
+    ],
+  );
+  assert.deepEqual(sent.map((notice) => [notice.body, notice.badge]), [["Here are the three flats.", 1]]);
+});
+
+test("a job's run can't send updates", async () => {
+  let time = new Date(2026, 10, 16, 9, 0).getTime();
+  const updates: boolean[] = [];
+  const { queue, call, say } = setup(async (turn) => {
+    if (turn.prompt.text === "set up") turn.scheduleJob({ what: "Check.", every_minutes: 5 });
+    else updates.push(turn.sendUpdate !== undefined);
+    return reply("SILENT");
+  }, () => time);
+  const agent = (await call(ME, "POST", "/agents", { name: "Scout", petId: "moss" })).json;
+  await say(ME, agent.id, "set up");
+  await queue.kick(agent.id);
+  time += 5 * 60_000;
+  await queue.kick(agent.id);
+  assert.deepEqual(updates, [false]);
+});

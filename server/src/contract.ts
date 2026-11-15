@@ -23,6 +23,8 @@ export type Message = {
   reply_to: string | null;
   /** The job whose run sent it, for a message the agent sent by itself. */
   job_id: string | null;
+  /** An update the agent sent while still working. It notifies nobody and doesn't count as unread; the reply that follows does. */
+  interim: boolean;
   created_at: number;
 };
 

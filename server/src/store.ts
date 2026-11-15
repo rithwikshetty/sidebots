@@ -13,7 +13,7 @@ export type Person = { id: string; name: string; tailscale_login: string; claude
 /** A file as it arrives with a message. */
 export type Upload = { name: string; bytes: Uint8Array };
 /** What a message can carry besides its text: files, the message it answers, and the job that sent it. */
-export type Extras = { files?: Upload[]; replyTo?: string; jobId?: string };
+export type Extras = { files?: Upload[]; replyTo?: string; jobId?: string; interim?: boolean };
 /** What the person can change about an agent. */
 export type AgentChanges = Partial<Pick<Agent, "name" | "pet_id" | "model" | "effort" | "muted" | "hidden">>;
 /** The key Apple gives a developer account for sending notifications, with the key's ID and the account's team ID. */
@@ -49,6 +49,7 @@ create table if not exists messages (
   seen_at     integer,
   reply_to    text,
   job_id      text,
+  interim     integer not null default 0,
   created_at  integer not null
 );
 create table if not exists jobs (
@@ -78,6 +79,7 @@ const ADDED_COLUMNS = [
   "alter table messages add column job_id text",
   "alter table agents add column effort text not null default 'medium'",
   "alter table messages add column seen_at integer",
+  "alter table messages add column interim integer not null default 0",
 ];
 
 const PAGE = 50;
@@ -86,9 +88,9 @@ const PET_ID = /^[a-z0-9-]+$/;
 // A stored attachment's file name: no folders, and never a dot first.
 const ATTACHMENT_NAME = /^[\w-][\w.-]*$/;
 
-/** A message as SQLite holds it, with its attachments as JSON text. */
-type Row = Omit<Message, "attachments"> & { attachments: string };
-const toMessage = (row: Row): Message => ({ ...row, attachments: JSON.parse(row.attachments) as string[] });
+/** A message as SQLite holds it, with its attachments as JSON text and yes and no as 1 and 0. */
+type Row = Omit<Message, "attachments" | "interim"> & { attachments: string; interim: number };
+const toMessage = (row: Row): Message => ({ ...row, attachments: JSON.parse(row.attachments) as string[], interim: row.interim === 1 });
 /** An agent as SQLite holds it, with yes and no as 1 and 0. */
 type AgentRow = Omit<Agent, "muted" | "hidden"> & { muted: number; hidden: number };
 const toAgent = (row: AgentRow): Agent => ({ ...row, muted: row.muted === 1, hidden: row.hidden === 1 });
@@ -140,7 +142,7 @@ export function openStore(home: string) {
   const pendingTurn = db.prepare("select 1 from messages where agent_id = ? and status in ('queued', 'running') limit 1");
   // What waits to be read: the agent's replies and Simon's failure notices.
   const unread = db.prepare(
-    "select count(*) as unread from messages where agent_id = ? and created_at > ? and (sender = 'agent' or (sender = 'simon' and status = 'failed'))",
+    "select count(*) as unread from messages where agent_id = ? and created_at > ? and ((sender = 'agent' and interim = 0) or (sender = 'simon' and status = 'failed'))",
   );
   const agentById = (id: string): Agent | undefined => {
     const row = db.prepare("select * from agents where id = ?").get(id) as AgentRow | undefined;
@@ -341,9 +343,10 @@ export function openStore(home: string) {
     /**
      * Saves a message, with any files sent with it written into the agent's
      * `attachments/` folder. A reply or a failure notice brings a hidden agent
-     * back to the home screen, unless the agent is muted.
+     * back to the home screen, unless the agent is muted. An update while the
+     * agent works doesn't.
      */
-    addMessage(agentId: string, sender: Sender, body: string, status: Status, { files = [], replyTo, jobId }: Extras = {}): Message {
+    addMessage(agentId: string, sender: Sender, body: string, status: Status, { files = [], replyTo, jobId, interim = false }: Extras = {}): Message {
       const attachments = files.map((file) => {
         // A name keeps its letters, digits, dots and dashes. Anything else becomes a dash, as does a %20 the phone wrote for a space.
         const name = `${randomUUID().slice(0, 8)}-${basename(file.name).replace(/(?:%[0-9a-f]{2}|[^\w.-])+/gi, "-")}`;
@@ -360,9 +363,10 @@ export function openStore(home: string) {
         seen_at: null,
         reply_to: replyTo ?? null,
         job_id: jobId ?? null,
+        interim,
         created_at: Date.now(),
       };
-      db.prepare("insert into messages (id, agent_id, sender, body, attachments, status, reply_to, job_id, created_at) values (?, ?, ?, ?, ?, ?, ?, ?, ?)").run(
+      db.prepare("insert into messages (id, agent_id, sender, body, attachments, status, reply_to, job_id, interim, created_at) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)").run(
         message.id,
         message.agent_id,
         message.sender,
@@ -371,9 +375,10 @@ export function openStore(home: string) {
         message.status,
         message.reply_to,
         message.job_id,
+        Number(interim),
         message.created_at,
       );
-      if (sender === "agent" || (sender === "simon" && status === "failed")) {
+      if ((sender === "agent" && !interim) || (sender === "simon" && status === "failed")) {
         db.prepare("update agents set hidden = 0 where id = ? and muted = 0").run(agentId);
       }
       changed(message);
