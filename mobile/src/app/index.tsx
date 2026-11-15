@@ -4,6 +4,7 @@ import Animated, { LayoutAnimationConfig, useAnimatedStyle, withTiming } from "r
 import Swipeable, { type SwipeableMethods } from "react-native-gesture-handler/ReanimatedSwipeable";
 import { Redirect, useRouter } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { KeyboardStickyView } from "react-native-keyboard-controller";
 import { Bell, BellOff, ChevronRight, Eye, EyeOff, Plus, Search, Trash2 } from "lucide-react-native";
 import type { AgentWithLatest, Found } from "@server/contract";
 import { Glass } from "@/components/Glass";
@@ -20,8 +21,10 @@ import { usePush } from "@/lib/push";
 import { useTheme } from "@/lib/theme";
 import { listTime } from "@/lib/time";
 
-const ADD_BUTTON = 60;
+const ADD_BUTTON = 44;
 const SEARCH_HEIGHT = 44;
+// The room between the search field and the home indicator, or the keyboard once it is up.
+const SEARCH_GAP = 8;
 // How long the person rests from typing before the server is asked.
 const SEARCH_DELAY_MS = 200;
 // How much of a found message shows before the words that matched.
@@ -33,14 +36,15 @@ const ACTION = 76;
 type Row = { agent: AgentWithLatest; found?: Found };
 
 /**
- * The home screen. It has no title bar and no heading: a glass search field
- * floating at the top, the person's agents, and the button for a new agent
- * floating at the bottom right, where a thumb reaches it. A swipe left on an
- * agent shows what can be done to it: mute, hide and delete. Hidden agents
- * wait under a line at the list's end, which a tap opens. While the search
- * field holds text, the list is the agents whose name matches and then the
- * messages that contain it, from every chat. Rows slide to their new places
- * as agents move up the list, and fade in and out as they come and go.
+ * The home screen. It has no title bar and no heading: the person's agents,
+ * with a glass button for a new agent floating at the top right and a glass
+ * search field floating at the bottom, where a thumb reaches it. The field
+ * rises with the keyboard. A swipe left on an agent shows what can be done
+ * to it: mute, hide and delete. Hidden agents wait under a line at the
+ * list's end, which a tap opens. While the search field holds text, the list
+ * is the agents whose name matches and then the messages that contain it,
+ * from every chat. Rows slide to their new places as agents move up the
+ * list, and fade in and out as they come and go.
  */
 export default function Home() {
   const theme = useTheme();
@@ -85,7 +89,7 @@ export default function Home() {
           keyExtractor={(row) => row.found?.id ?? row.agent.id}
           itemLayoutAnimation={MOVE}
           contentInsetAdjustmentBehavior="never"
-          contentContainerStyle={{ paddingTop: insets.top + SEARCH_HEIGHT + 12, paddingBottom: insets.bottom + ADD_BUTTON + 32 }}
+          contentContainerStyle={{ paddingTop: insets.top + ADD_BUTTON + 12, paddingBottom: insets.bottom + SEARCH_GAP + SEARCH_HEIGHT + 16 }}
           // A drag lowers the keyboard, and a tap on a row opens it with the keyboard still up.
           keyboardDismissMode="on-drag"
           keyboardShouldPersistTaps="handled"
@@ -116,32 +120,36 @@ export default function Home() {
           }
         />
       </LayoutAnimationConfig>
-      <EdgeFade edge="top" height={insets.top + SEARCH_HEIGHT + 16} solid={insets.top + SEARCH_HEIGHT} />
-      <View style={[styles.search, { top: insets.top }]}>
-        <Glass style={styles.searchGlass}>
-          <Search size={18} strokeWidth={2.25} color={theme.ink2} />
-          <TextInput
-            value={typed}
-            onChangeText={setTyped}
-            placeholder="Search"
-            placeholderTextColor={theme.ink2}
-            selectionColor={theme.tintInk}
-            autoCorrect={false}
-            returnKeyType="search"
-            clearButtonMode="while-editing"
-            style={[styles.searchText, { color: theme.ink }]}
-          />
-        </Glass>
-      </View>
+      <EdgeFade edge="top" height={insets.top + ADD_BUTTON + 16} solid={insets.top} />
       <Pressable
         onPress={() => router.push("/new-agent")}
         accessibilityRole="button"
         accessibilityLabel="New agent"
-        style={[styles.add, { bottom: insets.bottom + 12 }]}>
+        style={[styles.add, { top: insets.top }]}>
         <Glass interactive style={styles.addGlass}>
-          <Plus size={28} strokeWidth={2.25} color={theme.tintInk} />
+          <Plus size={24} strokeWidth={2.25} color={theme.tintInk} />
         </Glass>
       </Pressable>
+      {/* The keyboard covers the home indicator, so the field rises by the keyboard's height less that inset. */}
+      <KeyboardStickyView offset={{ closed: 0, opened: insets.bottom }} style={styles.sticky}>
+        <EdgeFade edge="bottom" height={insets.bottom + SEARCH_GAP + SEARCH_HEIGHT + 16} solid={insets.bottom} />
+        <View style={[styles.search, { paddingBottom: insets.bottom + SEARCH_GAP }]}>
+          <Glass style={styles.searchGlass}>
+            <Search size={18} strokeWidth={2.25} color={theme.ink2} />
+            <TextInput
+              value={typed}
+              onChangeText={setTyped}
+              placeholder="Search"
+              placeholderTextColor={theme.ink2}
+              selectionColor={theme.tintInk}
+              autoCorrect={false}
+              returnKeyType="search"
+              clearButtonMode="while-editing"
+              style={[styles.searchText, { color: theme.ink }]}
+            />
+          </Glass>
+        </View>
+      </KeyboardStickyView>
     </View>
   );
 }
@@ -274,11 +282,12 @@ function foundLine(found: Found, search: string): string {
 
 const styles = StyleSheet.create({
   screen: { flex: 1 },
-  search: { position: "absolute", left: 16, right: 16, zIndex: 2 },
+  sticky: { position: "absolute", left: 0, right: 0, bottom: 0 },
+  search: { paddingHorizontal: 16 },
   searchGlass: { height: SEARCH_HEIGHT, borderRadius: SEARCH_HEIGHT / 2, flexDirection: "row", alignItems: "center", gap: 8, paddingLeft: 14, paddingRight: 8, overflow: "hidden" },
   searchText: { flex: 1, height: SEARCH_HEIGHT, fontSize: 17, padding: 0 },
   empty: { textAlign: "center", fontSize: 15, marginTop: 32 },
-  add: { position: "absolute", right: 20, zIndex: 2 },
+  add: { position: "absolute", right: 16, zIndex: 2 },
   addGlass: { width: ADD_BUTTON, height: ADD_BUTTON, borderRadius: ADD_BUTTON / 2, alignItems: "center", justifyContent: "center", overflow: "hidden" },
   row: { flexDirection: "row", alignItems: "center", gap: 12, paddingLeft: 16 },
   body: { flex: 1, minHeight: 76, justifyContent: "center", paddingRight: 16, paddingVertical: 10, borderBottomWidth: StyleSheet.hairlineWidth },
