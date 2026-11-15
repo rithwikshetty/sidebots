@@ -1,11 +1,12 @@
 import { Pressable, StyleSheet, Text, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { ChevronLeft } from "lucide-react-native";
+import { ChevronLeft, Ellipsis } from "lucide-react-native";
 import type { PetState } from "@server/contract";
 import { Glass } from "@/components/Glass";
 import { PetView } from "@/components/PetView";
 import { TopFade } from "@/components/TopFade";
 import { useTheme } from "@/lib/theme";
+import { MessageMenuView, type MessageMenuAction } from "../../modules/message-menu/src";
 
 /** The height of the bar the back button and the pet sit in, under the status bar. */
 export const BAR_HEIGHT = 44;
@@ -18,18 +19,25 @@ const PET = 40;
 const BAR_BUTTON = 44;
 const BAR_INSET = 16;
 
+/** What the chat's menu offers. The image is one of the system's symbols. */
+const MENU_ACTIONS: MessageMenuAction[] = [
+  { id: "fresh-start", title: "Fresh start", subtitle: "Clears what the agent has in mind. Your chat and its memory stay.", systemImage: "sparkles" },
+];
+
 /**
  * The top of a chat, as Messages draws a conversation's: no bar, only
- * floating parts. A glass back button at the left, and the agent's pet in the
- * middle with its name in a glass pill under it. Behind them the screen fades
- * from the page colour, so messages scrolling up pass softly under them.
+ * floating parts. A glass back button at the left, the agent's pet in the
+ * middle with its name in a glass pill under it, and a glass button at the
+ * right that opens the chat's menu. Behind them the screen fades from the
+ * page colour, so messages scrolling up pass softly under them.
  */
-export function ChatHeader({ name, petId, petState, dimmed, onBack }: {
+export function ChatHeader({ name, petId, petState, dimmed, onBack, onFreshStart }: {
   name: string;
   petId: string;
   petState: PetState;
   dimmed: boolean;
   onBack: () => void;
+  onFreshStart: () => void;
 }) {
   const theme = useTheme();
   const insets = useSafeAreaInsets();
@@ -46,6 +54,19 @@ export function ChatHeader({ name, petId, petState, dimmed, onBack }: {
           <ChevronLeft size={24} strokeWidth={2.25} color={theme.tintInk} />
         </Glass>
       </Pressable>
+      {/* The native menu button over the glass takes the tap and reads to VoiceOver. */}
+      <MessageMenuView
+        actions={MENU_ACTIONS}
+        opensOnTap
+        label="Chat menu"
+        onAction={({ nativeEvent }) => nativeEvent.id === "fresh-start" && onFreshStart()}
+        style={[styles.more, { top: insets.top + (BAR_HEIGHT - BAR_BUTTON) / 2 }]}>
+        <View accessibilityElementsHidden importantForAccessibility="no-hide-descendants" pointerEvents="none">
+          <Glass style={styles.glass}>
+            <Ellipsis size={22} strokeWidth={2.25} color={theme.tintInk} />
+          </Glass>
+        </View>
+      </MessageMenuView>
       <View pointerEvents="none" style={[styles.header, { top: insets.top }]}>
         <View style={styles.pet}>
           <PetView petId={petId} state={petState} size={PET} dimmed={dimmed} />
@@ -62,6 +83,7 @@ export function ChatHeader({ name, petId, petState, dimmed, onBack }: {
 
 const styles = StyleSheet.create({
   back: { position: "absolute", left: BAR_INSET, zIndex: 3 },
+  more: { position: "absolute", right: BAR_INSET, zIndex: 3 },
   glass: { width: BAR_BUTTON, height: BAR_BUTTON, borderRadius: BAR_BUTTON / 2, alignItems: "center", justifyContent: "center", overflow: "hidden" },
   header: { position: "absolute", left: 0, right: 0, alignItems: "center", paddingTop: 2, zIndex: 2 },
   pet: { shadowColor: "#000", shadowOpacity: 0.12, shadowRadius: 6, shadowOffset: { width: 0, height: 2 } },

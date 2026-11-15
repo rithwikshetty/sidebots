@@ -4,6 +4,8 @@ import Storage from "expo-sqlite/kv-store";
 
 const SERVER_KEY = "server";
 const TIMEOUT_MS = 10_000;
+// A message carrying photos, over a phone's connection.
+const UPLOAD_TIMEOUT_MS = 120_000;
 
 export class ApiError extends Error {
   status: number;
@@ -21,17 +23,25 @@ export function petSheetUrl(petId: string): string {
   return `${serverUrl()}/pets/${petId}/spritesheet`;
 }
 
+/** The address of a file sent with a message, from its path in the agent's folder. */
+export function attachmentUrl(agentId: string, path: string): string {
+  return `${serverUrl()}/agents/${agentId}/${path}`;
+}
+
+/** Calls the server. A `body` is sent as JSON, or as it is when it is a form. */
 export async function request<T>(path: string, init: { method?: string; body?: unknown; base?: string } = {}): Promise<T> {
   const base = init.base ?? serverUrl();
   if (!base) throw new ApiError("Simon has no server address yet.", 0);
+  const form = init.body instanceof FormData ? init.body : null;
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
+  const timer = setTimeout(() => controller.abort(), form ? UPLOAD_TIMEOUT_MS : TIMEOUT_MS);
   let response: Response;
   try {
     response = await fetch(base + path, {
       method: init.method ?? "GET",
-      headers: { "Content-Type": "application/json" },
-      body: init.body === undefined ? undefined : JSON.stringify(init.body),
+      // A form names its own content type, with the boundary between its parts.
+      headers: form ? undefined : { "Content-Type": "application/json" },
+      body: form ?? (init.body === undefined ? undefined : JSON.stringify(init.body)),
       signal: controller.signal,
     });
   } catch {

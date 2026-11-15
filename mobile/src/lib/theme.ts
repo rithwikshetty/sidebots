@@ -13,6 +13,12 @@ const light = {
   tint: "#66023C",
   tintInk: "#66023C",
   onTint: "#FFFFFF",
+  // The camera and the photo viewer: a picture on black with white controls, in either mode.
+  viewer: "#000000",
+  viewerInk: "#FFFFFF",
+  viewerControl: "rgba(255, 255, 255, 0.14)",
+  // A shade over a photo, under the viewer's white marks.
+  scrim: "rgba(0, 0, 0, 0.45)",
 };
 
 const dark: typeof light = {
@@ -28,6 +34,10 @@ const dark: typeof light = {
   tint: "#8A1F56",
   tintInk: "#E596BF",
   onTint: "#FFFFFF",
+  viewer: "#000000",
+  viewerInk: "#FFFFFF",
+  viewerControl: "rgba(255, 255, 255, 0.14)",
+  scrim: "rgba(0, 0, 0, 0.5)",
 };
 
 export type Theme = typeof light;

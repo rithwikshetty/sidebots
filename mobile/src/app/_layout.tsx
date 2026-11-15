@@ -25,6 +25,11 @@ export default function Layout() {
           <Stack.Screen name="setup" options={{ animation: "none" }} />
           <Stack.Screen name="chat/[id]" />
           <Stack.Screen name="new-agent" options={{ presentation: "formSheet", sheetAllowedDetents: [0.62], sheetGrabberVisible: true }} />
+          <Stack.Screen
+            name="camera"
+            // Full screen and a quick fade, so the camera is up the moment it's chosen.
+            options={{ presentation: "fullScreenModal", animation: "fade", animationDuration: 150, contentStyle: { backgroundColor: theme.viewer } }}
+          />
         </Stack>
       </ThemeProvider>
     </KeyboardProvider>

@@ -1,7 +1,11 @@
-import { useState } from "react";
-import { PixelRatio, Pressable, StyleSheet, Text, TextInput, View, type TextStyle } from "react-native";
-import Animated, { LinearTransition, useReducedMotion } from "react-native-reanimated";
+import { useEffect, useRef, useState } from "react";
+import { PixelRatio, Pressable, StyleSheet, Text, TextInput, View, type TextInputInstance, type TextStyle } from "react-native";
+import Animated, { FadeIn, LinearTransition, useReducedMotion } from "react-native-reanimated";
 import { ArrowUp, Plus } from "lucide-react-native";
+import { MessageMenuView, type MessageMenuAction } from "../../modules/message-menu/src";
+import { AttachmentTray, TRAY_HEIGHT, TRAY_TILE_EXIT_MS } from "@/components/AttachmentTray";
+import { IconButton } from "@/components/IconButton";
+import type { Picked, PickSource } from "@/lib/files";
 import { useTheme } from "@/lib/theme";
 
 const FONT_SIZE = 16;
@@ -20,40 +24,87 @@ const TEXT_FRAME = {
   typing: { left: 16, right: 16, top: 16 },
 };
 const TRANSITION = LinearTransition.duration(220);
+// The tray sits at the card's top, its tiles' remove targets reaching to the
+// card's edge, with the text below it.
+const TRAY_SPACE = TRAY_HEIGHT;
+
+const ATTACH_ACTIONS: (MessageMenuAction & { id: PickSource })[] = [
+  { id: "photos", title: "Photos", systemImage: "photo.on.rectangle" },
+  { id: "camera", title: "Camera", systemImage: "camera" },
+  { id: "files", title: "Files", systemImage: "folder" },
+];
 
 /**
- * The message field, shaped like Assist's: + at the bottom left and the round
- * Send at the bottom right. At rest it is one slim line between the buttons.
- * While the person types it opens into a card with the text above the
- * buttons, growing with the text up to about six lines, then scrolling. The +
- * rests until the app can send photos.
+ * The message field, as Assist's: + at the bottom left, which opens a menu
+ * of Photos, Camera and Files, and the round Send at the bottom right. At
+ * rest it is one slim line between the buttons. While the person types, or
+ * once something is attached, it opens into a card with the text above the
+ * buttons, growing with the text up to about six lines, then scrolling;
+ * picked photos and files sit in a tray above the text. A message can go
+ * with only photos or files.
  */
 export function Composer({
   value,
   onChangeText,
   onSend,
   placeholder,
+  attachments,
+  onAttach,
+  onRemoveAttachment,
+  attachDisabled = false,
 }: {
   value: string;
   onChangeText: (text: string) => void;
   onSend: () => void;
   placeholder: string;
+  attachments: readonly Picked[];
+  /** Opens a picker from the + menu; settles once the picks are in the tray. */
+  onAttach: (source: PickSource) => Promise<void>;
+  onRemoveAttachment: (file: Picked) => void;
+  /** The + rests, as once the message holds as many files as it can. */
+  attachDisabled?: boolean;
 }) {
   const theme = useTheme();
   const reduceMotion = useReducedMotion();
+  const inputRef = useRef<TextInputInstance>(null);
   const [typing, setTyping] = useState(false);
+  // The tray keeps its room until its last tile has faded out, then the card
+  // closes over it with its own transition, so the text never runs under a
+  // tile that is still going.
+  const [hasTray, setHasTray] = useState(attachments.length > 0);
+  if (attachments.length > 0 && !hasTray) setHasTray(true);
+  useEffect(() => {
+    if (attachments.length > 0 || !hasTray) return;
+    const timer = setTimeout(() => setHasTray(false), reduceMotion ? 0 : TRAY_TILE_EXIT_MS);
+    return () => clearTimeout(timer);
+  }, [attachments.length, hasTray, reduceMotion]);
+  const open = typing || hasTray;
   // An invisible copy of the text, laid out at the text's width, gives the field its height.
   const [contentHeight, setContentHeight] = useState(0);
   // The field's font as this phone draws it, which says where its capitals sit.
   const [font, setFont] = useState<LineFont | null>(null);
   const lineHeight = LINE_HEIGHT * Math.min(PixelRatio.getFontScale(), FIELD_MAX_SCALE);
   const maxHeight = lineHeight * MAX_LINES;
-  const canSend = value.trim().length > 0;
+  const canSend = value.trim().length > 0 || attachments.length > 0;
 
-  const frame = typing ? TEXT_FRAME.typing : TEXT_FRAME.resting;
-  const textHeight = typing ? Math.min(Math.max(contentHeight, lineHeight * 2), maxHeight) : BUTTON;
-  const fieldHeight = typing ? frame.top + textHeight + 4 + BUTTON + INSET : BUTTON + INSET * 2;
+  const frame = open ? TEXT_FRAME.typing : TEXT_FRAME.resting;
+  const textTop = hasTray ? TRAY_SPACE + 10 : frame.top;
+  const textHeight = open ? Math.min(Math.max(contentHeight, lineHeight * 2), maxHeight) : BUTTON;
+  const fieldHeight = open ? textTop + textHeight + 4 + BUTTON + INSET : BUTTON + INSET * 2;
   const layout = reduceMotion ? undefined : TRANSITION;
+
+  // A picker covers the app and takes the keyboard away while the field
+  // still counts itself focused, so asking it to focus again does nothing.
+  // Once the picker has gone the field lets go and takes focus back, which
+  // brings the keyboard up where the person was typing.
+  const attach = (source: PickSource) => {
+    const focused = inputRef.current?.isFocused() ?? false;
+    void onAttach(source).finally(() => {
+      if (!focused) return;
+      inputRef.current?.blur();
+      requestAnimationFrame(() => inputRef.current?.focus());
+    });
+  };
 
   return (
     <Animated.View layout={layout} style={[styles.field, { height: fieldHeight, borderColor: theme.line, backgroundColor: theme.card }]}>
@@ -78,8 +129,9 @@ export function Composer({
           {"​"}
         </Text>
       </View>
-      <Animated.View layout={layout} style={[styles.textFrame, { left: frame.left, right: frame.right, top: frame.top, height: textHeight }]}>
+      <Animated.View layout={layout} style={[styles.textFrame, { left: frame.left, right: frame.right, top: textTop, height: textHeight }]}>
         <TextInput
+          ref={inputRef}
           value={value}
           onChangeText={onChangeText}
           onFocus={() => setTyping(true)}
@@ -87,18 +139,34 @@ export function Composer({
           placeholder={placeholder}
           placeholderTextColor={theme.faint}
           multiline
-          scrollEnabled={typing && contentHeight > maxHeight}
-          style={[styles.text, styles.input, { color: theme.ink }, typing ? styles.openLines : restingLine(font, lineHeight)]}
+          scrollEnabled={open && contentHeight > maxHeight}
+          style={[styles.text, styles.input, { color: theme.ink }, open ? styles.openLines : restingLine(font, lineHeight)]}
           selectionColor={theme.tintInk}
           maxFontSizeMultiplier={FIELD_MAX_SCALE}
+          // iOS reads an empty field's placeholder after its label, so the
+          // placeholder names the field until there is text to read.
           accessibilityLabel={value ? placeholder : undefined}
           enablesReturnKeyAutomatically
         />
       </Animated.View>
+      {/* Above the text, on the card's colour, so text moving as the tray opens or closes passes under it. */}
+      {hasTray ? (
+        <Animated.View entering={reduceMotion ? undefined : FadeIn.duration(180)} style={[styles.tray, { backgroundColor: theme.card }]}>
+          <AttachmentTray files={attachments} onRemove={onRemoveAttachment} />
+        </Animated.View>
+      ) : null}
       <View style={[styles.corner, styles.leading]}>
-        <View style={[styles.round, { opacity: 0.35 }]} accessibilityLabel="Add photos and files" accessibilityState={{ disabled: true }}>
-          <Plus size={19} strokeWidth={2} color={theme.ink2} />
-        </View>
+        {/* The native menu button over the + takes the tap and reads to VoiceOver. */}
+        <MessageMenuView
+          actions={attachDisabled ? [] : ATTACH_ACTIONS}
+          opensOnTap
+          label="Add photos and files"
+          onAction={({ nativeEvent }) => attach(nativeEvent.id as PickSource)}
+          style={styles.attach}>
+          <View accessibilityElementsHidden importantForAccessibility="no-hide-descendants" pointerEvents="none" style={{ opacity: attachDisabled ? 0.35 : 1 }}>
+            <IconButton icon={Plus} label="Add photos and files" iconSize={19} color={theme.ink2} onPress={() => undefined} />
+          </View>
+        </MessageMenuView>
       </View>
       <View style={[styles.corner, styles.trailing]}>
         <Pressable
@@ -135,11 +203,14 @@ const styles = StyleSheet.create({
   measure: { position: "absolute", top: 0, opacity: 0 },
   text: { includeFontPadding: false, fontWeight: "400", fontSize: FONT_SIZE },
   textFrame: { position: "absolute" },
+  tray: { position: "absolute", top: 0, left: 0, right: 0 },
   input: { flex: 1, padding: 0, paddingBottom: 0 },
   // Open, the lines start at the top; Android's field centres them unless told.
   openLines: { paddingTop: 0, textAlignVertical: "top" },
   corner: { position: "absolute", bottom: INSET, flexDirection: "row", alignItems: "center" },
   leading: { left: INSET },
+  // The + takes a full 44pt tap around its 36pt button, reaching past it into the card's edge.
+  attach: { width: 44, height: 44, margin: -4, alignItems: "center", justifyContent: "center" },
   trailing: { right: INSET },
   round: { width: BUTTON, height: BUTTON, borderRadius: BUTTON / 2, alignItems: "center", justifyContent: "center" },
 });

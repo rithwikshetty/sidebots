@@ -26,7 +26,24 @@ const config: ExpoConfig = {
       monochromeImage: "./assets/android-icon-monochrome.png",
     },
   },
-  plugins: ["expo-router", "expo-status-bar", "expo-sqlite", "expo-image"],
+  plugins: [
+    "expo-router",
+    "expo-status-bar",
+    "expo-sqlite",
+    "expo-image",
+    // Adds the entitlement that lets Apple's push service deliver to the app, and the sound a notification plays.
+    ["expo-notifications", { sounds: ["./assets/sounds/simon.wav"] }],
+    // The words the phone shows when it asks for the photos and the camera.
+    [
+      "expo-image-picker",
+      {
+        photosPermission: "Simon opens the photos you choose so you can send them to an agent.",
+        cameraPermission: "Simon uses the camera so you can send a photo to an agent.",
+        microphonePermission: false,
+      },
+    ],
+    "expo-document-picker",
+  ],
   experiments: { typedRoutes: true },
 };
 

@@ -9,9 +9,14 @@ import type { LegendListRef } from "@legendapp/list/react-native";
 import type { AgentWithLatest, Message } from "@server/contract";
 import { BAR_HEIGHT, ChatHeader, HEADER_CLEARANCE, HEADER_OVERHANG } from "@/components/ChatHeader";
 import { Composer } from "@/components/Composer";
+import { FileCard, MessagePhotos, type Shown } from "@/components/MessageAttachments";
 import { PetView } from "@/components/PetView";
+import { attachmentUrl } from "@/lib/api";
+import { isImage, MAX_FILES, pick, type Picked, type PickSource } from "@/lib/files";
+import { haptics } from "@/lib/haptics";
 import { useWorkingLine } from "@/lib/lines";
-import { loadMessages, markSeen, send, useAgent, useMessages, useOnline, usePetState } from "@/lib/state";
+import { askForPush, showChatOnScreen } from "@/lib/push";
+import { freshStart, loadMessages, markRead, petStateOf, send, useAgent, useMessages, useOnline } from "@/lib/state";
 import { type Theme, useTheme } from "@/lib/theme";
 import { dayLabel, sameDay } from "@/lib/time";
 
@@ -26,17 +31,22 @@ function ChatWith({ agent }: { agent: AgentWithLatest }) {
   const insets = useSafeAreaInsets();
   const router = useRouter();
   const online = useOnline();
-  const petState = usePetState(agent);
+  const petState = petStateOf(agent);
   const messages = useMessages(agent.id);
   const [draft, setDraft] = useState("");
+  const [picked, setPicked] = useState<Picked[]>([]);
+  // A message on its way to the server, shown faded at the chat's end until the server has it.
+  const [outgoing, setOutgoing] = useState<Outgoing | null>(null);
 
   useEffect(() => {
     loadMessages(agent.id).catch(() => {});
   }, [agent.id]);
 
-  // While the chat is open, everything in it counts as seen.
+  // While the chat is open, everything in it counts as read.
   const latest = agent.latest?.id;
-  useFocusEffect(useCallback(() => markSeen(agent.id), [agent.id, latest]));
+  useFocusEffect(useCallback(() => markRead(agent.id), [agent.id, latest]));
+  // Opening the chat clears its notifications from the phone.
+  useFocusEffect(useCallback(() => showChatOnScreen(agent.id), [agent.id]));
 
   // The list is one built for chat. It opens at the newest message, holds the
   // end as messages arrive and as the keyboard rises, and leaves the person
@@ -45,16 +55,35 @@ function ChatWith({ agent }: { agent: AgentWithLatest }) {
   const list = useRef<LegendListRef>(null);
   const contentInsetEndAdjustment = useSharedValue(COMPOSER_ESTIMATE + insets.bottom);
 
-  async function onSend(body: string) {
+  const problem = (title: string, failure: unknown) => Alert.alert(title, failure instanceof Error ? failure.message : "Something went wrong.");
+
+  async function onSend(body: string, files: Picked[] = []) {
     const text = body.trim();
-    if (!text) return;
+    if (!text && files.length === 0) return;
     setDraft("");
+    setPicked([]);
+    setOutgoing({ body: text, files });
+    haptics.send();
+    void list.current?.scrollToEnd({ animated: true });
     try {
-      await send(agent.id, text);
-      void list.current?.scrollToEnd({ animated: true });
+      await send(agent.id, text, files);
+      // They may leave while the agent works, so this is when a notification starts to matter.
+      void askForPush().catch(() => undefined);
     } catch (failure) {
       setDraft(text);
-      Alert.alert("Not sent", failure instanceof Error ? failure.message : "Something went wrong.");
+      setPicked(files);
+      problem("Not sent", failure);
+    } finally {
+      setOutgoing(null);
+    }
+  }
+
+  async function onAttach(source: PickSource) {
+    try {
+      const added = await pick(source, MAX_FILES - picked.length);
+      setPicked((current) => [...current, ...added].slice(0, MAX_FILES));
+    } catch (failure) {
+      problem("Can't add that", failure);
     }
   }
 
@@ -82,10 +111,20 @@ function ChatWith({ agent }: { agent: AgentWithLatest }) {
         keyboardOffset={keyboardOffset}
         keyboardLiftBehavior="whenAtEnd"
         applyWorkaroundForContentInsetHitTestBug
+        // As in Messages: dragging the list pulls the keyboard down with the finger, and a tap anywhere in it lowers the keyboard.
         keyboardDismissMode="interactive"
-        keyboardShouldPersistTaps="handled"
+        keyboardShouldPersistTaps="never"
         ListHeaderComponent={<View style={{ height: insets.top + BAR_HEIGHT + HEADER_OVERHANG + HEADER_CLEARANCE }} />}
-        ListFooterComponent={<View style={styles.foot}>{agent.working && online ? <WorkingRow agent={agent} /> : null}</View>}
+        ListFooterComponent={
+          <View style={styles.foot}>
+            {outgoing ? (
+              <View style={[styles.mine, styles.pending]}>
+                <Sent body={outgoing.body} photos={outgoing.files.filter((file) => file.photo)} files={outgoing.files.filter((file) => !file.photo)} mine theme={theme} />
+              </View>
+            ) : null}
+            {agent.working && online ? <WorkingRow agent={agent} /> : null}
+          </View>
+        }
         renderItem={({ item, index }) => {
           const older = messages[index - 1];
           return (
@@ -104,10 +143,20 @@ function ChatWith({ agent }: { agent: AgentWithLatest }) {
         petState={online ? (petState === "replied" ? "resting" : petState) : "resting"}
         dimmed={!online}
         onBack={() => router.back()}
+        onFreshStart={() => void freshStart(agent.id).catch((failure) => problem("Couldn't start fresh", failure))}
       />
       <KeyboardStickyView offset={{ closed: 0, opened: keyboardOffset }} style={styles.sticky}>
         <View style={[styles.composer, { paddingBottom: insets.bottom + 8 }]} onLayout={(event) => contentInsetEndAdjustment.set(event.nativeEvent.layout.height)}>
-          <Composer value={draft} onChangeText={setDraft} onSend={() => void onSend(draft)} placeholder={`Message ${agent.name}`} />
+          <Composer
+            value={draft}
+            onChangeText={setDraft}
+            onSend={() => void onSend(draft, picked)}
+            placeholder={`Message ${agent.name}`}
+            attachments={picked}
+            onAttach={onAttach}
+            onRemoveAttachment={(file) => setPicked((current) => current.filter((item) => item !== file))}
+            attachDisabled={picked.length >= MAX_FILES}
+          />
         </View>
       </KeyboardStickyView>
     </View>
@@ -128,13 +177,16 @@ function WorkingRow({ agent }: { agent: AgentWithLatest }) {
 function Bubble({ message, theme, onResend }: { message: Message; theme: Theme; onResend: () => void }) {
   if (message.sender === "simon") return <Text style={[styles.note, { color: theme.ink2 }]}>{message.body}</Text>;
   const mine = message.sender === "person";
+  const shown = message.attachments.map((path) => ({ uri: attachmentUrl(message.agent_id, path), name: fileName(path) }));
   return (
     <View style={mine ? styles.mine : styles.theirs}>
-      <View style={[styles.bubble, mine ? [styles.bubbleMine, { backgroundColor: theme.tint }] : [styles.bubbleTheirs, { backgroundColor: theme.bubble }]]}>
-        <Text selectable style={[styles.text, { color: mine ? theme.onTint : theme.ink }]}>
-          {message.body}
-        </Text>
-      </View>
+      <Sent
+        body={message.body}
+        photos={shown.filter((item) => isImage(item.name))}
+        files={shown.filter((item) => !isImage(item.name))}
+        mine={mine}
+        theme={theme}
+      />
       {mine && message.status === "failed" ? (
         <Pressable onPress={onResend} hitSlop={8}>
           <Text style={[styles.resend, { color: theme.tintInk }]}>Send again</Text>
@@ -143,6 +195,34 @@ function Bubble({ message, theme, onResend }: { message: Message; theme: Theme; 
     </View>
   );
 }
+
+/** A message as the chat draws it: its photos and files above its bubble, as Assist draws one. */
+function Sent({ body, photos, files, mine, theme }: { body: string; photos: Shown[]; files: Shown[]; mine: boolean; theme: Theme }) {
+  return (
+    <>
+      {photos.length ? <MessagePhotos photos={photos} end={mine} /> : null}
+      {files.map((file) => (
+        <FileCard key={file.uri} file={file} />
+      ))}
+      {body ? (
+        <View style={[styles.bubble, mine ? [styles.bubbleMine, { backgroundColor: theme.tint }] : [styles.bubbleTheirs, { backgroundColor: theme.bubble }]]}>
+          <Text selectable style={[styles.text, { color: mine ? theme.onTint : theme.ink }]}>
+            {body}
+          </Text>
+        </View>
+      ) : null}
+    </>
+  );
+}
+
+/** A sent file's own name, without the folder and the code the server puts before it. */
+function fileName(path: string): string {
+  const name = path.split("/").pop() ?? path;
+  return name.slice(name.indexOf("-") + 1);
+}
+
+/** A message the person sent that the server hasn't answered for yet. */
+type Outgoing = { body: string; files: Picked[] };
 
 // The resting composer's height above the home indicator, used until it is measured.
 const COMPOSER_ESTIMATE = 64;
@@ -154,8 +234,9 @@ const styles = StyleSheet.create({
   row: { paddingHorizontal: 12 },
   foot: { paddingHorizontal: 12, paddingBottom: 10 },
   day: { alignSelf: "center", fontSize: 13, marginTop: 12, marginBottom: 6 },
-  mine: { alignItems: "flex-end", marginTop: 6 },
-  theirs: { alignItems: "flex-start", marginTop: 6 },
+  mine: { alignItems: "flex-end", marginTop: 6, gap: 4 },
+  theirs: { alignItems: "flex-start", marginTop: 6, gap: 4 },
+  pending: { opacity: 0.7 },
   bubble: { maxWidth: "80%", paddingHorizontal: 14, paddingVertical: 8, borderRadius: 20 },
   bubbleMine: { borderBottomRightRadius: 6 },
   bubbleTheirs: { borderBottomLeftRadius: 6 },

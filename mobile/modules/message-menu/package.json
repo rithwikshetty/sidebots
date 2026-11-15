@@ -1,0 +1,7 @@
+{
+  "name": "message-menu",
+  "version": "0.1.0",
+  "private": true,
+  "description": "The system menu a tap on a menu button opens, such as the composer's + and the chat's menu.",
+  "main": "src/index.ts"
+}
