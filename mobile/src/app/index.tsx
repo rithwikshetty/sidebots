@@ -38,13 +38,13 @@ type Row = { agent: AgentWithLatest; found?: Found };
 /**
  * The home screen. It has no title bar and no heading: the person's agents,
  * with a glass button for a new agent floating at the top right and a glass
- * search field floating at the bottom, where a thumb reaches it, which rises
- * with the keyboard. A swipe left on an
- * agent shows what can be done to it: mute, hide and delete. Hidden agents
- * wait under a line at the list's end, which a tap opens. While the search
- * field holds text, the list is the agents whose name matches and then the
- * messages that contain it, from every chat. Rows slide to their new places
- * as agents move up the list, and fade in and out as they come and go.
+ * search field floating at the bottom, where a thumb reaches it. The field
+ * rises with the keyboard. A swipe left on an agent shows what can be done
+ * to it: mute, hide and delete. Hidden agents wait under a line at the
+ * list's end, which a tap opens. While the search field holds text, the list
+ * is the agents whose name matches and then the messages that contain it,
+ * from every chat. Rows slide to their new places as agents move up the
+ * list, and fade in and out as they come and go.
  */
 export default function Home() {
   const theme = useTheme();
@@ -282,7 +282,7 @@ function foundLine(found: Found, search: string): string {
 
 const styles = StyleSheet.create({
   screen: { flex: 1 },
-  sticky: { position: "absolute", left: 0, right: 0, bottom: 0, zIndex: 2 },
+  sticky: { position: "absolute", left: 0, right: 0, bottom: 0 },
   search: { paddingHorizontal: 16 },
   searchGlass: { height: SEARCH_HEIGHT, borderRadius: SEARCH_HEIGHT / 2, flexDirection: "row", alignItems: "center", gap: 8, paddingLeft: 14, paddingRight: 8, overflow: "hidden" },
   searchText: { flex: 1, height: SEARCH_HEIGHT, fontSize: 17, padding: 0 },
