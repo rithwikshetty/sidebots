@@ -1,11 +1,13 @@
 import { useEffect, useRef, useState } from "react";
 import { PixelRatio, Pressable, StyleSheet, Text, TextInput, View, type TextInputInstance, type TextStyle } from "react-native";
-import Animated, { FadeIn, LinearTransition, useReducedMotion } from "react-native-reanimated";
-import { ArrowUp, Plus } from "lucide-react-native";
+import Animated, { FadeIn, LayoutAnimationConfig, LinearTransition, useReducedMotion } from "react-native-reanimated";
+import { ArrowUp, Mic, Plus } from "lucide-react-native";
 import { MessageMenuView, type MessageMenuAction } from "../../modules/message-menu/src";
 import { AttachmentTray, TRAY_HEIGHT, TRAY_TILE_EXIT_MS } from "@/components/AttachmentTray";
+import { BUTTONS_ENTERING, BUTTONS_EXITING, DICTATION_ENTERING, DICTATION_EXITING, DictationBar, useFlipAway } from "@/components/DictationBar";
 import { Glass } from "@/components/Glass";
 import { IconButton } from "@/components/IconButton";
+import { canDictate, useDictation } from "@/lib/dictation";
 import type { Picked, PickSource } from "@/lib/files";
 import { useTheme } from "@/lib/theme";
 
@@ -18,10 +20,12 @@ const FIELD_MAX_SCALE = 2;
 const INSET = 6;
 const BUTTON = 36;
 const RADIUS = 24;
+// The bottom right holds Send, with the microphone before it on a phone that can dictate.
+const TRAILING = canDictate ? BUTTON * 2 + 4 : BUTTON;
 // Where the text sits in each shape. At rest it shares one line with the
 // buttons; while typing it fills the card above them.
 const TEXT_FRAME = {
-  resting: { left: INSET + BUTTON + 4, right: INSET + BUTTON + 6, top: INSET },
+  resting: { left: INSET + BUTTON + 4, right: INSET + TRAILING + 6, top: INSET },
   typing: { left: 16, right: 16, top: 16 },
 };
 const TRANSITION = LinearTransition.duration(220);
@@ -37,13 +41,15 @@ const ATTACH_ACTIONS: (MessageMenuAction & { id: PickSource })[] = [
 
 /**
  * The message field, as Assist's: + at the bottom left, which opens a menu
- * of Photos, Camera and Files, and the round Send at the bottom right. At
- * rest it is one slim line between the buttons. While the person types, or
- * once something is attached, it opens into a card with the text above the
- * buttons, growing with the text up to about six lines, then scrolling;
- * picked photos and files sit in a tray above the text. A message can go
- * with only photos or files. The card is glass, so messages scrolling behind
- * it show through.
+ * of Photos, Camera and Files, and the round Send at the bottom right, with
+ * the microphone before it on iOS 26 and later. At rest it is one slim line
+ * between the buttons. While the person types, or once something is
+ * attached, it opens into a card with the text above the buttons, growing
+ * with the text up to about six lines, then scrolling; picked photos and
+ * files sit in a tray above the text. A message can go with only photos or
+ * files. A tap on the microphone turns the buttons away for the dictation
+ * row, whose ✓ adds what the person said to the end of the text. The card is
+ * glass, so messages scrolling behind it show through.
  */
 export function Composer({
   value,
@@ -88,12 +94,22 @@ export function Composer({
   const lineHeight = LINE_HEIGHT * Math.min(PixelRatio.getFontScale(), FIELD_MAX_SCALE);
   const maxHeight = lineHeight * MAX_LINES;
   const canSend = value.trim().length > 0 || attachments.length > 0;
+  const dictation = useDictation();
+  const dictating = dictation.state !== "idle";
+  // At rest the line of text shares the row the dictation row takes, so it turns away with the buttons.
+  const textAway = useFlipAway(dictating && !open);
+  // The words land after whatever the person typed while they were being made.
+  const latestValue = useRef(value);
+  useEffect(() => {
+    latestValue.current = value;
+  }, [value]);
 
   const frame = open ? TEXT_FRAME.typing : TEXT_FRAME.resting;
   const textTop = hasTray ? TRAY_SPACE + 10 : frame.top;
   const textHeight = open ? Math.min(Math.max(contentHeight, lineHeight * 2), maxHeight) : BUTTON;
   const fieldHeight = open ? textTop + textHeight + 4 + BUTTON + INSET : BUTTON + INSET * 2;
   const layout = reduceMotion ? undefined : TRANSITION;
+  const turn = <T,>(animation: T) => (reduceMotion ? undefined : animation);
 
   // A picker covers the app and takes the keyboard away while the field
   // still counts itself focused, so asking it to focus again does nothing.
@@ -106,6 +122,13 @@ export function Composer({
       inputRef.current?.blur();
       requestAnimationFrame(() => inputRef.current?.focus());
     });
+  };
+
+  const finishDictating = async () => {
+    const words = await dictation.stop();
+    if (!words) return;
+    const text = latestValue.current;
+    onChangeText(text === "" || /\s$/.test(text) ? text + words : `${text} ${words}`);
   };
 
   return (
@@ -133,55 +156,75 @@ export function Composer({
         </Text>
       </View>
       <Animated.View layout={layout} style={[styles.textFrame, { left: frame.left, right: frame.right, top: textTop, height: textHeight }]}>
-        <TextInput
-          ref={inputRef}
-          value={value}
-          onChangeText={onChangeText}
-          onFocus={() => setTyping(true)}
-          onBlur={() => setTyping(false)}
-          placeholder={placeholder}
-          placeholderTextColor={theme.faint}
-          multiline
-          scrollEnabled={open && contentHeight > maxHeight}
-          style={[styles.text, styles.input, { color: theme.ink }, open ? styles.openLines : restingLine(font, lineHeight)]}
-          selectionColor={theme.tintInk}
-          maxFontSizeMultiplier={FIELD_MAX_SCALE}
-          // iOS reads an empty field's placeholder after its label, so the
-          // placeholder names the field until there is text to read.
-          accessibilityLabel={value ? placeholder : undefined}
-          enablesReturnKeyAutomatically
-        />
+        <Animated.View style={[styles.turning, textAway]} pointerEvents={dictating && !open ? "none" : "auto"}>
+          <TextInput
+            ref={inputRef}
+            value={value}
+            onChangeText={onChangeText}
+            onFocus={() => setTyping(true)}
+            onBlur={() => setTyping(false)}
+            placeholder={placeholder}
+            placeholderTextColor={theme.faint}
+            multiline
+            scrollEnabled={open && contentHeight > maxHeight}
+            style={[styles.text, styles.input, { color: theme.ink }, open ? styles.openLines : restingLine(font, lineHeight)]}
+            selectionColor={theme.tintInk}
+            maxFontSizeMultiplier={FIELD_MAX_SCALE}
+            // iOS reads an empty field's placeholder after its label, so the
+            // placeholder names the field until there is text to read.
+            accessibilityLabel={value ? placeholder : undefined}
+            enablesReturnKeyAutomatically
+          />
+        </Animated.View>
       </Animated.View>
       {hasTray ? (
         <Animated.View entering={reduceMotion ? undefined : FadeIn.duration(180)} style={styles.tray}>
           <AttachmentTray files={attachments} onRemove={onRemoveAttachment} />
         </Animated.View>
       ) : null}
-      <View style={[styles.corner, styles.leading]}>
-        {/* The native menu button over the + takes the tap and reads to VoiceOver. */}
-        <MessageMenuView
-          actions={attachDisabled ? [] : ATTACH_ACTIONS}
-          opensOnTap
-          label="Add photos and files"
-          onAction={({ nativeEvent }) => attach(nativeEvent.id as PickSource)}
-          style={styles.attach}>
-          <View accessibilityElementsHidden importantForAccessibility="no-hide-descendants" pointerEvents="none" style={{ opacity: attachDisabled ? 0.35 : 1 }}>
-            <IconButton icon={Plus} label="Add photos and files" iconSize={19} color={theme.ink2} onPress={() => undefined} />
-          </View>
-        </MessageMenuView>
-      </View>
-      <View style={[styles.corner, styles.trailing]}>
-        <Pressable
-          onPress={() => canSend && onSend()}
-          disabled={!canSend}
-          accessibilityRole="button"
-          accessibilityLabel="Send message"
-          accessibilityState={{ disabled: !canSend }}
-          hitSlop={8}
-          style={({ pressed }) => [styles.round, { backgroundColor: theme.tint, opacity: !canSend ? 0.4 : pressed ? 0.75 : 1 }]}>
-          <ArrowUp size={18} strokeWidth={2.5} color={theme.onTint} />
-        </Pressable>
-      </View>
+      {/* Mounted with the field, the row shows without turning; it turns only as dictation starts and ends. */}
+      <LayoutAnimationConfig skipEntering>
+        {dictating ? (
+          <Animated.View entering={turn(DICTATION_ENTERING)} exiting={turn(DICTATION_EXITING)} style={styles.dictation}>
+            <DictationBar
+              state={dictation.state}
+              levels={dictation.levels}
+              seconds={dictation.seconds}
+              onCancel={dictation.cancel}
+              onConfirm={() => void finishDictating()}
+            />
+          </Animated.View>
+        ) : (
+          <>
+            <Animated.View entering={turn(BUTTONS_ENTERING)} exiting={turn(BUTTONS_EXITING)} style={[styles.corner, styles.leading]}>
+              {/* The native menu button over the + takes the tap and reads to VoiceOver. */}
+              <MessageMenuView
+                actions={attachDisabled ? [] : ATTACH_ACTIONS}
+                opensOnTap
+                label="Add photos and files"
+                onAction={({ nativeEvent }) => attach(nativeEvent.id as PickSource)}
+                style={styles.attach}>
+                <View accessibilityElementsHidden importantForAccessibility="no-hide-descendants" pointerEvents="none" style={{ opacity: attachDisabled ? 0.35 : 1 }}>
+                  <IconButton icon={Plus} label="Add photos and files" iconSize={19} color={theme.ink2} onPress={() => undefined} />
+                </View>
+              </MessageMenuView>
+            </Animated.View>
+            <Animated.View entering={turn(BUTTONS_ENTERING)} exiting={turn(BUTTONS_EXITING)} style={[styles.corner, styles.trailing]}>
+              {canDictate ? <IconButton icon={Mic} label="Dictate" iconSize={19} color={theme.ink2} onPress={() => void dictation.start()} /> : null}
+              <Pressable
+                onPress={() => canSend && onSend()}
+                disabled={!canSend}
+                accessibilityRole="button"
+                accessibilityLabel="Send message"
+                accessibilityState={{ disabled: !canSend }}
+                hitSlop={8}
+                style={({ pressed }) => [styles.round, { backgroundColor: theme.tint, opacity: !canSend ? 0.4 : pressed ? 0.75 : 1 }]}>
+                <ArrowUp size={18} strokeWidth={2.5} color={theme.onTint} />
+              </Pressable>
+            </Animated.View>
+          </>
+        )}
+      </LayoutAnimationConfig>
     </Animated.View>
   );
 }
@@ -208,12 +251,14 @@ const styles = StyleSheet.create({
   textFrame: { position: "absolute" },
   tray: { position: "absolute", top: 0, left: 0, right: 0 },
   input: { flex: 1, padding: 0, paddingBottom: 0 },
+  turning: { flex: 1 },
   // Open, the lines start at the top; Android's field centres them unless told.
   openLines: { paddingTop: 0, textAlignVertical: "top" },
   corner: { position: "absolute", bottom: INSET, flexDirection: "row", alignItems: "center" },
   leading: { left: INSET },
   // The + takes a full 44pt tap around its 36pt button, reaching past it into the card's edge.
   attach: { width: 44, height: 44, margin: -4, alignItems: "center", justifyContent: "center" },
-  trailing: { right: INSET },
+  trailing: { right: INSET, gap: 4 },
+  dictation: { position: "absolute", left: INSET, right: INSET, bottom: INSET },
   round: { width: BUTTON, height: BUTTON, borderRadius: BUTTON / 2, alignItems: "center", justifyContent: "center" },
 });
