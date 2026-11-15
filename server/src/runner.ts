@@ -62,6 +62,8 @@ const RECENT_MESSAGE_CHARS = 1500;
 const QUOTE_CHARS = 300;
 // How often the clock looks for jobs whose time has come.
 const CLOCK_MS = 15_000;
+// The longest a session stays open, after its replies are in, for background work the agent started.
+const BACKGROUND_WAIT_MS = 30 * 60_000;
 // How long a turn runs before the agent may send an update, and how long between updates.
 const FIRST_UPDATE_MS = 60_000;
 const UPDATE_GAP_MS = 3 * 60_000;
@@ -72,12 +74,7 @@ const TOOLS = ["search_history", "schedule_job", "list_jobs", "cancel_job"];
 const text = (words: string) => ({ content: [{ type: "text" as const, text: words }] });
 
 /** The messages a frame from Claude Code says it has read, by the ids they were sent with. */
-function readIds(message: SDKMessage): string[] {
-  const ids = "user_message_uuids" in message ? message.user_message_uuids : undefined;
-  if (ids?.length) return ids;
-  const id = "user_message_uuid" in message ? message.user_message_uuid : undefined;
-  return typeof id === "string" ? [id] : [];
-}
+const readIds = (message: SDKMessage): string[] => ("user_message_uuids" in message && message.user_message_uuids) || [];
 
 /** Messages for Claude Code, handed over as they come, until `end`. */
 function inbox() {
@@ -110,7 +107,10 @@ function inbox() {
  * sends meanwhile goes into it: Claude Code reads it at its next pause between
  * steps, and its reply answers both. One that arrives as the turn is finishing
  * gets a reply of its own in the same session. The session closes once every
- * message sent to it has its reply.
+ * message sent to it has its reply and no background work the agent started,
+ * such as a long command, is still running. When such work finishes, Claude
+ * Code wakes the agent by itself, and what it says then is a reply too. The
+ * session waits for that work for half an hour at most.
  */
 export const claudeTurn: RunTurn = async ({
   prompt,
@@ -169,7 +169,24 @@ export const claudeTurn: RunTurn = async ({
   // Sent to Claude Code and not yet answered.
   const unanswered = new Set<string>();
   let open = true;
+  // The session the replies came from, once there is one, and the background work it has running.
+  let session: string | null = null;
+  let background = 0;
+  let waitForBackground: ReturnType<typeof setTimeout> | null = null;
+  const close = () => {
+    if (waitForBackground) clearTimeout(waitForBackground);
+    open = false;
+    input.end();
+  };
+  // Closes the session when nothing is left for it to do, or waits for its background work.
+  const settle = () => {
+    if (!open || session === null || unanswered.size > 0) return;
+    if (background === 0) close();
+    else waitForBackground ??= setTimeout(close, BACKGROUND_WAIT_MS);
+  };
   const send = ({ id, text: words }: Prompt) => {
+    if (waitForBackground) clearTimeout(waitForBackground);
+    waitForBackground = null;
     unanswered.add(id);
     input.push({ type: "user", message: { role: "user", content: words }, parent_tool_use_id: null, uuid: id as SDKUserMessage["uuid"], priority: "next" });
   };
@@ -219,24 +236,26 @@ export const claudeTurn: RunTurn = async ({
         const usage = message.message.usage;
         contextTokens = usage.input_tokens + (usage.cache_creation_input_tokens ?? 0) + (usage.cache_read_input_tokens ?? 0) + usage.output_tokens;
       }
+      if (message.type === "system" && message.subtype === "background_tasks_changed") {
+        background = message.tasks.filter((task) => !task.ambient).length;
+        settle();
+      }
       if (message.type !== "result") continue;
       if (message.subtype !== "success") throw new Error(message.errors.join("; ") || message.subtype);
       if (message.is_error) throw new Error(message.result || "Claude Code returned an error");
-      // A result names the messages it answers. One from a Claude Code that doesn't answers all of them.
-      const answered = read.length ? read : [...unanswered];
-      answered.forEach((id) => unanswered.delete(id));
-      replied(message.result, answered);
-      if (unanswered.size === 0) {
-        open = false;
-        input.end();
-        return { sessionId: message.session_id, contextTokens };
-      }
+      // A result names the messages it answers. One for finished background work names none.
+      read.forEach((id) => unanswered.delete(id));
+      replied(message.result, read);
+      session = message.session_id;
+      settle();
     }
   } finally {
+    if (waitForBackground) clearTimeout(waitForBackground);
     open = false;
     stopListening?.();
     input.end();
   }
+  if (session !== null && unanswered.size === 0) return { sessionId: session, contextTokens };
   throw new Error("Claude Code stopped without a reply");
 };
 
