@@ -8,6 +8,8 @@ const light = {
   line: "#E5E5EA",
   field: "#F2F2F7",
   card: "#FFFFFF",
+  // What sits raised on a field, as the selected tab, set apart from the field in either mode.
+  raised: "#FFFFFF",
   faint: "rgba(0, 0, 0, 0.42)",
   bubble: "#E9E9EB",
   tint: "#66023C",
@@ -31,6 +33,7 @@ const dark: typeof light = {
   line: "#2C2C2E",
   field: "#1C1C1E",
   card: "#1C1C1E",
+  raised: "#3A3A3C",
   faint: "rgba(255, 255, 255, 0.38)",
   bubble: "#262629",
   tint: "#8A1F56",

@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { ActivityIndicator, KeyboardAvoidingView, Platform, Pressable, StyleSheet, Text, TextInput, View } from "react-native";
 import { useRouter } from "expo-router";
+import { FadingText } from "@/components/FadingText";
 import { connect } from "@/lib/api";
 import { startSync } from "@/lib/state";
 import { useTheme } from "@/lib/theme";
@@ -46,9 +47,9 @@ export default function Setup() {
           onSubmitEditing={onConnect}
           style={[styles.field, { color: theme.ink, backgroundColor: theme.field, borderColor: theme.line }]}
         />
-        <Text style={[styles.help, { color: error ? theme.danger : theme.ink2 }]}>
+        <FadingText style={[styles.help, { color: error ? theme.danger : theme.ink2 }]}>
           {error ?? "The Tailscale name of the machine that runs Simon."}
-        </Text>
+        </FadingText>
         <Pressable
           onPress={onConnect}
           disabled={busy}

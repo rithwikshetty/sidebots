@@ -7,29 +7,30 @@ import { Reply } from "lucide-react-native";
 import { haptics } from "@/lib/haptics";
 import { useTheme } from "@/lib/theme";
 
-// A swipe right past this replies, and the arrow is fully in.
+// A swipe left past this replies, and the arrow is fully in.
 const REPLY_AT = 56;
 // The reply arrow's width, centred in the space the message leaves when it reaches REPLY_AT.
 const REPLY_ARROW = 26;
 
 /**
- * A message that swipes right to reply, as in Messages and as Assist's does:
- * it follows the finger with a reply arrow coming in behind it, gives a tap
- * at the point where letting go replies, and springs back. A swipe up or down
- * scrolls the chat.
+ * A message that swipes left to reply, as in Telegram: it follows the finger
+ * with a reply arrow coming in behind it at the right, gives a tap at the
+ * point where letting go replies, and springs back. A swipe right is left to
+ * the system, which goes back from anywhere in the chat, and a swipe up or
+ * down scrolls it.
  */
 export function SwipeToReply({ onReply, children }: { onReply: () => void; children: ReactNode }) {
   const theme = useTheme();
   const reduceMotion = useReducedMotion();
   const offset = useSharedValue(0);
   const pan = usePanGesture({
-    activeOffsetX: 12,
-    failOffsetX: -12,
+    activeOffsetX: -12,
+    failOffsetX: 12,
     failOffsetY: [-10, 10],
     onUpdate: (event) => {
       "worklet";
       // It follows the finger at a damped pace, and slows further past the point.
-      const pulled = Math.max(0, event.translationX) * 0.6;
+      const pulled = Math.max(0, -event.translationX) * 0.6;
       offset.value = pulled > REPLY_AT ? REPLY_AT + (pulled - REPLY_AT) * 0.3 : pulled;
     },
     onDeactivate: (event) => {
@@ -44,7 +45,7 @@ export function SwipeToReply({ onReply, children }: { onReply: () => void; child
       if (past && before === false) scheduleOnRN(haptics.threshold);
     },
   );
-  const moved = useAnimatedStyle(() => ({ transform: [{ translateX: offset.value }] }));
+  const moved = useAnimatedStyle(() => ({ transform: [{ translateX: -offset.value }] }));
   const arrow = useAnimatedStyle(() => ({
     opacity: interpolate(offset.value, [12, REPLY_AT], [0, 1], "clamp"),
     transform: [{ scale: interpolate(offset.value, [12, REPLY_AT], [0.6, 1], "clamp") }],
@@ -64,7 +65,7 @@ export function SwipeToReply({ onReply, children }: { onReply: () => void; child
 const styles = StyleSheet.create({
   arrow: {
     position: "absolute",
-    left: (REPLY_AT - REPLY_ARROW) / 2,
+    right: (REPLY_AT - REPLY_ARROW) / 2,
     top: "50%",
     marginTop: -REPLY_ARROW / 2,
     width: REPLY_ARROW,

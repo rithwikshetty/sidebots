@@ -46,6 +46,18 @@ export function useDictation(): {
   // Counts cancels, so text made from a cancelled recording is dropped.
   const generation = useRef(0);
 
+  // Leaving the screen while it listens gives the microphone back. The recorder itself goes with the screen.
+  const listening = useRef(false);
+  useEffect(() => {
+    listening.current = state === "listening";
+  }, [state]);
+  useEffect(
+    () => () => {
+      if (listening.current) void setAudioModeAsync({ allowsRecording: false }).catch(() => {});
+    },
+    [],
+  );
+
   // The levels change many times a second, so they skip React and go straight to the waveform.
   useEffect(() => {
     if (state !== "listening") return;

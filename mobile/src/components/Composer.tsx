@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { PixelRatio, Pressable, StyleSheet, Text, TextInput, View, type TextInputInstance, type TextStyle } from "react-native";
-import Animated, { FadeIn, LayoutAnimationConfig, LinearTransition, useReducedMotion } from "react-native-reanimated";
+import Animated, { FadeIn, LayoutAnimationConfig, LinearTransition, useAnimatedStyle, useReducedMotion, withTiming } from "react-native-reanimated";
 import { ArrowUp, Mic, Plus } from "lucide-react-native";
 import { MessageMenuView, type MessageMenuAction } from "../../modules/message-menu/src";
 import { AttachmentTray, TRAY_HEIGHT, TRAY_TILE_EXIT_MS } from "@/components/AttachmentTray";
@@ -9,6 +9,7 @@ import { Glass } from "@/components/Glass";
 import { IconButton } from "@/components/IconButton";
 import { canDictate, useDictation } from "@/lib/dictation";
 import type { Picked, PickSource } from "@/lib/files";
+import { EASE } from "@/lib/motion";
 import { useTheme } from "@/lib/theme";
 
 const FONT_SIZE = 16;
@@ -94,6 +95,8 @@ export function Composer({
   const lineHeight = LINE_HEIGHT * Math.min(PixelRatio.getFontScale(), FIELD_MAX_SCALE);
   const maxHeight = lineHeight * MAX_LINES;
   const canSend = value.trim().length > 0 || attachments.length > 0;
+  // Send brightens as there comes to be something to send, and dims as the field empties.
+  const sendStyle = useAnimatedStyle(() => ({ opacity: withTiming(canSend ? 1 : 0.4, EASE) }));
   const dictation = useDictation();
   const dictating = dictation.state !== "idle";
   // At rest the line of text shares the row the dictation row takes, so it turns away with the buttons.
@@ -211,16 +214,18 @@ export function Composer({
             </Animated.View>
             <Animated.View entering={turn(BUTTONS_ENTERING)} exiting={turn(BUTTONS_EXITING)} style={[styles.corner, styles.trailing]}>
               {canDictate ? <IconButton icon={Mic} label="Dictate" iconSize={19} color={theme.ink2} onPress={() => void dictation.start()} /> : null}
-              <Pressable
-                onPress={() => canSend && onSend()}
-                disabled={!canSend}
-                accessibilityRole="button"
-                accessibilityLabel="Send message"
-                accessibilityState={{ disabled: !canSend }}
-                hitSlop={8}
-                style={({ pressed }) => [styles.round, { backgroundColor: theme.tint, opacity: !canSend ? 0.4 : pressed ? 0.75 : 1 }]}>
-                <ArrowUp size={18} strokeWidth={2.5} color={theme.onTint} />
-              </Pressable>
+              <Animated.View style={sendStyle}>
+                <Pressable
+                  onPress={() => canSend && onSend()}
+                  disabled={!canSend}
+                  accessibilityRole="button"
+                  accessibilityLabel="Send message"
+                  accessibilityState={{ disabled: !canSend }}
+                  hitSlop={8}
+                  style={({ pressed }) => [styles.round, { backgroundColor: theme.tint, opacity: pressed ? 0.75 : 1 }]}>
+                  <ArrowUp size={18} strokeWidth={2.5} color={theme.onTint} />
+                </Pressable>
+              </Animated.View>
             </Animated.View>
           </>
         )}

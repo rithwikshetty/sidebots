@@ -1,17 +1,20 @@
 import { useEffect, useRef, useState, type ComponentType, type ReactNode, type RefObject } from "react";
-import { FlatList, Pressable, StyleSheet, Text, TextInput, View } from "react-native";
+import { Pressable, StyleSheet, Text, TextInput, View } from "react-native";
+import Animated, { LayoutAnimationConfig, useAnimatedStyle, withTiming } from "react-native-reanimated";
 import Swipeable, { type SwipeableMethods } from "react-native-gesture-handler/ReanimatedSwipeable";
 import { Redirect, useRouter } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { Bell, BellOff, ChevronDown, ChevronRight, Eye, EyeOff, Plus, Search, Trash2 } from "lucide-react-native";
+import { Bell, BellOff, ChevronRight, Eye, EyeOff, Plus, Search, Trash2 } from "lucide-react-native";
 import type { AgentWithLatest, Found } from "@server/contract";
 import { Glass } from "@/components/Glass";
 import { PetView } from "@/components/PetView";
 import { EdgeFade } from "@/components/EdgeFade";
+import { FadingText } from "@/components/FadingText";
 import { confirmDelete, problem } from "@/lib/alerts";
 import { serverUrl } from "@/lib/api";
 import { useWorkingLine } from "@/lib/lines";
 import { preview } from "@/lib/messages";
+import { EASE, HIDE, MOVE, POP_IN, POP_OUT, SHOW } from "@/lib/motion";
 import { changeAgent, findMessages, petStateOf, useAgents, useOnline, type AgentChanges } from "@/lib/state";
 import { usePush } from "@/lib/push";
 import { useTheme } from "@/lib/theme";
@@ -36,7 +39,8 @@ type Row = { agent: AgentWithLatest; found?: Found };
  * agent shows what can be done to it: mute, hide and delete. Hidden agents
  * wait under a line at the list's end, which a tap opens. While the search
  * field holds text, the list is the agents whose name matches and then the
- * messages that contain it, from every chat.
+ * messages that contain it, from every chat. Rows slide to their new places
+ * as agents move up the list, and fade in and out as they come and go.
  */
 export default function Home() {
   const theme = useTheme();
@@ -65,45 +69,53 @@ export default function Home() {
     : agents.filter((agent) => !agent.hidden).map((agent) => ({ agent }));
   const hidden = search ? [] : agents.filter((agent) => agent.hidden);
   const swipeRow = (agent: AgentWithLatest) => (
-    <AgentActions key={agent.id} agent={agent} opened={opened}>
-      <AgentRow agent={agent} search={search} online={online} onPress={() => router.push(`/chat/${agent.id}`)} />
-    </AgentActions>
+    <Animated.View key={agent.id} entering={SHOW} exiting={HIDE}>
+      <AgentActions agent={agent} opened={opened}>
+        <AgentRow agent={agent} search={search} online={online} onPress={() => router.push(`/chat/${agent.id}`)} />
+      </AgentActions>
+    </Animated.View>
   );
 
   return (
     <View style={[styles.screen, { backgroundColor: theme.bg }]}>
-      <FlatList
-        data={rows}
-        keyExtractor={(row) => row.found?.id ?? row.agent.id}
-        contentInsetAdjustmentBehavior="never"
-        contentContainerStyle={{ paddingTop: insets.top + SEARCH_HEIGHT + 12, paddingBottom: insets.bottom + ADD_BUTTON + 32 }}
-        // A drag lowers the keyboard, and a tap on a row opens it with the keyboard still up.
-        keyboardDismissMode="on-drag"
-        keyboardShouldPersistTaps="handled"
-        ListEmptyComponent={search && found ? <Text style={[styles.empty, { color: theme.ink2 }]}>No results</Text> : undefined}
-        ListFooterComponent={
-          hidden.length ? (
-            <>
-              <Pressable
-                onPress={() => setShowHidden((shown) => !shown)}
-                accessibilityRole="button"
-                accessibilityState={{ expanded: showHidden }}
-                style={styles.hidden}>
-                <Text style={[styles.hiddenText, { color: theme.ink2 }]}>Hidden · {hidden.length}</Text>
-                {showHidden ? <ChevronDown size={16} color={theme.ink2} /> : <ChevronRight size={16} color={theme.ink2} />}
-              </Pressable>
-              {showHidden ? hidden.map(swipeRow) : null}
-            </>
-          ) : undefined
-        }
-        renderItem={({ item }) =>
-          item.found ? (
-            <AgentRow agent={item.agent} found={item.found} search={search} online={online} onPress={() => router.push(`/chat/${item.agent.id}`)} />
-          ) : (
-            swipeRow(item.agent)
-          )
-        }
-      />
+      {/* The rows the list opens with show as they are; ones that come later fade in. */}
+      <LayoutAnimationConfig skipEntering>
+        <Animated.FlatList
+          data={rows}
+          keyExtractor={(row) => row.found?.id ?? row.agent.id}
+          itemLayoutAnimation={MOVE}
+          contentInsetAdjustmentBehavior="never"
+          contentContainerStyle={{ paddingTop: insets.top + SEARCH_HEIGHT + 12, paddingBottom: insets.bottom + ADD_BUTTON + 32 }}
+          // A drag lowers the keyboard, and a tap on a row opens it with the keyboard still up.
+          keyboardDismissMode="on-drag"
+          keyboardShouldPersistTaps="handled"
+          ListEmptyComponent={search && found ? <FadingText style={[styles.empty, { color: theme.ink2 }]}>No results</FadingText> : undefined}
+          ListFooterComponent={
+            hidden.length ? (
+              <>
+                <Pressable
+                  onPress={() => setShowHidden((shown) => !shown)}
+                  accessibilityRole="button"
+                  accessibilityState={{ expanded: showHidden }}
+                  style={styles.hidden}>
+                  <Text style={[styles.hiddenText, { color: theme.ink2 }]}>Hidden · {hidden.length}</Text>
+                  <Turning open={showHidden} />
+                </Pressable>
+                {showHidden ? hidden.map(swipeRow) : null}
+              </>
+            ) : undefined
+          }
+          renderItem={({ item }) =>
+            item.found ? (
+              <Animated.View entering={SHOW} exiting={HIDE}>
+                <AgentRow agent={item.agent} found={item.found} search={search} online={online} onPress={() => router.push(`/chat/${item.agent.id}`)} />
+              </Animated.View>
+            ) : (
+              swipeRow(item.agent)
+            )
+          }
+        />
+      </LayoutAnimationConfig>
       <EdgeFade edge="top" height={insets.top + SEARCH_HEIGHT + 16} solid={insets.top + SEARCH_HEIGHT} />
       <View style={[styles.search, { top: insets.top }]}>
         <Glass style={styles.searchGlass}>
@@ -185,6 +197,17 @@ function AgentActions({ agent, opened, children }: { agent: AgentWithLatest; ope
   );
 }
 
+/** The arrow by Hidden, which turns down as the hidden agents open and back as they close. */
+function Turning({ open }: { open: boolean }) {
+  const theme = useTheme();
+  const turn = useAnimatedStyle(() => ({ transform: [{ rotate: withTiming(open ? "90deg" : "0deg", EASE) }] }));
+  return (
+    <Animated.View style={turn}>
+      <ChevronRight size={16} color={theme.ink2} />
+    </Animated.View>
+  );
+}
+
 /** One of the actions behind a row: its icon over its name, on its colour. */
 function RowAction({ icon: Icon, label, color, onPress }: { icon: ComponentType<{ size?: number; color?: string; strokeWidth?: number }>; label: string; color: string; onPress: () => void }) {
   const theme = useTheme();
@@ -212,18 +235,27 @@ function AgentRow({ agent, found, search, online, onPress }: { agent: AgentWithL
             <Text style={[styles.name, { color: theme.ink }]} numberOfLines={1}>
               {agent.name}
             </Text>
-            {agent.muted ? <BellOff size={13} strokeWidth={2.25} color={theme.ink2} accessibilityLabel="Muted" /> : null}
+            {agent.muted ? (
+              <Animated.View entering={SHOW} exiting={HIDE}>
+                <BellOff size={13} strokeWidth={2.25} color={theme.ink2} accessibilityLabel="Muted" />
+              </Animated.View>
+            ) : null}
           </View>
           <Text style={[styles.time, { color: theme.ink2 }]}>{listTime((found ?? agent.latest)?.created_at ?? agent.created_at)}</Text>
         </View>
         <View style={styles.bottom}>
-          <Text style={[styles.preview, { color: unread ? theme.ink : theme.ink2 }, working && styles.working]} numberOfLines={2}>
+          {/* The line crossfades as a new message comes or the working line changes. */}
+          <FadingText style={[styles.preview, { color: unread ? theme.ink : theme.ink2 }, working && styles.working]} numberOfLines={2}>
             {found ? foundLine(found, search) : working ? line : agent.latest ? preview(agent.latest) : "Say hello"}
-          </Text>
+          </FadingText>
           {unread ? (
-            <View style={[styles.count, { backgroundColor: agent.muted ? theme.ink2 : theme.tint }]} accessibilityLabel={`${agent.unread} unread`}>
+            <Animated.View
+              entering={POP_IN}
+              exiting={POP_OUT}
+              style={[styles.count, { backgroundColor: agent.muted ? theme.ink2 : theme.tint }]}
+              accessibilityLabel={`${agent.unread} unread`}>
               <Text style={[styles.countText, { color: theme.onTint }]}>{agent.unread > 99 ? "99+" : agent.unread}</Text>
-            </View>
+            </Animated.View>
           ) : null}
         </View>
       </View>

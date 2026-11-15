@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { ActivityIndicator, Pressable, StyleSheet, Text, TextInput, View } from "react-native";
 import { useRouter } from "expo-router";
+import { FadingText } from "@/components/FadingText";
 import { PetPicker } from "@/components/PetPicker";
 import { createAgent, usePets } from "@/lib/state";
 import { useTheme } from "@/lib/theme";
@@ -54,7 +55,7 @@ export default function NewAgent() {
         style={[styles.name, { color: theme.ink, borderBottomColor: theme.line }]}
       />
       <PetPicker value={petId} onChange={setPicked} />
-      <Text style={[styles.hint, { color: error ? theme.danger : theme.ink2 }]}>{error ?? "Tell it what it's for in the chat."}</Text>
+      <FadingText style={[styles.hint, { color: error ? theme.danger : theme.ink2 }]}>{error ?? "Tell it what it's for in the chat."}</FadingText>
       <Pressable
         onPress={onCreate}
         disabled={busy || !trimmed || !petId}

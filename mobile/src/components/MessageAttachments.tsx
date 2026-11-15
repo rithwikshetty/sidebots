@@ -134,7 +134,7 @@ function ViewerPage({ photo, width, height, reservedTop, reservedBottom, onClose
       }}
       scrollEventThrottle={32}>
       <View style={box}>
-        <Image source={{ uri: photo.uri }} contentFit="contain" style={StyleSheet.absoluteFill} onLoad={() => setLoaded(true)} accessibilityLabel={photo.name} />
+        <Image source={{ uri: photo.uri }} contentFit="contain" transition={200} style={StyleSheet.absoluteFill} onLoad={() => setLoaded(true)} accessibilityLabel={photo.name} />
         {loaded ? null : <ActivityIndicator style={StyleSheet.absoluteFill} color={theme.viewerInk} />}
       </View>
     </ScrollView>

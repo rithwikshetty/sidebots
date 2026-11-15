@@ -1,9 +1,9 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { Pressable, StyleSheet, Text, View } from "react-native";
 import { Stack, useFocusEffect, useLocalSearchParams, useRouter } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { KeyboardStickyView } from "react-native-keyboard-controller";
-import Animated, { FadeIn, useSharedValue } from "react-native-reanimated";
+import Animated, { useSharedValue, withTiming } from "react-native-reanimated";
 import { KeyboardAwareLegendList } from "@legendapp/list/keyboard";
 import type { LegendListRef } from "@legendapp/list/react-native";
 import { Reply, X } from "lucide-react-native";
@@ -11,6 +11,7 @@ import type { AgentWithLatest, Message } from "@server/contract";
 import { BAR_HEIGHT, ChatHeader, HEADER_CLEARANCE, HEADER_OVERHANG } from "@/components/ChatHeader";
 import { Composer } from "@/components/Composer";
 import { EdgeFade } from "@/components/EdgeFade";
+import { FadingText } from "@/components/FadingText";
 import { Glass } from "@/components/Glass";
 import { IconButton } from "@/components/IconButton";
 import { Markdown } from "@/components/Markdown";
@@ -23,6 +24,7 @@ import { isImage, MAX_FILES, pick, type Picked, type PickSource } from "@/lib/fi
 import { haptics } from "@/lib/haptics";
 import { useWorkingLine } from "@/lib/lines";
 import { preview } from "@/lib/messages";
+import { EASE, HIDE, MOVE, SHOW, arrive } from "@/lib/motion";
 import { askForPush, showChatOnScreen } from "@/lib/push";
 import { freshStart, loadMessages, loadOlder, markRead, petStateOf, send, useAgent, useMessages, useOnline } from "@/lib/state";
 import { type Theme, useTheme } from "@/lib/theme";
@@ -43,12 +45,19 @@ function ChatWith({ agent }: { agent: AgentWithLatest }) {
   const messages = useMessages(agent.id);
   // The person's newest message, which carries the chat's receipt.
   const newestMine = messages.findLast((message) => message.sender === "person")?.id;
-  const [draft, setDraft] = useState("");
+  // What the person typed stays with the chat when they leave it and come back.
+  const [draft, keepDraft] = useState(() => drafts.get(agent.id) ?? "");
+  const setDraft = (text: string) => {
+    drafts.set(agent.id, text);
+    keepDraft(text);
+  };
   const [picked, setPicked] = useState<Picked[]>([]);
   // The message the next one answers, set by a swipe on it.
   const [replyTo, setReplyTo] = useState<Message | null>(null);
   // A message on its way to the server, shown faded at the chat's end until the server has it.
   const [outgoing, setOutgoing] = useState<Outgoing | null>(null);
+  // Messages made from here on came in while the chat was open, so they arrive with motion.
+  const [openedAt] = useState(() => Date.now() - CLOCK_SLACK_MS);
 
   useEffect(() => {
     loadMessages(agent.id).catch(() => {});
@@ -66,6 +75,13 @@ function ChatWith({ agent }: { agent: AgentWithLatest }) {
   // from here, so the last message always rests just above the composer.
   const list = useRef<LegendListRef>(null);
   const contentInsetEndAdjustment = useSharedValue(COMPOSER_ESTIMATE + insets.bottom);
+  // The composer's first height sets the room under the messages at once; later ones, as when a
+  // reply banner shows or the field grows, ease the messages up or down with the composer.
+  const composerMeasured = useRef(false);
+  function onComposerLayout(height: number) {
+    contentInsetEndAdjustment.set(composerMeasured.current ? withTiming(height, EASE) : height);
+    composerMeasured.current = true;
+  }
 
   // Scrolling up to the oldest message the app has fetches the page before it, until the chat's beginning.
   const older = useRef<"more" | "loading" | "none">("more");
@@ -84,7 +100,7 @@ function ChatWith({ agent }: { agent: AgentWithLatest }) {
     setDraft("");
     setPicked([]);
     setReplyTo(null);
-    setOutgoing({ body: text, files, quote: answering ? preview(answering) : undefined });
+    setOutgoing({ body: text, files, quote: answering ? preview(answering) : undefined, after: newestMine });
     haptics.send();
     void list.current?.scrollToEnd({ animated: true });
     try {
@@ -144,8 +160,9 @@ function ChatWith({ agent }: { agent: AgentWithLatest }) {
         ListHeaderComponent={<View style={{ height: insets.top + BAR_HEIGHT + HEADER_OVERHANG + HEADER_CLEARANCE }} />}
         ListFooterComponent={
           <View style={styles.foot}>
-            {outgoing ? (
-              <View style={[styles.mine, styles.pending]}>
+            {/* The faded copy goes once the server's copy is in the chat, which may come over the event stream first. */}
+            {outgoing && outgoing.after === newestMine ? (
+              <Animated.View entering={RISE} style={[styles.mine, styles.pending]}>
                 <Sent
                   body={outgoing.body}
                   quote={outgoing.quote}
@@ -154,7 +171,7 @@ function ChatWith({ agent }: { agent: AgentWithLatest }) {
                   mine
                   theme={theme}
                 />
-              </View>
+              </Animated.View>
             ) : null}
             {agent.working && online ? <WorkingRow agent={agent} /> : null}
           </View>
@@ -162,7 +179,7 @@ function ChatWith({ agent }: { agent: AgentWithLatest }) {
         renderItem={({ item, index }) => {
           const older = messages[index - 1];
           return (
-            <View style={styles.row}>
+            <Row message={item} openedAt={openedAt}>
               {!older || !sameDay(older.created_at, item.created_at) ? (
                 <Text style={[styles.day, { color: theme.ink2 }]}>{dayLabel(item.created_at)}</Text>
               ) : null}
@@ -174,7 +191,7 @@ function ChatWith({ agent }: { agent: AgentWithLatest }) {
                 onReply={() => setReplyTo(item)}
                 onResend={() => onSend(item.body)}
               />
-            </View>
+            </Row>
           );
         }}
       />
@@ -190,18 +207,20 @@ function ChatWith({ agent }: { agent: AgentWithLatest }) {
       <KeyboardStickyView offset={{ closed: 0, opened: keyboardOffset }} style={styles.sticky}>
         {/* Messages show through the glass composer, and fade out evenly from it to the screen's bottom edge. */}
         <EdgeFade edge="bottom" height={insets.bottom + COMPOSER_GAP + 16} solid={0} />
-        <View style={[styles.composer, { paddingBottom: insets.bottom + COMPOSER_GAP }]} onLayout={(event) => contentInsetEndAdjustment.set(event.nativeEvent.layout.height)}>
+        <View style={[styles.composer, { paddingBottom: insets.bottom + COMPOSER_GAP }]} onLayout={(event) => onComposerLayout(event.nativeEvent.layout.height)}>
           {replyTo ? (
-            <Glass style={styles.replying}>
-              <Reply size={16} strokeWidth={2} color={theme.ink2} />
-              <View style={styles.replyingText}>
-                <Text style={[styles.replyingTitle, { color: theme.ink }]}>Replying to {replyTo.sender === "person" ? "yourself" : agent.name}</Text>
-                <Text numberOfLines={1} style={[styles.replyingQuote, { color: theme.ink2 }]}>
-                  {preview(replyTo)}
-                </Text>
-              </View>
-              <IconButton icon={X} label="Cancel reply" size={28} iconSize={16} color={theme.ink2} onPress={() => setReplyTo(null)} />
-            </Glass>
+            <Animated.View entering={SHOW} exiting={HIDE} layout={MOVE}>
+              <Glass style={styles.replying}>
+                <Reply size={16} strokeWidth={2} color={theme.ink2} />
+                <View style={styles.replyingText}>
+                  <Text style={[styles.replyingTitle, { color: theme.ink }]}>Replying to {replyTo.sender === "person" ? "yourself" : agent.name}</Text>
+                  <Text numberOfLines={1} style={[styles.replyingQuote, { color: theme.ink2 }]}>
+                    {preview(replyTo)}
+                  </Text>
+                </View>
+                <IconButton icon={X} label="Cancel reply" size={28} iconSize={16} color={theme.ink2} onPress={() => setReplyTo(null)} />
+              </Glass>
+            </Animated.View>
           ) : null}
           <Composer
             value={draft}
@@ -219,19 +238,38 @@ function ChatWith({ agent }: { agent: AgentWithLatest }) {
   );
 }
 
+/** The agent's pet at work with its playful line, fading in as the work starts and out as the reply comes. */
 function WorkingRow({ agent }: { agent: AgentWithLatest }) {
   const theme = useTheme();
   const line = useWorkingLine();
   return (
-    <View style={styles.workingRow}>
+    <Animated.View entering={SHOW} exiting={HIDE} style={styles.workingRow}>
       <PetView petId={agent.pet_id} state="working" size={48} />
-      <Text style={[styles.workingText, { color: theme.ink2 }]}>{line}</Text>
-    </View>
+      <FadingText style={[styles.workingText, { color: theme.ink2 }]}>{line}</FadingText>
+    </Animated.View>
   );
 }
 
 /**
- * A message in the chat. A swipe right on it replies to it. `quoted` is the
+ * A row of the chat. A message that came in while the chat was open rises
+ * into place the first time it shows, and the person's own settles from its
+ * faded copy where it already sits. The history the chat opens on, and a row
+ * scrolled back into view, show as they are.
+ */
+function Row({ message, openedAt, children }: { message: Message; openedAt: number; children: ReactNode }) {
+  const [entering] = useState(() => (message.created_at < openedAt || arrived.has(message.id) ? undefined : message.sender === "person" ? SETTLE : RISE));
+  useEffect(() => {
+    arrived.add(message.id);
+  }, [message.id]);
+  return (
+    <Animated.View entering={entering} style={styles.row}>
+      {children}
+    </Animated.View>
+  );
+}
+
+/**
+ * A message in the chat. A swipe left on it replies to it. `quoted` is the
  * message it answers, when it answers one the app has.
  */
 function Bubble({
@@ -265,9 +303,11 @@ function Bubble({
           theme={theme}
         />
         {mine && message.status === "failed" ? (
-          <Pressable onPress={onResend} hitSlop={8}>
-            <Text style={[styles.resend, { color: theme.tintInk }]}>Send again</Text>
-          </Pressable>
+          <Animated.View entering={SHOW} exiting={HIDE}>
+            <Pressable onPress={onResend} hitSlop={8}>
+              <Text style={[styles.resend, { color: theme.tintInk }]}>Send again</Text>
+            </Pressable>
+          </Animated.View>
         ) : receipt ? (
           <Receipt message={message} theme={theme} />
         ) : null}
@@ -279,15 +319,12 @@ function Bubble({
 /**
  * Under the person's newest message, as Assist and Messages show it:
  * "Delivered" while it waits for the agent, and "Read" with the time once the
- * agent has taken it in. The words fade in as they change.
+ * agent has taken it in. The words crossfade as they change, and fade away
+ * as the receipt moves on to a newer message.
  */
 function Receipt({ message, theme }: { message: Message; theme: Theme }) {
   const read = message.status !== "queued";
-  return (
-    <Animated.Text key={read ? "read" : "delivered"} entering={FadeIn.duration(300)} style={[styles.receipt, { color: theme.ink2 }]}>
-      {read ? `Read ${listTime(message.seen_at ?? message.created_at)}` : "Delivered"}
-    </Animated.Text>
-  );
+  return <FadingText style={[styles.receipt, { color: theme.ink2 }]}>{read ? `Read ${listTime(message.seen_at ?? message.created_at)}` : "Delivered"}</FadingText>;
 }
 
 /**
@@ -332,8 +369,24 @@ function fileName(path: string): string {
   return name.slice(name.indexOf("-") + 1);
 }
 
-/** A message the person sent that the server hasn't answered for yet, with what it quotes when it is a reply. */
-type Outgoing = { body: string; files: Picked[]; quote?: string };
+/**
+ * A message the person sent that the server hasn't answered for yet, with
+ * what it quotes when it is a reply. `after` is the person's newest message
+ * when they sent it, so the copy goes once a newer one is in the chat.
+ */
+type Outgoing = { body: string; files: Picked[]; quote?: string; after: string | undefined };
+
+// What the person had typed in each chat, kept while the app runs.
+const drafts = new Map<string, string>();
+// The person's message shows this faded until the server has it.
+const PENDING_OPACITY = 0.7;
+// A new message rises into the chat. The person's own settles from its faded copy, which already sits there.
+const RISE = arrive(0, 12);
+const SETTLE = arrive(PENDING_OPACITY, 0);
+// The messages that have come in with motion, so a row scrolled away and back shows as it is.
+const arrived = new Set<string>();
+// The phone's clock and the server's may disagree by a little.
+const CLOCK_SLACK_MS = 2000;
 
 // The resting composer's height above the home indicator, used until it is measured.
 const COMPOSER_ESTIMATE = 64;
@@ -349,7 +402,7 @@ const styles = StyleSheet.create({
   day: { alignSelf: "center", fontSize: 13, marginTop: 12, marginBottom: 6 },
   mine: { alignItems: "flex-end", marginTop: 6, gap: 4 },
   theirs: { alignItems: "flex-start", marginTop: 6, gap: 4 },
-  pending: { opacity: 0.7 },
+  pending: { opacity: PENDING_OPACITY },
   bubble: { maxWidth: "80%", paddingHorizontal: 14, paddingVertical: 8, borderRadius: 20 },
   bubbleMine: { borderBottomRightRadius: 6 },
   bubbleTheirs: { borderBottomLeftRadius: 6 },

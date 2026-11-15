@@ -1,8 +1,9 @@
 import { useEffect, useState } from "react";
-import { View } from "react-native";
 import { Image } from "expo-image";
+import Animated, { useAnimatedStyle, withTiming } from "react-native-reanimated";
 import { PET_SHEET, PET_STATES, type PetState } from "@server/contract";
 import { petSheetUrl } from "@/lib/api";
+import { EASE } from "@/lib/motion";
 
 const { columns, cellWidth, cellHeight, art } = PET_SHEET;
 const ROWS = Object.keys(PET_STATES) as PetState[];
@@ -12,7 +13,8 @@ const WINDOW_HEIGHT = art.size + art.pixel;
 
 /**
  * An agent's pet, playing the animation for `state`. `size` is the width of
- * the pet's drawing in points; the view is one drawing pixel taller.
+ * the pet's drawing in points; the view is one drawing pixel taller. A
+ * `dimmed` pet, as while the server is out of reach, fades to grey and back.
  */
 export function PetView({ petId, state, size, dimmed = false }: { petId: string; state: PetState; size: number; dimmed?: boolean }) {
   const { frames, frameMs } = PET_STATES[state];
@@ -23,10 +25,12 @@ export function PetView({ petId, state, size, dimmed = false }: { petId: string;
     return () => clearInterval(timer);
   }, [frames, frameMs]);
 
+  const fade = useAnimatedStyle(() => ({ opacity: withTiming(dimmed ? 0.4 : 1, EASE) }));
+
   const scale = size / art.size;
   const row = ROWS.indexOf(state);
   return (
-    <View style={{ width: size, height: WINDOW_HEIGHT * scale, overflow: "hidden", opacity: dimmed ? 0.4 : 1 }}>
+    <Animated.View style={[{ width: size, height: WINDOW_HEIGHT * scale, overflow: "hidden" }, fade]}>
       <Image
         source={{ uri: petSheetUrl(petId) }}
         cachePolicy="disk"
@@ -39,6 +43,6 @@ export function PetView({ petId, state, size, dimmed = false }: { petId: string;
           top: -(row * cellHeight + WINDOW_TOP) * scale,
         }}
       />
-    </View>
+    </Animated.View>
   );
 }
