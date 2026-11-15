@@ -7,7 +7,7 @@ import { AppState } from "react-native";
 import { fetch as streamingFetch } from "expo/fetch";
 import { File } from "expo-file-system";
 import Storage from "expo-sqlite/kv-store";
-import type { Agent, AgentWithLatest, Message, MessageEvent, Pet, PetState } from "@server/contract";
+import type { Agent, AgentWithLatest, Found, Message, MessageEvent, Pet, PetState } from "@server/contract";
 import { request, serverUrl } from "./api";
 import type { Picked } from "./files";
 
@@ -128,6 +128,11 @@ export async function createAgent(name: string, petId: string): Promise<Agent> {
   const agent = await request<Agent>("/agents", { method: "POST", body: { name, petId } });
   set({ agents: [{ ...agent, latest: null, working: false, unread: 0 }, ...state.agents], messages: { ...state.messages, [agent.id]: [] } });
   return agent;
+}
+
+/** The messages that contain `text`, in any of the person's chats, newest first. */
+export function findMessages(text: string): Promise<Found[]> {
+  return request<Found[]>(`/search?text=${encodeURIComponent(text)}`);
 }
 
 /** Tells the server the person has read everything in this chat so far. */

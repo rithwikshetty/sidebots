@@ -27,6 +27,8 @@ export type Agent = { id: string; person_id: string; name: string; pet_id: strin
  * person hasn't read.
  */
 export type AgentWithLatest = Agent & { latest: Message | null; working: boolean; unread: number };
+/** A message found by a search, with the name of the agent whose chat it is in. */
+export type Found = { id: string; agent_id: string; agent: string; sender: Sender; body: string; created_at: number };
 /** What the event stream sends when a message is added or changes status. */
 export type MessageEvent = { message: Message; agent: AgentWithLatest };
 /** A phone that takes notifications: its Apple device token, the app identifier Apple delivers to, and which of Apple's push services issued the token. */

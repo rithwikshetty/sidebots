@@ -237,7 +237,7 @@ test("a session that has grown large gets a fresh start by itself after its repl
   assert.deepEqual(messages.map((m: { body: string }) => m.body), ["budget", "ok", "Fresh start"]);
 });
 
-test("an agent's history search reaches the person's other chats and nobody else's", async () => {
+test("a search, by an agent or from the app, reaches all of the person's chats and nobody else's", async () => {
   const searches: string[] = [];
   const { queue, call, say } = setup(async (turn) => {
     if (turn.prompt === "search") searches.push(turn.searchHistory("florist"));
@@ -255,6 +255,12 @@ test("an agent's history search reaches the person's other chats and nobody else
   await queue.kick(money.id);
 
   assert.match(searches[0], /^\d{4}-\d{2}-\d{2}, chat with Wedding, the person: The florist quoted 400$/);
+
+  const found = (await call(ME, "GET", "/search?text=florist")).json;
+  assert.deepEqual(
+    found.map((m: { agent_id: string; body: string }) => [m.agent_id, m.body]),
+    [[wedding.id, "The florist quoted 400"]],
+  );
 });
 
 test("a reply or a failed turn notifies the person's phones, and a phone Apple has dropped is forgotten", async () => {

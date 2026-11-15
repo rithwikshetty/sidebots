@@ -6,15 +6,13 @@ import { basename, join } from "node:path";
 import { randomUUID } from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
 
-import type { Agent, AgentWithLatest, Device, Message, Pet, Sender, Status } from "./contract.ts";
+import type { Agent, AgentWithLatest, Device, Found, Message, Pet, Sender, Status } from "./contract.ts";
 
 export type Person = { id: string; name: string; tailscale_login: string; claude_config_dir: string };
 /** A file as it arrives with a message. */
 export type Upload = { name: string; bytes: Uint8Array };
 /** The key Apple gives a developer account for sending notifications, with the key's ID and the account's team ID. */
 export type PushKey = { keyId: string; teamId: string; key: string };
-/** A message found by a search, with the name of the agent whose chat it is in. */
-export type Found = { agent: string; sender: Sender; body: string; created_at: number };
 
 const SCHEMA = `
 create table if not exists people (
@@ -257,7 +255,7 @@ export function openStore(home: string) {
       const pattern = `%${text.replace(/[\\%_]/g, "\\$&")}%`;
       return db
         .prepare(
-          `select agents.name as agent, messages.sender, messages.body, messages.created_at
+          `select messages.id, messages.agent_id, agents.name as agent, messages.sender, messages.body, messages.created_at
            from messages join agents on agents.id = messages.agent_id
            where agents.person_id = ? and messages.sender != 'simon' and messages.body like ? escape '\\'
            order by messages.rowid desc limit ?`,

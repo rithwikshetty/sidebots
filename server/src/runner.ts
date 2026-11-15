@@ -3,8 +3,8 @@
 import { join } from "node:path";
 import { createSdkMcpServer, query, tool } from "@anthropic-ai/claude-agent-sdk";
 import { z } from "zod";
-import type { Message } from "./contract.ts";
-import type { Found, Person, Store } from "./store.ts";
+import type { Found, Message } from "./contract.ts";
+import type { Person, Store } from "./store.ts";
 
 export type Turn = {
   prompt: string;

@@ -93,6 +93,12 @@ export function createApi(store: Store, queue: Queue) {
     return c.json(queue.freshStart(agent.id), 201);
   });
 
+  /** The messages that contain `text`, in any of the person's chats. */
+  app.get("/search", (c) => {
+    const text = c.req.query("text")?.trim();
+    return c.json(text ? store.searchMessages(c.var.person.id, text) : []);
+  });
+
   app.post("/devices", async (c) => {
     const { token, topic, environment } = await c.req.json<Partial<Device>>();
     if (!token || !DEVICE_TOKEN.test(token) || !topic || (environment !== "sandbox" && environment !== "production")) {
