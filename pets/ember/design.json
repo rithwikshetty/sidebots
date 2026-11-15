@@ -1,0 +1,37 @@
+{
+  "id": "ember",
+  "displayName": "Ember",
+  "description": "A warm orange drop with rosy cheeks.",
+  "palette": {
+    "o": "#612E17",
+    "d": "#CC6231",
+    "b": "#FF7A3D",
+    "l": "#FFBC9E",
+    "c": "#FF8FB0",
+    "a": "#FF7A3D"
+  },
+  "grid": [
+    ".......oo.......",
+    "......obbo......",
+    "......obbo......",
+    ".....obllbo.....",
+    "....oblbbbbo....",
+    "...oblbbbbbbo...",
+    "..obbbbbbbbbbo..",
+    "..obbbbbbbbbbo..",
+    ".obbbbbbbbbbbbo.",
+    ".obbbbbbbbbbbbo.",
+    ".obcbbbbbbbbcbo.",
+    ".obbbbbeebbbbbo.",
+    "..odbbbbbbbbdo..",
+    "...oddddddddo...",
+    "....oooooooo....",
+    "................"
+  ],
+  "eyes": {
+    "row": 8,
+    "left": 4,
+    "right": 10,
+    "skin": "b"
+  }
+}

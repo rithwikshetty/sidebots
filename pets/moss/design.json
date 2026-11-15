@@ -1,0 +1,37 @@
+{
+  "id": "moss",
+  "displayName": "Moss",
+  "description": "A green cat with pointed ears and pink cheeks.",
+  "palette": {
+    "o": "#144530",
+    "d": "#2A9166",
+    "b": "#34B57F",
+    "l": "#9ADABF",
+    "c": "#FF8FB0",
+    "a": "#34B57F"
+  },
+  "grid": [
+    "................",
+    "................",
+    "..oo........oo..",
+    "..olo......obo..",
+    "..obbo....obbo..",
+    "..obbboooobbbo..",
+    "..olbbbbbbbbbo..",
+    ".obbbbbbbbbbbbo.",
+    ".obbbbbbbbbbbbo.",
+    ".obbbbbbbbbbbbo.",
+    ".ocbbbbeebbbbco.",
+    ".obbbbbbbbbbbbo.",
+    ".odbbbbbbbbbbdo.",
+    "..oddbbbbbbddo..",
+    "...oooooooooo...",
+    "................"
+  ],
+  "eyes": {
+    "row": 8,
+    "left": 4,
+    "right": 10,
+    "skin": "b"
+  }
+}

@@ -1,0 +1,37 @@
+{
+  "id": "mochi",
+  "displayName": "Mochi",
+  "description": "A round pink slime with a little yellow bow.",
+  "palette": {
+    "o": "#5B2940",
+    "d": "#C05686",
+    "b": "#F06BA8",
+    "l": "#F8B5D4",
+    "c": "#FF8FB0",
+    "a": "#FFD54A"
+  },
+  "grid": [
+    "................",
+    "........a.a.....",
+    ".........a......",
+    "......oooo......",
+    "....oobbbboo....",
+    "...obllbbbbbo...",
+    "..oblbbbbbbbbo..",
+    "..obbbbbbbbbbo..",
+    ".obbbbbbbbbbbbo.",
+    ".obbbbbbbbbbbbo.",
+    ".obcbbbbbbbbcbo.",
+    ".obbbbbeebbbbbo.",
+    ".odbbbbbbbbbbdo.",
+    "..oddbbbbbbddo..",
+    "...oooooooooo...",
+    "................"
+  ],
+  "eyes": {
+    "row": 8,
+    "left": 5,
+    "right": 9,
+    "skin": "b"
+  }
+}

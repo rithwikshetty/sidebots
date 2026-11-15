@@ -1,0 +1,37 @@
+{
+  "id": "wisp",
+  "displayName": "Wisp",
+  "description": "A friendly purple ghost with a wavy hem.",
+  "palette": {
+    "o": "#3B2F59",
+    "d": "#7C62BB",
+    "b": "#9B7BEA",
+    "l": "#CDBDF4",
+    "c": "#FF8FB0",
+    "a": "#9B7BEA"
+  },
+  "grid": [
+    "................",
+    ".....oooooo.....",
+    "....obbbbbbo....",
+    "...obllbbbbbo...",
+    "..oblbbbbbbbbo..",
+    "..obbbbbbbbbbo..",
+    "..obbbbbbbbbbo..",
+    "..obbbbbbbbbbo..",
+    "..obcbbbbbbcbo..",
+    "..obbbbeebbbbo..",
+    "..obbbbbbbbbbo..",
+    "..odbbbbbbbbdo..",
+    "..obboobboobbo..",
+    "...oo..oo..oo...",
+    "................",
+    "................"
+  ],
+  "eyes": {
+    "row": 6,
+    "left": 5,
+    "right": 9,
+    "skin": "b"
+  }
+}

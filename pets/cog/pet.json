@@ -1,0 +1,6 @@
+{
+  "id": "cog",
+  "displayName": "Cog",
+  "description": "A boxy gold robot with a red antenna light.",
+  "spritesheetPath": "spritesheet.png"
+}

@@ -1,0 +1,37 @@
+{
+  "id": "skye",
+  "displayName": "Skye",
+  "description": "A chubby blue bird with an orange beak and a tuft on top.",
+  "palette": {
+    "o": "#1E335E",
+    "d": "#3F6BC6",
+    "b": "#4F86F7",
+    "l": "#A7C2FB",
+    "c": "#FF8FB0",
+    "a": "#F5A623"
+  },
+  "grid": [
+    ".......o........",
+    "......olo.......",
+    ".....oooooo.....",
+    "...oobllbbboo...",
+    "..oblbbbbbbbbo..",
+    "..olbbbbbbbbbo..",
+    ".obbbbbbbbbbbbo.",
+    ".obbbbbaabbbbbo.",
+    ".obbbbbaabbbbbo.",
+    ".ocbbllllllbbco.",
+    ".obbllllllllbbo.",
+    "..obllllllllbo..",
+    "..odbllllllbdo..",
+    "...oooooooooo...",
+    ".....a....a.....",
+    "................"
+  ],
+  "eyes": {
+    "row": 6,
+    "left": 4,
+    "right": 10,
+    "skin": "b"
+  }
+}

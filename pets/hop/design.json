@@ -1,0 +1,37 @@
+{
+  "id": "hop",
+  "displayName": "Hop",
+  "description": "A lime frog with eyes on top and a wide grin.",
+  "palette": {
+    "o": "#354A1C",
+    "d": "#6F9C3B",
+    "b": "#8BC34A",
+    "l": "#C5E1A4",
+    "c": "#FF8FB0",
+    "a": "#8BC34A"
+  },
+  "grid": [
+    "................",
+    "................",
+    "...ooo....ooo...",
+    "..obbbo..obbbo..",
+    "..obbbboobbbbo..",
+    ".obbbbbbbbbbbbo.",
+    ".olbbbbbbbbbbbo.",
+    ".obbbbbbbbbbbbo.",
+    ".ocbeeeeeeeebco.",
+    ".obbbbbbbbbbbbo.",
+    ".odlllllllllldo.",
+    "..oddddddddddo..",
+    "...oooooooooo...",
+    "................",
+    "................",
+    "................"
+  ],
+  "eyes": {
+    "row": 3,
+    "left": 4,
+    "right": 10,
+    "skin": "b"
+  }
+}

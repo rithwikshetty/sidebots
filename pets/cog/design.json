@@ -1,0 +1,37 @@
+{
+  "id": "cog",
+  "displayName": "Cog",
+  "description": "A boxy gold robot with a red antenna light.",
+  "palette": {
+    "o": "#5C4513",
+    "d": "#C29228",
+    "b": "#F2B632",
+    "l": "#F8DA98",
+    "c": "#FF8FB0",
+    "a": "#E8483B"
+  },
+  "grid": [
+    ".......aa.......",
+    ".......oo.......",
+    ".......oo.......",
+    "...oooooooooo...",
+    "..obllbbbbbbbo..",
+    "..olbbbbbbbbbo..",
+    "..obbbbbbbbbbo..",
+    "..obbbbbbbbbbo..",
+    "..obbbbbbbbbbo..",
+    "..obbbbbbbbbbo..",
+    "..obbbeeeebbbo..",
+    "..odbbbbbbbbdo..",
+    "..oddddddddddo..",
+    "...oooooooooo...",
+    "....oo....oo....",
+    "................"
+  ],
+  "eyes": {
+    "row": 7,
+    "left": 4,
+    "right": 10,
+    "skin": "b"
+  }
+}
