@@ -6,7 +6,10 @@ const SERVER_KEY = "server";
 const TIMEOUT_MS = 10_000;
 // A message carrying photos, over a phone's connection.
 const UPLOAD_TIMEOUT_MS = 120_000;
+// What `tailscale serve` answers in Simon's place when Simon isn't running.
+const NOT_RUNNING = new Set([502, 503, 504]);
 
+/** A failed call. `status` is the server's answer, or 0 when Simon couldn't be reached. */
 export class ApiError extends Error {
   status: number;
   constructor(message: string, status: number) {
@@ -49,6 +52,7 @@ export async function request<T>(path: string, init: { method?: string; body?: u
   } finally {
     clearTimeout(timer);
   }
+  if (NOT_RUNNING.has(response.status)) throw new ApiError("Can't reach Simon. The server isn't running.", 0);
   const data = await response.json().catch(() => null);
   if (!response.ok) throw new ApiError(data?.error ?? `The server answered ${response.status}.`, response.status);
   return data as T;
