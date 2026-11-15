@@ -1,15 +1,14 @@
 import { useEffect, useRef, useState } from "react";
 import { PixelRatio, Pressable, StyleSheet, Text, TextInput, View, type TextInputInstance, type TextStyle } from "react-native";
-import Animated, { FadeIn, LayoutAnimationConfig, LinearTransition, useAnimatedStyle, useReducedMotion, withTiming } from "react-native-reanimated";
+import Animated, { FadeIn, LayoutAnimationConfig, useAnimatedStyle, useReducedMotion, withTiming } from "react-native-reanimated";
 import { ArrowUp, Mic, Plus } from "lucide-react-native";
 import { MessageMenuView, type MessageMenuAction } from "../../modules/message-menu/src";
 import { AttachmentTray, TRAY_HEIGHT, TRAY_TILE_EXIT_MS } from "@/components/AttachmentTray";
 import { BUTTONS_ENTERING, BUTTONS_EXITING, DICTATION_ENTERING, DICTATION_EXITING, DictationBar, useFlipAway } from "@/components/DictationBar";
-import { Glass } from "@/components/Glass";
 import { IconButton } from "@/components/IconButton";
 import { canDictate, useDictation } from "@/lib/dictation";
 import type { Picked, PickSource } from "@/lib/files";
-import { EASE } from "@/lib/motion";
+import { EASE, MOVE } from "@/lib/motion";
 import { useTheme } from "@/lib/theme";
 
 const FONT_SIZE = 16;
@@ -29,7 +28,6 @@ const TEXT_FRAME = {
   resting: { left: INSET + BUTTON + 4, right: INSET + TRAILING + 6, top: INSET },
   typing: { left: 16, right: 16, top: 16 },
 };
-const TRANSITION = LinearTransition.duration(220);
 // The tray sits at the card's top, its tiles' remove targets reaching to the
 // card's edge, with the text below it.
 const TRAY_SPACE = TRAY_HEIGHT;
@@ -49,8 +47,7 @@ const ATTACH_ACTIONS: (MessageMenuAction & { id: PickSource })[] = [
  * with the text up to about six lines, then scrolling; picked photos and
  * files sit in a tray above the text. A message can go with only photos or
  * files. A tap on the microphone turns the buttons away for the dictation
- * row, whose ✓ adds what the person said to the end of the text. The card is
- * glass, so messages scrolling behind it show through.
+ * row, whose ✓ adds what the person said to the end of the text.
  */
 export function Composer({
   value,
@@ -111,7 +108,7 @@ export function Composer({
   const textTop = hasTray ? TRAY_SPACE + 10 : frame.top;
   const textHeight = open ? Math.min(Math.max(contentHeight, lineHeight * 2), maxHeight) : BUTTON;
   const fieldHeight = open ? textTop + textHeight + 4 + BUTTON + INSET : BUTTON + INSET * 2;
-  const layout = reduceMotion ? undefined : TRANSITION;
+  const layout = reduceMotion ? undefined : MOVE;
   const turn = <T,>(animation: T) => (reduceMotion ? undefined : animation);
 
   // A picker covers the app and takes the keyboard away while the field
@@ -135,8 +132,7 @@ export function Composer({
   };
 
   return (
-    <Animated.View layout={layout} style={[styles.field, { height: fieldHeight }]}>
-      <Glass style={[StyleSheet.absoluteFill, styles.surface]} />
+    <Animated.View layout={layout} style={[styles.field, { height: fieldHeight, borderColor: theme.line, backgroundColor: theme.card }]}>
       <View
         style={[styles.measure, { left: frame.left, right: frame.right }]}
         pointerEvents="none"
@@ -249,8 +245,7 @@ function restingLine(font: LineFont | null, lineHeight: number): TextStyle {
 }
 
 const styles = StyleSheet.create({
-  field: { borderRadius: RADIUS, borderCurve: "continuous", overflow: "hidden" },
-  surface: { borderRadius: RADIUS, borderCurve: "continuous" },
+  field: { borderRadius: RADIUS, borderCurve: "continuous", borderWidth: StyleSheet.hairlineWidth, overflow: "hidden" },
   measure: { position: "absolute", top: 0, opacity: 0 },
   text: { includeFontPadding: false, fontWeight: "400", fontSize: FONT_SIZE },
   textFrame: { position: "absolute" },

@@ -1,17 +1,14 @@
-import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
-import { Pressable, StyleSheet, Text, View } from "react-native";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { FlatList, Pressable, StyleSheet, Text, View } from "react-native";
 import { Stack, useFocusEffect, useLocalSearchParams, useRouter } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { KeyboardStickyView } from "react-native-keyboard-controller";
-import Animated, { useSharedValue, withTiming } from "react-native-reanimated";
-import { KeyboardAwareLegendList } from "@legendapp/list/keyboard";
-import type { LegendListRef } from "@legendapp/list/react-native";
+import { KeyboardChatScrollView, KeyboardStickyView } from "react-native-keyboard-controller";
+import Animated from "react-native-reanimated";
 import { Reply, X } from "lucide-react-native";
 import type { AgentWithLatest, Message } from "@server/contract";
 import { AvatarView } from "@/components/AvatarView";
 import { BAR_HEIGHT, ChatHeader, HEADER_CLEARANCE, HEADER_OVERHANG } from "@/components/ChatHeader";
 import { Composer } from "@/components/Composer";
-import { EdgeFade } from "@/components/EdgeFade";
 import { FadingText } from "@/components/FadingText";
 import { Glass } from "@/components/Glass";
 import { IconButton } from "@/components/IconButton";
@@ -24,7 +21,7 @@ import { isImage, MAX_FILES, pick, type Picked, type PickSource } from "@/lib/fi
 import { haptics } from "@/lib/haptics";
 import { useWorkingLine } from "@/lib/lines";
 import { preview } from "@/lib/messages";
-import { EASE, HIDE, MOVE, SHOW, arrive } from "@/lib/motion";
+import { HIDE, MOVE, SHOW, arrive } from "@/lib/motion";
 import { askForPush, showChatOnScreen } from "@/lib/push";
 import { avatarStateOf, freshStart, loadMessages, loadOlder, markRead, send, useAgent, useMessages, useOnline } from "@/lib/state";
 import { type Theme, useTheme } from "@/lib/theme";
@@ -69,23 +66,21 @@ function ChatWith({ agent }: { agent: AgentWithLatest }) {
   // Opening the chat clears its notifications from the phone.
   useFocusEffect(useCallback(() => showChatOnScreen(agent.id), [agent.id]));
 
-  // The list is one built for chat. It opens at the newest message, holds the
-  // end as messages arrive and as the keyboard rises, and leaves the person
-  // where they are once they scroll up to read. It learns the composer's height
-  // from here, so the last message always rests just above the composer.
-  const list = useRef<LegendListRef>(null);
-  const contentInsetEndAdjustment = useSharedValue(COMPOSER_ESTIMATE + insets.bottom);
-  // The composer's first height sets the room under the messages at once; later ones, as when a
-  // reply banner shows or the field grows, ease the messages up or down with the composer.
-  const composerMeasured = useRef(false);
-  function onComposerLayout(height: number) {
-    contentInsetEndAdjustment.set(composerMeasured.current ? withTiming(height, EASE) : height);
-    composerMeasured.current = true;
-  }
+  // The list is Assist's: drawn upside down, so it opens at the newest message
+  // and holds the end as messages arrive, inside the keyboard's own scroll
+  // view, which lifts the messages with the keyboard in the same motion as the
+  // composer. Its rows run newest first.
+  const list = useRef<FlatList<Message>>(null);
+  const newestFirst = useMemo(() => [...messages].reverse(), [messages]);
+  // The composer floats over the list's end; a spacer of its height keeps the last message above it.
+  const [composerHeight, setComposerHeight] = useState(COMPOSER_ESTIMATE + insets.bottom);
+  // Whether the newest message is on screen, and the room the keyboard takes at the list's end.
+  const [atEnd, setAtEnd] = useState(true);
+  const keyboardInset = useRef(0);
 
   // Scrolling up to the oldest message the app has fetches the page before it, until the chat's beginning.
   const older = useRef<"more" | "loading" | "none">("more");
-  function onStartReached() {
+  function onOldestReached() {
     if (older.current !== "more" || messages.length === 0) return;
     older.current = "loading";
     loadOlder(agent.id).then(
@@ -102,7 +97,7 @@ function ChatWith({ agent }: { agent: AgentWithLatest }) {
     setReplyTo(null);
     setOutgoing({ body: text, files, quote: answering ? preview(answering) : undefined, after: newestMine });
     haptics.send();
-    void list.current?.scrollToEnd({ animated: true });
+    list.current?.scrollToOffset({ offset: -keyboardInset.current, animated: true });
     try {
       await send(agent.id, text, files, answering?.id);
       // They may leave while the agent works, so this is when a notification starts to matter.
@@ -128,56 +123,65 @@ function ChatWith({ agent }: { agent: AgentWithLatest }) {
 
   // The keyboard covers the home indicator, so the list and the composer rise by
   // the keyboard's height less that inset, frame by frame with the keyboard.
-  const keyboardOffset = insets.bottom;
+  const keyboardOffset = Math.max(0, insets.bottom - 8);
 
   return (
     <View style={[styles.screen, { backgroundColor: theme.bg }]}>
       <Stack.Screen options={{ title: agent.name }} />
-      {/* The list fills the screen; messages scroll up under the floating header and down behind the composer. */}
-      <KeyboardAwareLegendList
+      {/* The list fills the screen; messages scroll up under the floating header and down under the composer's strip. */}
+      <FlatList
         ref={list}
-        style={styles.screen}
-        data={messages}
+        data={newestFirst}
+        inverted
         // The receipt moves to each newest message, so the rows draw again when it does.
         extraData={newestMine}
         keyExtractor={(message) => message.id}
-        estimatedItemSize={72}
-        alignItemsAtEnd
-        initialScrollAtEnd
-        maintainScrollAtEnd={FOLLOW_END}
-        maintainVisibleContentPosition
+        renderScrollComponent={(props) => (
+          <KeyboardChatScrollView
+            {...props}
+            inverted
+            keyboardLiftBehavior="always"
+            offset={keyboardOffset}
+            onEndVisible={setAtEnd}
+            onContentInsetChange={(inset) => {
+              keyboardInset.current = inset.top;
+            }}
+          />
+        )}
         contentInsetAdjustmentBehavior="never"
         automaticallyAdjustsScrollIndicatorInsets={false}
-        contentInsetEndAdjustment={contentInsetEndAdjustment}
-        keyboardOffset={keyboardOffset}
-        keyboardLiftBehavior="whenAtEnd"
-        onStartReached={onStartReached}
-        onStartReachedThreshold={0.5}
-        applyWorkaroundForContentInsetHitTestBug
+        // At the end the list follows new messages; scrolled up, the person stays where they are reading.
+        maintainVisibleContentPosition={atEnd ? undefined : { minIndexForVisible: 1 }}
         // As in Messages: dragging the list pulls the keyboard down with the finger, and a tap anywhere in it lowers the keyboard.
         keyboardDismissMode="interactive"
         keyboardShouldPersistTaps="never"
-        ListHeaderComponent={<View style={{ height: insets.top + BAR_HEIGHT + HEADER_OVERHANG + HEADER_CLEARANCE }} />}
-        ListFooterComponent={
-          <View style={styles.foot}>
-            {/* The faded copy goes once the server's copy is in the chat, which may come over the event stream first. */}
-            {outgoing && outgoing.after === newestMine ? (
-              <Animated.View entering={RISE} style={[styles.mine, styles.pending]}>
-                <Sent
-                  body={outgoing.body}
-                  quote={outgoing.quote}
-                  photos={outgoing.files.filter((file) => file.photo)}
-                  files={outgoing.files.filter((file) => !file.photo)}
-                  mine
-                  theme={theme}
-                />
-              </Animated.View>
-            ) : null}
-            {agent.working && online ? <WorkingRow agent={agent} /> : null}
+        onEndReached={onOldestReached}
+        onEndReachedThreshold={1.5}
+        // Upside down, the list's header is its foot, and its bottom padding is the room at the top of the screen for the floating header.
+        contentContainerStyle={{ paddingBottom: insets.top + BAR_HEIGHT + HEADER_OVERHANG + HEADER_CLEARANCE }}
+        ListHeaderComponent={
+          <View>
+            <View style={styles.foot}>
+              {/* The faded copy goes once the server's copy is in the chat, which may come over the event stream first. */}
+              {outgoing && outgoing.after === newestMine ? (
+                <Animated.View entering={RISE} style={[styles.mine, styles.pending]}>
+                  <Sent
+                    body={outgoing.body}
+                    quote={outgoing.quote}
+                    photos={outgoing.files.filter((file) => file.photo)}
+                    files={outgoing.files.filter((file) => !file.photo)}
+                    mine
+                    theme={theme}
+                  />
+                </Animated.View>
+              ) : null}
+              {agent.working && online ? <WorkingRow agent={agent} /> : null}
+            </View>
+            <View style={{ height: composerHeight }} />
           </View>
         }
         renderItem={({ item, index }) => {
-          const older = messages[index - 1];
+          const older = newestFirst[index + 1];
           return (
             <Row message={item} openedAt={openedAt}>
               {!older || !sameDay(older.created_at, item.created_at) ? (
@@ -205,11 +209,10 @@ function ChatWith({ agent }: { agent: AgentWithLatest }) {
         onFreshStart={() => void freshStart(agent.id).catch((failure) => problem("Couldn't start fresh", failure))}
       />
       <KeyboardStickyView offset={{ closed: 0, opened: keyboardOffset }} style={styles.sticky}>
-        {/* Messages show through the glass composer, and fade out evenly from it to the screen's bottom edge. */}
-        <EdgeFade edge="bottom" height={insets.bottom + COMPOSER_GAP + 16} solid={0} />
-        <View style={[styles.composer, { paddingBottom: insets.bottom + COMPOSER_GAP }]} onLayout={(event) => onComposerLayout(event.nativeEvent.layout.height)}>
+        {/* The composer's strip is the page colour, as Assist's, so the messages pass under it instead of showing through. */}
+        <View style={{ paddingBottom: insets.bottom, backgroundColor: theme.bg }} onLayout={(event) => setComposerHeight(Math.round(event.nativeEvent.layout.height))}>
           {replyTo ? (
-            <Animated.View entering={SHOW} exiting={HIDE} layout={MOVE}>
+            <Animated.View entering={SHOW} exiting={HIDE} layout={MOVE} style={styles.above}>
               <Glass style={styles.replying}>
                 <Reply size={16} strokeWidth={2} color={theme.ink2} />
                 <View style={styles.replyingText}>
@@ -222,16 +225,20 @@ function ChatWith({ agent }: { agent: AgentWithLatest }) {
               </Glass>
             </Animated.View>
           ) : null}
-          <Composer
-            value={draft}
-            onChangeText={setDraft}
-            onSend={() => void onSend(draft, picked, replyTo)}
-            placeholder={`Message ${agent.name}`}
-            attachments={picked}
-            onAttach={onAttach}
-            onRemoveAttachment={(file) => setPicked((current) => current.filter((item) => item !== file))}
-            attachDisabled={picked.length >= MAX_FILES}
-          />
+          {/* The composer's own view, as Assist's bar, so its open and close transition measures from
+              here: the reply banner coming or going above moves this view, not the composer in it. */}
+          <View collapsable={false} style={styles.bar}>
+            <Composer
+              value={draft}
+              onChangeText={setDraft}
+              onSend={() => void onSend(draft, picked, replyTo)}
+              placeholder={`Message ${agent.name}`}
+              attachments={picked}
+              onAttach={onAttach}
+              onRemoveAttachment={(file) => setPicked((current) => current.filter((item) => item !== file))}
+              attachDisabled={picked.length >= MAX_FILES}
+            />
+          </View>
         </View>
       </KeyboardStickyView>
     </View>
@@ -390,10 +397,6 @@ const CLOCK_SLACK_MS = 2000;
 
 // The resting composer's height above the home indicator, used until it is measured.
 const COMPOSER_ESTIMATE = 64;
-// The room between the composer and the home indicator, or the keyboard.
-const COMPOSER_GAP = 8;
-// Keeps the list at its end when a message arrives, a row changes height or the list resizes.
-const FOLLOW_END = { animated: false, on: { dataChange: true, itemLayout: true, layout: true } } as const;
 
 const styles = StyleSheet.create({
   screen: { flex: 1 },
@@ -413,7 +416,6 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     gap: 10,
-    marginBottom: 8,
     paddingLeft: 14,
     paddingRight: 8,
     paddingVertical: 8,
@@ -430,5 +432,6 @@ const styles = StyleSheet.create({
   workingRow: { flexDirection: "row", alignItems: "center", gap: 10, marginTop: 10, paddingLeft: 2 },
   workingText: { fontSize: 15, fontStyle: "italic" },
   sticky: { position: "absolute", left: 0, right: 0, bottom: 0 },
-  composer: { paddingHorizontal: 12, paddingTop: 8 },
+  above: { paddingHorizontal: 12, paddingTop: 8 },
+  bar: { paddingHorizontal: 12, paddingTop: 8 },
 });

@@ -71,13 +71,13 @@ export const DICTATION_EXITING = flip(0, -90);
 /** Turns the resting line of text away with the buttons while `hidden`, so the dictation row has the field. */
 export function useFlipAway(hidden: boolean) {
   const turned = useDerivedValue(() => withTiming(hidden ? 1 : 0, FLIP));
+  // At rest the line carries no transform, so it draws as a plain field does.
   return useAnimatedStyle(() => ({
     opacity: 1 - turned.value,
-    transform: [
-      { perspective: PERSPECTIVE },
-      { translateY: -HALF_ROW * Math.sin((turned.value * Math.PI) / 2) },
-      { rotateX: `${turned.value * 90}deg` },
-    ],
+    transform:
+      turned.value === 0
+        ? []
+        : [{ perspective: PERSPECTIVE }, { translateY: -HALF_ROW * Math.sin((turned.value * Math.PI) / 2) }, { rotateX: `${turned.value * 90}deg` }],
   }));
 }
 
