@@ -1,15 +1,18 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState, type ComponentType, type ReactNode, type RefObject } from "react";
 import { FlatList, Pressable, StyleSheet, Text, TextInput, View } from "react-native";
+import Swipeable, { type SwipeableMethods } from "react-native-gesture-handler/ReanimatedSwipeable";
 import { Redirect, useRouter } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { Plus, Search } from "lucide-react-native";
-import type { AgentWithLatest, Found, Message } from "@server/contract";
+import { Bell, BellOff, ChevronDown, ChevronRight, Eye, EyeOff, Plus, Search, Trash2 } from "lucide-react-native";
+import type { AgentWithLatest, Found } from "@server/contract";
 import { Glass } from "@/components/Glass";
 import { PetView } from "@/components/PetView";
 import { TopFade } from "@/components/TopFade";
+import { confirmDelete, problem } from "@/lib/alerts";
 import { serverUrl } from "@/lib/api";
 import { useWorkingLine } from "@/lib/lines";
-import { findMessages, petStateOf, useAgents, useOnline } from "@/lib/state";
+import { preview } from "@/lib/messages";
+import { changeAgent, findMessages, petStateOf, useAgents, useOnline, type AgentChanges } from "@/lib/state";
 import { usePush } from "@/lib/push";
 import { useTheme } from "@/lib/theme";
 import { listTime } from "@/lib/time";
@@ -20,6 +23,8 @@ const SEARCH_HEIGHT = 44;
 const SEARCH_DELAY_MS = 200;
 // How much of a found message shows before the words that matched.
 const SNIPPET_LEAD = 24;
+// The width of each action a swipe on a row shows.
+const ACTION = 76;
 
 /** A row of the list: an agent, or a message a search found in that agent's chat. */
 type Row = { agent: AgentWithLatest; found?: Found };
@@ -27,7 +32,9 @@ type Row = { agent: AgentWithLatest; found?: Found };
 /**
  * The home screen. It has no title bar and no heading: a glass search field
  * floating at the top, the person's agents, and the button for a new agent
- * floating at the bottom right, where a thumb reaches it. While the search
+ * floating at the bottom right, where a thumb reaches it. A swipe left on an
+ * agent shows what can be done to it: mute, hide and delete. Hidden agents
+ * wait under a line at the list's end, which a tap opens. While the search
  * field holds text, the list is the agents whose name matches and then the
  * messages that contain it, from every chat.
  */
@@ -40,6 +47,9 @@ export default function Home() {
   const [typed, setTyped] = useState("");
   const search = typed.trim();
   const found = useFound(search);
+  const [showHidden, setShowHidden] = useState(false);
+  // The row whose actions are showing, which closes when another row's open.
+  const opened = useRef<SwipeableMethods | null>(null);
   usePush();
 
   if (!serverUrl()) return <Redirect href="/setup" />;
@@ -52,7 +62,13 @@ export default function Home() {
           return agent ? [{ agent, found: message }] : [];
         }),
       ]
-    : agents.map((agent) => ({ agent }));
+    : agents.filter((agent) => !agent.hidden).map((agent) => ({ agent }));
+  const hidden = search ? [] : agents.filter((agent) => agent.hidden);
+  const swipeRow = (agent: AgentWithLatest) => (
+    <AgentActions key={agent.id} agent={agent} opened={opened}>
+      <AgentRow agent={agent} search={search} online={online} onPress={() => router.push(`/chat/${agent.id}`)} />
+    </AgentActions>
+  );
 
   return (
     <View style={[styles.screen, { backgroundColor: theme.bg }]}>
@@ -65,13 +81,32 @@ export default function Home() {
         keyboardDismissMode="on-drag"
         keyboardShouldPersistTaps="handled"
         ListEmptyComponent={search && found ? <Text style={[styles.empty, { color: theme.ink2 }]}>No results</Text> : undefined}
-        renderItem={({ item }) => (
-          <AgentRow agent={item.agent} found={item.found} search={search} online={online} onPress={() => router.push(`/chat/${item.agent.id}`)} />
-        )}
+        ListFooterComponent={
+          hidden.length ? (
+            <>
+              <Pressable
+                onPress={() => setShowHidden((shown) => !shown)}
+                accessibilityRole="button"
+                accessibilityState={{ expanded: showHidden }}
+                style={styles.hidden}>
+                <Text style={[styles.hiddenText, { color: theme.ink2 }]}>Hidden · {hidden.length}</Text>
+                {showHidden ? <ChevronDown size={16} color={theme.ink2} /> : <ChevronRight size={16} color={theme.ink2} />}
+              </Pressable>
+              {showHidden ? hidden.map(swipeRow) : null}
+            </>
+          ) : undefined
+        }
+        renderItem={({ item }) =>
+          item.found ? (
+            <AgentRow agent={item.agent} found={item.found} search={search} online={online} onPress={() => router.push(`/chat/${item.agent.id}`)} />
+          ) : (
+            swipeRow(item.agent)
+          )
+        }
       />
       <TopFade height={insets.top + SEARCH_HEIGHT + 16} solid={insets.top + SEARCH_HEIGHT} />
       <View style={[styles.search, { top: insets.top }]}>
-        <Glass style={styles.searchGlass}>
+        <Glass style={[styles.searchGlass, { borderColor: theme.line }]}>
           <Search size={18} strokeWidth={2.25} color={theme.ink2} />
           <TextInput
             value={typed}
@@ -115,6 +150,52 @@ function useFound(text: string): Found[] | null {
   return found;
 }
 
+/**
+ * Wraps an agent's row so that a swipe left shows its actions: mute, hide and
+ * delete. Mute stops its notifications. Hide takes it off the list until it
+ * next has something to say. Delete asks first.
+ */
+function AgentActions({ agent, opened, children }: { agent: AgentWithLatest; opened: RefObject<SwipeableMethods | null>; children: ReactNode }) {
+  const theme = useTheme();
+  const row = useRef<SwipeableMethods>(null);
+  const change = (changes: AgentChanges) => void changeAgent(agent.id, changes).catch((failure) => problem("Couldn't change that", failure));
+  const act = (action: () => void) => () => {
+    row.current?.close();
+    action();
+  };
+  return (
+    <Swipeable
+      ref={row}
+      friction={1.5}
+      rightThreshold={ACTION / 2}
+      overshootRight={false}
+      onSwipeableWillOpen={() => {
+        if (opened.current !== row.current) opened.current?.close();
+        opened.current = row.current;
+      }}
+      renderRightActions={() => (
+        <View style={styles.actions}>
+          <RowAction icon={agent.muted ? Bell : BellOff} label={agent.muted ? "Unmute" : "Mute"} color={theme.ink2} onPress={act(() => change({ muted: !agent.muted }))} />
+          <RowAction icon={agent.hidden ? Eye : EyeOff} label={agent.hidden ? "Unhide" : "Hide"} color={theme.tint} onPress={act(() => change({ hidden: !agent.hidden }))} />
+          <RowAction icon={Trash2} label="Delete" color={theme.danger} onPress={act(() => confirmDelete(agent))} />
+        </View>
+      )}>
+      {children}
+    </Swipeable>
+  );
+}
+
+/** One of the actions behind a row: its icon over its name, on its colour. */
+function RowAction({ icon: Icon, label, color, onPress }: { icon: ComponentType<{ size?: number; color?: string; strokeWidth?: number }>; label: string; color: string; onPress: () => void }) {
+  const theme = useTheme();
+  return (
+    <Pressable onPress={onPress} accessibilityRole="button" accessibilityLabel={label} style={({ pressed }) => [styles.action, { backgroundColor: color, opacity: pressed ? 0.75 : 1 }]}>
+      <Icon size={22} strokeWidth={2} color={theme.onTint} />
+      <Text style={[styles.actionText, { color: theme.onTint }]}>{label}</Text>
+    </Pressable>
+  );
+}
+
 /** An agent as a row of the list. With `found`, the row shows that message from its chat in place of the latest one. */
 function AgentRow({ agent, found, search, online, onPress }: { agent: AgentWithLatest; found?: Found; search: string; online: boolean; onPress: () => void }) {
   const theme = useTheme();
@@ -123,13 +204,16 @@ function AgentRow({ agent, found, search, online, onPress }: { agent: AgentWithL
   const working = online && petState === "working";
   const unread = !found && agent.unread > 0;
   return (
-    <Pressable onPress={onPress} style={({ pressed }) => [styles.row, pressed && { backgroundColor: theme.field }]}>
+    <Pressable onPress={onPress} style={({ pressed }) => [styles.row, { backgroundColor: pressed ? theme.field : theme.bg }]}>
       <PetView petId={agent.pet_id} state={online ? petState : "resting"} size={48} dimmed={!online} />
       <View style={[styles.body, { borderBottomColor: theme.line }]}>
         <View style={styles.top}>
-          <Text style={[styles.name, { color: theme.ink }]} numberOfLines={1}>
-            {agent.name}
-          </Text>
+          <View style={styles.title}>
+            <Text style={[styles.name, { color: theme.ink }]} numberOfLines={1}>
+              {agent.name}
+            </Text>
+            {agent.muted ? <BellOff size={13} strokeWidth={2.25} color={theme.ink2} accessibilityLabel="Muted" /> : null}
+          </View>
           <Text style={[styles.time, { color: theme.ink2 }]}>{listTime((found ?? agent.latest)?.created_at ?? agent.created_at)}</Text>
         </View>
         <View style={styles.bottom}>
@@ -137,7 +221,7 @@ function AgentRow({ agent, found, search, online, onPress }: { agent: AgentWithL
             {found ? foundLine(found, search) : working ? line : agent.latest ? preview(agent.latest) : "Say hello"}
           </Text>
           {unread ? (
-            <View style={[styles.count, { backgroundColor: theme.tint }]} accessibilityLabel={`${agent.unread} unread`}>
+            <View style={[styles.count, { backgroundColor: agent.muted ? theme.ink2 : theme.tint }]} accessibilityLabel={`${agent.unread} unread`}>
               <Text style={[styles.countText, { color: theme.onTint }]}>{agent.unread > 99 ? "99+" : agent.unread}</Text>
             </View>
           ) : null}
@@ -145,12 +229,6 @@ function AgentRow({ agent, found, search, online, onPress }: { agent: AgentWithL
       </View>
     </Pressable>
   );
-}
-
-/** A message as one line of the list: its text, or what was sent when it has none. */
-function preview(message: Message): string {
-  if (message.body) return message.body;
-  return message.attachments.length === 1 ? "Attachment" : `${message.attachments.length} attachments`;
 }
 
 /** A found message as one line of the list, starting a little before the words that matched, so they show. */
@@ -165,7 +243,7 @@ function foundLine(found: Found, search: string): string {
 const styles = StyleSheet.create({
   screen: { flex: 1 },
   search: { position: "absolute", left: 16, right: 16, zIndex: 2 },
-  searchGlass: { height: SEARCH_HEIGHT, borderRadius: SEARCH_HEIGHT / 2, flexDirection: "row", alignItems: "center", gap: 8, paddingLeft: 14, paddingRight: 8, overflow: "hidden" },
+  searchGlass: { height: SEARCH_HEIGHT, borderRadius: SEARCH_HEIGHT / 2, flexDirection: "row", alignItems: "center", gap: 8, paddingLeft: 14, paddingRight: 8, borderWidth: StyleSheet.hairlineWidth, overflow: "hidden" },
   searchText: { flex: 1, height: SEARCH_HEIGHT, fontSize: 17, padding: 0 },
   empty: { textAlign: "center", fontSize: 15, marginTop: 32 },
   add: { position: "absolute", right: 20, zIndex: 2 },
@@ -173,7 +251,13 @@ const styles = StyleSheet.create({
   row: { flexDirection: "row", alignItems: "center", gap: 12, paddingLeft: 16 },
   body: { flex: 1, minHeight: 76, justifyContent: "center", paddingRight: 16, paddingVertical: 10, borderBottomWidth: StyleSheet.hairlineWidth },
   top: { flexDirection: "row", justifyContent: "space-between", alignItems: "baseline", gap: 8 },
-  name: { flex: 1, fontSize: 17, fontWeight: "600" },
+  title: { flex: 1, flexDirection: "row", alignItems: "center", gap: 6 },
+  name: { flexShrink: 1, fontSize: 17, fontWeight: "600" },
+  actions: { flexDirection: "row" },
+  action: { width: ACTION, alignItems: "center", justifyContent: "center", gap: 4 },
+  actionText: { fontSize: 12, fontWeight: "600" },
+  hidden: { flexDirection: "row", alignItems: "center", gap: 4, paddingHorizontal: 16, paddingVertical: 14 },
+  hiddenText: { fontSize: 15 },
   time: { fontSize: 15 },
   bottom: { flexDirection: "row", alignItems: "flex-start", gap: 10, marginTop: 2 },
   preview: { flex: 1, fontSize: 15, lineHeight: 20 },

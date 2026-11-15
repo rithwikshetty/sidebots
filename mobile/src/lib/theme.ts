@@ -13,6 +13,8 @@ const light = {
   tint: "#66023C",
   tintInk: "#66023C",
   onTint: "#FFFFFF",
+  // Something that went wrong, or that can't be undone.
+  danger: "#D0342C",
   // The camera and the photo viewer: a picture on black with white controls, in either mode.
   viewer: "#000000",
   viewerInk: "#FFFFFF",
@@ -34,6 +36,7 @@ const dark: typeof light = {
   tint: "#8A1F56",
   tintInk: "#E596BF",
   onTint: "#FFFFFF",
+  danger: "#FF5A4F",
   viewer: "#000000",
   viewerInk: "#FFFFFF",
   viewerControl: "rgba(255, 255, 255, 0.14)",

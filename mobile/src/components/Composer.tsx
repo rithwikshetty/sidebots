@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 import { PixelRatio, Pressable, StyleSheet, Text, TextInput, View, type TextInputInstance, type TextStyle } from "react-native";
 import Animated, { FadeIn, LinearTransition, useReducedMotion } from "react-native-reanimated";
-import { ArrowUp, Plus } from "lucide-react-native";
+import { ArrowUp, ChevronDown, Plus } from "lucide-react-native";
+import { EFFORTS, MODELS, type Effort, type Model } from "@server/contract";
 import { MessageMenuView, type MessageMenuAction } from "../../modules/message-menu/src";
 import { AttachmentTray, TRAY_HEIGHT, TRAY_TILE_EXIT_MS } from "@/components/AttachmentTray";
 import { IconButton } from "@/components/IconButton";
@@ -34,6 +35,9 @@ const ATTACH_ACTIONS: (MessageMenuAction & { id: PickSource })[] = [
   { id: "files", title: "Files", systemImage: "folder" },
 ];
 
+const MODEL_IDS = Object.keys(MODELS) as Model[];
+const EFFORT_IDS = Object.keys(EFFORTS) as Effort[];
+
 /**
  * The message field, as Assist's: + at the bottom left, which opens a menu
  * of Photos, Camera and Files, and the round Send at the bottom right. At
@@ -41,7 +45,8 @@ const ATTACH_ACTIONS: (MessageMenuAction & { id: PickSource })[] = [
  * once something is attached, it opens into a card with the text above the
  * buttons, growing with the text up to about six lines, then scrolling;
  * picked photos and files sit in a tray above the text. A message can go
- * with only photos or files.
+ * with only photos or files. Open, the card names the agent's model and
+ * effort beside the +, and a tap on them opens one menu that changes either.
  */
 export function Composer({
   value,
@@ -52,6 +57,9 @@ export function Composer({
   onAttach,
   onRemoveAttachment,
   attachDisabled = false,
+  model,
+  effort,
+  onThinking,
 }: {
   value: string;
   onChangeText: (text: string) => void;
@@ -63,6 +71,10 @@ export function Composer({
   onRemoveAttachment: (file: Picked) => void;
   /** The + rests, as once the message holds as many files as it can. */
   attachDisabled?: boolean;
+  /** The model the agent answers with, how hard it thinks first, and what a choice from their menu does. */
+  model: Model;
+  effort: Effort;
+  onThinking: (change: { model: Model } | { effort: Effort }) => void;
 }) {
   const theme = useTheme();
   const reduceMotion = useReducedMotion();
@@ -167,6 +179,28 @@ export function Composer({
             <IconButton icon={Plus} label="Add photos and files" iconSize={19} color={theme.ink2} onPress={() => undefined} />
           </View>
         </MessageMenuView>
+        {open ? (
+          <Animated.View entering={reduceMotion ? undefined : FadeIn.duration(180)}>
+            {/* The native menu button over the names takes the tap and reads to VoiceOver. */}
+            <MessageMenuView
+              actions={[
+                ...MODEL_IDS.map((id) => ({ id, title: MODELS[id], checked: id === model, group: "model" })),
+                ...EFFORT_IDS.map((id) => ({ id, title: `${EFFORTS[id]} effort`, checked: id === effort, group: "effort" })),
+              ]}
+              opensOnTap
+              immediate
+              label={`Model, ${MODELS[model]}, ${EFFORTS[effort]} effort`}
+              onAction={({ nativeEvent: { id } }) => onThinking(id in MODELS ? { model: id as Model } : { effort: id as Effort })}
+              style={styles.model}>
+              <View accessibilityElementsHidden importantForAccessibility="no-hide-descendants" pointerEvents="none" style={styles.modelName}>
+                <Text style={[styles.modelText, { color: theme.ink2 }]}>
+                  {MODELS[model]} · {EFFORTS[effort]}
+                </Text>
+                <ChevronDown size={14} strokeWidth={2.25} color={theme.ink2} />
+              </View>
+            </MessageMenuView>
+          </Animated.View>
+        ) : null}
       </View>
       <View style={[styles.corner, styles.trailing]}>
         <Pressable
@@ -211,6 +245,10 @@ const styles = StyleSheet.create({
   leading: { left: INSET },
   // The + takes a full 44pt tap around its 36pt button, reaching past it into the card's edge.
   attach: { width: 44, height: 44, margin: -4, alignItems: "center", justifyContent: "center" },
+  // As tall as the +'s tap, with the name set a little in from it.
+  model: { height: 44, marginVertical: -4, paddingHorizontal: 8, justifyContent: "center" },
+  modelName: { flexDirection: "row", alignItems: "center", gap: 3 },
+  modelText: { fontSize: 15, fontWeight: "500" },
   trailing: { right: INSET },
   round: { width: BUTTON, height: BUTTON, borderRadius: BUTTON / 2, alignItems: "center", justifyContent: "center" },
 });

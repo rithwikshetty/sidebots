@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { ActivityIndicator, Pressable, StyleSheet, Text, TextInput, View } from "react-native";
 import { useRouter } from "expo-router";
-import { PetView } from "@/components/PetView";
+import { PetPicker } from "@/components/PetPicker";
 import { createAgent, usePets } from "@/lib/state";
 import { useTheme } from "@/lib/theme";
 
@@ -53,18 +53,8 @@ export default function NewAgent() {
         onSubmitEditing={onCreate}
         style={[styles.name, { color: theme.ink, borderBottomColor: theme.line }]}
       />
-      <View style={styles.pets}>
-        {pets.map((pet) => (
-          <Pressable
-            key={pet.id}
-            onPress={() => setPicked(pet.id)}
-            accessibilityLabel={pet.displayName}
-            style={[styles.pet, { borderColor: pet.id === petId ? theme.tintInk : "transparent", backgroundColor: theme.field }]}>
-            <PetView petId={pet.id} state="resting" size={48} />
-          </Pressable>
-        ))}
-      </View>
-      <Text style={[styles.hint, { color: error ? "#D0342C" : theme.ink2 }]}>{error ?? "Tell it what it's for in the chat."}</Text>
+      <PetPicker value={petId} onChange={setPicked} />
+      <Text style={[styles.hint, { color: error ? theme.danger : theme.ink2 }]}>{error ?? "Tell it what it's for in the chat."}</Text>
       <Pressable
         onPress={onCreate}
         disabled={busy || !trimmed || !petId}
@@ -79,8 +69,6 @@ const styles = StyleSheet.create({
   sheet: { flex: 1, paddingHorizontal: 24, paddingTop: 28, gap: 16 },
   title: { fontSize: 17, fontWeight: "600", textAlign: "center" },
   name: { fontSize: 26, fontWeight: "700", textAlign: "center", paddingVertical: 8, borderBottomWidth: StyleSheet.hairlineWidth },
-  pets: { flexDirection: "row", flexWrap: "wrap", justifyContent: "center", gap: 10 },
-  pet: { width: 72, height: 76, borderRadius: 16, borderWidth: 2, alignItems: "center", justifyContent: "center" },
   hint: { fontSize: 15, textAlign: "center" },
   button: { height: 50, borderRadius: 14, alignItems: "center", justifyContent: "center" },
   buttonText: { fontSize: 17, fontWeight: "600" },

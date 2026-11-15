@@ -8,6 +8,8 @@ export const haptics = {
   send: () => quietly(Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light)),
   /** The camera's shutter was pressed. */
   shutter: () => quietly(Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light)),
+  /** A swipe reached the point where letting go acts. */
+  threshold: () => quietly(Haptics.selectionAsync()),
   /** A choice was made, such as the flash, or a photo opened full screen. */
   select: () => quietly(Haptics.selectionAsync()),
 };

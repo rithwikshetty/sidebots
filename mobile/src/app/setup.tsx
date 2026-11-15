@@ -46,7 +46,7 @@ export default function Setup() {
           onSubmitEditing={onConnect}
           style={[styles.field, { color: theme.ink, backgroundColor: theme.field, borderColor: theme.line }]}
         />
-        <Text style={[styles.help, { color: error ? "#D0342C" : theme.ink2 }]}>
+        <Text style={[styles.help, { color: error ? theme.danger : theme.ink2 }]}>
           {error ?? "The Tailscale name of the machine that runs Simon."}
         </Text>
         <Pressable

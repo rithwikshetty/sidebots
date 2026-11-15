@@ -24,6 +24,17 @@ export function dayLabel(time: number, now = Date.now()): string {
   return new Date(time).toLocaleDateString(undefined, { weekday: "long", day: "numeric", month: "long" });
 }
 
+/** When a job next runs: "Today 17:05", "Tomorrow 08:00", then a weekday, then a date. */
+export function nextTime(time: number, now = Date.now()): string {
+  const days = Math.round((startOfDay(time) - startOfDay(now)) / DAY_MS);
+  const date = new Date(time);
+  const clock = date.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
+  if (days <= 0) return `Today ${clock}`;
+  if (days === 1) return `Tomorrow ${clock}`;
+  if (days < 7) return `${date.toLocaleDateString(undefined, { weekday: "long" })} ${clock}`;
+  return `${date.toLocaleDateString(undefined, { day: "numeric", month: "short" })}, ${clock}`;
+}
+
 export function sameDay(a: number, b: number): boolean {
   return startOfDay(a) === startOfDay(b);
 }

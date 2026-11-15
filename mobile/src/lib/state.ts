@@ -7,19 +7,30 @@ import { AppState } from "react-native";
 import { fetch as streamingFetch } from "expo/fetch";
 import { File } from "expo-file-system";
 import Storage from "expo-sqlite/kv-store";
-import type { Agent, AgentWithLatest, Found, Message, MessageEvent, Pet, PetState } from "@server/contract";
-import { request, serverUrl } from "./api";
+import type { About, Agent, AgentWithLatest, Effort, Found, Message, MessageEvent, Model, Pet, PetState } from "@server/contract";
+import { ApiError, request, serverUrl } from "./api";
 import type { Picked } from "./files";
 
 type State = {
   agents: AgentWithLatest[];
   messages: Record<string, Message[]>;
   pets: Pet[];
+  /** What each agent's page shows, for the agents whose page has been opened. */
+  about: Record<string, About>;
+  /**
+   * Changes to agents that the server hasn't taken yet. The app shows them
+   * at once and keeps them on the phone, over whatever the server says, until
+   * the server has them.
+   */
+  pending: Record<string, AgentChanges>;
   online: boolean;
 };
 
+/** What the person can change about an agent. */
+export type AgentChanges = { name?: string; petId?: string; model?: Model; effort?: Effort; muted?: boolean; hidden?: boolean };
+
 // The number changes when the shape of what is saved does.
-const CACHE_KEY = "cache-3";
+const CACHE_KEY = "cache-4";
 const SAVE_DELAY_MS = 300;
 const NO_MESSAGES: Message[] = [];
 
@@ -31,7 +42,7 @@ function saved(): Partial<State> {
   }
 }
 
-let state: State = { agents: [], messages: {}, pets: [], ...saved(), online: true };
+let state: State = { agents: [], messages: {}, pets: [], about: {}, pending: {}, ...saved(), online: true };
 const listeners = new Set<() => void>();
 let saveTimer: ReturnType<typeof setTimeout> | null = null;
 
@@ -66,6 +77,10 @@ export function usePets(): Pet[] {
   return useSyncExternalStore(subscribe, () => state.pets);
 }
 
+export function useAbout(agentId: string): About | undefined {
+  return useSyncExternalStore(subscribe, () => state.about[agentId]);
+}
+
 export function useOnline(): boolean {
   return useSyncExternalStore(subscribe, () => state.online);
 }
@@ -78,6 +93,14 @@ export function petStateOf(agent: AgentWithLatest): PetState {
   return "resting";
 }
 
+/** An agent as the server sent it, with the person's changes the server doesn't have yet laid over it. */
+function withPending(agent: AgentWithLatest): AgentWithLatest {
+  const changes = state.pending[agent.id];
+  if (!changes) return agent;
+  const { petId, ...rest } = changes;
+  return { ...agent, ...rest, pet_id: petId ?? agent.pet_id };
+}
+
 function upsert(list: Message[], message: Message): Message[] {
   const at = list.findIndex((item) => item.id === message.id);
   return at < 0 ? [...list, message] : list.map((item, index) => (index === at ? message : item));
@@ -86,22 +109,39 @@ function upsert(list: Message[], message: Message): Message[] {
 function apply({ message, agent }: MessageEvent): void {
   const known = state.messages[agent.id];
   set({
-    agents: [agent, ...state.agents.filter((item) => item.id !== agent.id)],
+    agents: [withPending(agent), ...state.agents.filter((item) => item.id !== agent.id)],
     messages: known ? { ...state.messages, [agent.id]: upsert(known, message) } : state.messages,
   });
 }
 
-/** Fetches the newest page of a chat and joins it onto any older messages already saved. */
+/**
+ * Fetches the newest page of a chat. It joins onto the older messages already
+ * saved when they run up to it. When the chat has moved on by more than a
+ * page, the page stands alone and the chat pages back from there.
+ */
 export async function loadMessages(agentId: string): Promise<void> {
   const page = await request<Message[]>(`/agents/${agentId}/messages`);
+  if (page.length === 0) return;
   const known = state.messages[agentId] ?? NO_MESSAGES;
-  const older = page.length ? known.filter((message) => message.created_at < page[0].created_at) : known;
-  set({ messages: { ...state.messages, [agentId]: [...older, ...page] } });
+  const joins = known.findIndex((message) => message.id === page[0].id);
+  set({ messages: { ...state.messages, [agentId]: joins < 0 ? page : [...known.slice(0, joins), ...page] } });
+}
+
+/** Fetches the page before the oldest message the app has of a chat. False once the chat's beginning is reached. */
+export async function loadOlder(agentId: string): Promise<boolean> {
+  const oldest = state.messages[agentId]?.[0];
+  if (!oldest) return false;
+  const page = await request<Message[]>(`/agents/${agentId}/messages?before=${oldest.id}`);
+  const known = state.messages[agentId] ?? NO_MESSAGES;
+  if (page.length && known[0]?.id === oldest.id) set({ messages: { ...state.messages, [agentId]: [...page, ...known] } });
+  return page.length > 0;
 }
 
 async function refresh(): Promise<void> {
+  // Changes made while the server was out of reach go now.
+  for (const agentId of Object.keys(state.pending)) void sendChanges(agentId).catch(() => undefined);
   const [agents, pets] = await Promise.all([request<AgentWithLatest[]>("/agents"), request<Pet[]>("/pets")]);
-  set({ agents, pets });
+  set({ agents: agents.map(withPending), pets });
   await Promise.all(Object.keys(state.messages).map(loadMessages));
 }
 
@@ -111,9 +151,11 @@ function keep(message: Message): void {
   set({ messages: { ...state.messages, [message.agent_id]: upsert(known, message) } });
 }
 
-export async function send(agentId: string, body: string, files: Picked[] = []): Promise<void> {
+/** Sends a message, with any files, and the id of the message it answers when it is a reply. */
+export async function send(agentId: string, body: string, files: Picked[] = [], replyTo?: string): Promise<void> {
   const form = new FormData();
   form.append("body", body);
+  if (replyTo) form.append("replyTo", replyTo);
   // Expo's fetch takes a file as its name, its type and a way to read its bytes, which it does as the message goes.
   for (const file of files) form.append("files", { name: file.name, type: file.type, bytes: () => new File(file.uri).bytes() } as unknown as Blob);
   keep(await request<Message>(`/agents/${agentId}/messages`, { method: "POST", body: form }));
@@ -130,6 +172,77 @@ export async function createAgent(name: string, petId: string): Promise<Agent> {
   return agent;
 }
 
+/**
+ * Changes an agent on the phone at once, then sends the change. While the
+ * server is out of reach the change waits on the phone and goes when the
+ * connection returns. It fails only when the server refuses it, and then the
+ * agent goes back to what the server has.
+ */
+export function changeAgent(agentId: string, changes: AgentChanges): Promise<void> {
+  if (!state.agents.some((agent) => agent.id === agentId)) return Promise.resolve();
+  set({ pending: { ...state.pending, [agentId]: { ...state.pending[agentId], ...changes } } });
+  set({ agents: state.agents.map((agent) => (agent.id === agentId ? withPending(agent) : agent)) });
+  return sendChanges(agentId);
+}
+
+const sending = new Map<string, Promise<void>>();
+
+/**
+ * Sends an agent's pending changes, one request at a time, so quick changes
+ * reach the server in the order they were made. What changes while one is on
+ * its way goes in the next.
+ */
+function sendChanges(agentId: string): Promise<void> {
+  const running = sending.get(agentId);
+  if (running) return running;
+  const done = (async () => {
+    for (let changes = state.pending[agentId]; changes; changes = state.pending[agentId]) {
+      try {
+        const agent = await request<AgentWithLatest>(`/agents/${agentId}`, { method: "PATCH", body: changes });
+        const sent = changes;
+        const left = Object.entries(state.pending[agentId] ?? {}).filter(([key, value]) => sent[key as keyof AgentChanges] !== value);
+        keepPending(agentId, left.length ? Object.fromEntries(left) : undefined);
+        set({ agents: state.agents.map((each) => (each.id === agentId ? withPending(agent) : each)) });
+      } catch (failure) {
+        // Out of reach: the change waits for the connection to return.
+        if (failure instanceof ApiError && failure.status === 0) return;
+        keepPending(agentId, undefined);
+        const agents = await request<AgentWithLatest[]>("/agents").catch(() => null);
+        if (agents) set({ agents: agents.map(withPending) });
+        throw failure;
+      }
+    }
+  })().finally(() => sending.delete(agentId));
+  sending.set(agentId, done);
+  return done;
+}
+
+function keepPending(agentId: string, changes: AgentChanges | undefined): void {
+  const { [agentId]: _sent, ...others } = state.pending;
+  set({ pending: changes ? { ...others, [agentId]: changes } : others });
+}
+
+/** Removes an agent for good, with its chat, its memory, its jobs and its files. */
+export async function deleteAgent(agentId: string): Promise<void> {
+  await request(`/agents/${agentId}`, { method: "DELETE" });
+  const { [agentId]: _messages, ...messages } = state.messages;
+  const { [agentId]: _about, ...about } = state.about;
+  const { [agentId]: _pending, ...pending } = state.pending;
+  set({ agents: state.agents.filter((agent) => agent.id !== agentId), messages, about, pending });
+}
+
+/** Fetches what an agent's page shows: its instructions, what it remembers and its jobs. */
+export async function loadAbout(agentId: string): Promise<void> {
+  const about = await request<About>(`/agents/${agentId}/about`);
+  set({ about: { ...state.about, [agentId]: about } });
+}
+
+export async function removeJob(agentId: string, jobId: string): Promise<void> {
+  await request(`/agents/${agentId}/jobs/${jobId}`, { method: "DELETE" });
+  const about = state.about[agentId];
+  if (about) set({ about: { ...state.about, [agentId]: { ...about, jobs: about.jobs.filter((job) => job.id !== jobId) } } });
+}
+
 /** The messages that contain `text`, in any of the person's chats, newest first. */
 export function findMessages(text: string): Promise<Found[]> {
   return request<Found[]>(`/search?text=${encodeURIComponent(text)}`);
@@ -138,7 +251,7 @@ export function findMessages(text: string): Promise<Found[]> {
 /** Tells the server the person has read everything in this chat so far. */
 export function markRead(agentId: string): void {
   if (!state.agents.find((agent) => agent.id === agentId)?.unread) return;
-  const replace = (read: AgentWithLatest) => set({ agents: state.agents.map((agent) => (agent.id === agentId ? read : agent)) });
+  const replace = (read: AgentWithLatest) => set({ agents: state.agents.map((agent) => (agent.id === agentId ? withPending(read) : agent)) });
   // The count clears at once. If the server never hears, the next refresh brings it back.
   replace({ ...state.agents.find((agent) => agent.id === agentId)!, unread: 0 });
   request<AgentWithLatest>(`/agents/${agentId}/read`, { method: "POST" }).then(replace, () => undefined);

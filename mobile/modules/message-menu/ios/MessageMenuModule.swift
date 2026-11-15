@@ -31,6 +31,10 @@ public final class MessageMenuModule: Module {
       Prop("label") { (view, label: String?) in
         view.label = label
       }
+
+      Prop("immediate") { (view, immediate: Bool?) in
+        view.immediate = immediate ?? false
+      }
     }
   }
 }
@@ -55,6 +59,8 @@ final class MessageMenuView: ExpoView, UIContextMenuInteractionDelegate {
   var label: String? {
     didSet { tapButton?.accessibilityLabel = label }
   }
+  /// Reports a choice as it is made, for a menu whose actions present nothing.
+  var immediate = false
   // The chosen action is reported once the menu has gone, so an action that
   // presents something, such as the share sheet, is not refused by iOS.
   private var chosenActionId: String?
@@ -144,6 +150,10 @@ final class MessageMenuView: ExpoView, UIContextMenuInteractionDelegate {
   }
 
   private func choose(_ id: String) {
+    if immediate {
+      DispatchQueue.main.async { [weak self] in self?.onAction(["id": id]) }
+      return
+    }
     chosenActionId = id
     reportChosenAction()
   }

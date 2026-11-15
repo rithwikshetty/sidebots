@@ -28,6 +28,8 @@ type MessageMenuViewProps = ViewProps & {
   opensOnTap?: boolean;
   /** What VoiceOver reads for the button a tap-opened menu hangs from. */
   label?: string;
+  /** Reports a choice the moment it is made, for a menu whose actions open nothing, such as a setting's. */
+  immediate?: boolean;
   children?: ReactNode;
 };
 
@@ -35,6 +37,6 @@ type MessageMenuViewProps = ViewProps & {
  * A view whose long press opens the system context menu with `actions`, or,
  * with `opensOnTap`, whose tap opens them as a menu button's menu. The chosen
  * action arrives once the menu has gone, so one that opens a sheet isn't
- * refused by iOS.
+ * refused by iOS, or at once when the menu is `immediate`.
  */
 export const MessageMenuView = requireNativeView<MessageMenuViewProps>("MessageMenu");

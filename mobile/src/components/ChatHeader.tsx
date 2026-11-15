@@ -27,16 +27,17 @@ const MENU_ACTIONS: MessageMenuAction[] = [
 /**
  * The top of a chat, as Messages draws a conversation's: no bar, only
  * floating parts. A glass back button at the left, the agent's pet in the
- * middle with its name in a glass pill under it, and a glass button at the
- * right that opens the chat's menu. Behind them the screen fades from the
+ * middle with its name in a glass pill under it, which a tap opens the
+ * agent's page from, and a glass button at the right that opens the chat's menu. Behind them the screen fades from the
  * page colour, so messages scrolling up pass softly under them.
  */
-export function ChatHeader({ name, petId, petState, dimmed, onBack, onFreshStart }: {
+export function ChatHeader({ name, petId, petState, dimmed, onBack, onAbout, onFreshStart }: {
   name: string;
   petId: string;
   petState: PetState;
   dimmed: boolean;
   onBack: () => void;
+  onAbout: () => void;
   onFreshStart: () => void;
 }) {
   const theme = useTheme();
@@ -67,15 +68,17 @@ export function ChatHeader({ name, petId, petState, dimmed, onBack, onFreshStart
           </Glass>
         </View>
       </MessageMenuView>
-      <View pointerEvents="none" style={[styles.header, { top: insets.top }]}>
-        <View style={styles.pet}>
-          <PetView petId={petId} state={petState} size={PET} dimmed={dimmed} />
-        </View>
-        <Glass style={[styles.pill, { borderColor: theme.line }]}>
-          <Text numberOfLines={1} style={[styles.name, { color: theme.ink }]}>
-            {name}
-          </Text>
-        </Glass>
+      <View pointerEvents="box-none" style={[styles.header, { top: insets.top }]}>
+        <Pressable onPress={onAbout} accessibilityRole="button" accessibilityLabel={`About ${name}`} hitSlop={6} style={styles.about}>
+          <View style={styles.pet}>
+            <PetView petId={petId} state={petState} size={PET} dimmed={dimmed} />
+          </View>
+          <Glass interactive style={[styles.pill, { borderColor: theme.line }]}>
+            <Text numberOfLines={1} style={[styles.name, { color: theme.ink }]}>
+              {name}
+            </Text>
+          </Glass>
+        </Pressable>
       </View>
     </>
   );
@@ -86,6 +89,7 @@ const styles = StyleSheet.create({
   more: { position: "absolute", right: BAR_INSET, zIndex: 3 },
   glass: { width: BAR_BUTTON, height: BAR_BUTTON, borderRadius: BAR_BUTTON / 2, alignItems: "center", justifyContent: "center", overflow: "hidden" },
   header: { position: "absolute", left: 0, right: 0, alignItems: "center", paddingTop: 2, zIndex: 2 },
+  about: { alignItems: "center" },
   pet: { shadowColor: "#000", shadowOpacity: 0.12, shadowRadius: 6, shadowOffset: { width: 0, height: 2 } },
   pill: {
     marginTop: -5,
