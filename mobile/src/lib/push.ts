@@ -10,8 +10,8 @@ import * as Application from "expo-application";
 import { isDevice } from "expo-device";
 import * as Notifications from "expo-notifications";
 import { router } from "expo-router";
-import type { Device } from "@server/contract";
-import { request, serverUrl } from "./api";
+import type { PushToken } from "@server/contract";
+import { isPaired, request } from "./api";
 import { useAgents } from "./state";
 
 // The chat on screen, which a tapped notification for it has no need to open.
@@ -30,19 +30,19 @@ function agentOf(notification: Notifications.Notification): string | null {
  * and the App Store remove the profile, so a phone without one is on
  * production. The simulator has none either and uses the sandbox.
  */
-async function environment(): Promise<Device["environment"]> {
+async function environment(): Promise<PushToken["environment"]> {
   const named = await Application.getIosPushNotificationServiceEnvironmentAsync().catch(() => null);
   return named === "development" || (named === null && !isDevice) ? "sandbox" : "production";
 }
 
 /** Gives the server this phone's token when the phone allows notifications. */
 async function register(): Promise<void> {
-  if (!serverUrl() || (await Notifications.getPermissionsAsync()).status !== "granted") return;
+  if (!isPaired() || (await Notifications.getPermissionsAsync()).status !== "granted") return;
   const token = (await Notifications.getDevicePushTokenAsync()).data;
   const topic = Application.applicationId;
   if (typeof token !== "string" || !topic) return;
-  const device: Device = { token, topic, environment: await environment() };
-  await request("/devices", { method: "POST", body: device });
+  const push: PushToken = { token, topic, environment: await environment() };
+  await request("/push-token", { method: "PUT", body: push });
 }
 
 /**

@@ -1,8 +1,13 @@
-// Talks to the Sidebots server whose address the person entered at first launch.
+// Talks to the Sidebots server on the Mac this phone has paired with.
 
+import { useSyncExternalStore } from "react";
+import { deviceName } from "expo-device";
+import * as SecureStore from "expo-secure-store";
 import Storage from "expo-sqlite/kv-store";
+import type { Paired } from "@server/contract";
 
-const SERVER_KEY = "server";
+const HOST_KEY = "host";
+const DEVICE_KEY = "device-key";
 const TIMEOUT_MS = 10_000;
 // A message carrying photos, over a phone's connection.
 const UPLOAD_TIMEOUT_MS = 120_000;
@@ -18,32 +23,112 @@ export class ApiError extends Error {
   }
 }
 
-export function serverUrl(): string | null {
-  return Storage.getItemSync(SERVER_KEY);
+/** A Mac that has paired this phone: its address, the key that proves this phone to it, and its name. */
+export type Pairing = { host: string; key: string; machine: string };
+/** A file on the Mac: its address, and the header that lets this phone fetch it. */
+export type Remote = { uri: string; headers: Record<string, string> };
+
+// The address is in the app's store and the key in the Keychain, so a phone has paired when it holds both.
+function kept(): Omit<Pairing, "machine"> | null {
+  const host = Storage.getItemSync(HOST_KEY);
+  const key = host ? SecureStore.getItem(DEVICE_KEY) : null;
+  return host && key ? { host, key } : null;
 }
 
-export function avatarSheetUrl(avatarId: string): string {
-  return `${serverUrl()}/avatars/${avatarId}/spritesheet`;
+let pairing = kept();
+let removed = false;
+const listeners = new Set<() => void>();
+
+/** Calls `listener` when the phone pairs with a Mac or loses its pairing. Returns a function that stops it. */
+export function onPairing(listener: () => void): () => void {
+  listeners.add(listener);
+  return () => listeners.delete(listener);
 }
 
-/** The address of a file sent with a message, from its path in the agent's folder. */
-export function attachmentUrl(agentId: string, path: string): string {
-  return `${serverUrl()}/agents/${agentId}/${path}`;
+export function isPaired(): boolean {
+  return pairing !== null;
 }
 
-/** Calls the server. A `body` is sent as JSON, or as it is when it is a form. */
-export async function request<T>(path: string, init: { method?: string; body?: unknown; base?: string } = {}): Promise<T> {
-  const base = init.base ?? serverUrl();
-  if (!base) throw new ApiError("Sidebots has no server address yet.", 0);
+export function usePaired(): boolean {
+  return useSyncExternalStore(onPairing, isPaired);
+}
+
+/** Whether the phone lost its pairing because the Mac no longer knows it. */
+export function wasRemoved(): boolean {
+  return removed;
+}
+
+/** The host and code in a pairing link, which is what the Mac's QR code holds. */
+export function readPairingLink(link: string): { host: string; code: string } | null {
+  const [, query] = /^sidebots:\/\/pair\/?\?(.+)$/.exec(link.trim()) ?? [];
+  const params = new URLSearchParams(query ?? "");
+  const host = params.get("host");
+  const code = params.get("code");
+  return host && code ? { host, code } : null;
+}
+
+/** Asks the Mac at `host` to pair this phone, with a code the Mac made. The code works once. */
+export async function requestPairing({ host, code }: { host: string; code: string }): Promise<Pairing> {
+  const paired = await send<Paired>(`https://${host}/pair`, `Pairing ${code}`, { method: "POST", body: { name: deviceName ?? "iPhone" } });
+  return { host, key: paired.key, machine: paired.machine };
+}
+
+/** Keeps a pairing, from which point every call goes to that Mac. */
+export function keepPairing({ host, key }: Pairing): void {
+  Storage.setItemSync(HOST_KEY, host);
+  // Readable while the phone is locked, once it has been unlocked since it started.
+  SecureStore.setItem(DEVICE_KEY, key, { keychainAccessible: SecureStore.AFTER_FIRST_UNLOCK });
+  pairing = { host, key };
+  removed = false;
+  listeners.forEach((listener) => listener());
+}
+
+/** Forgets the Mac, once it has answered that it doesn't know this phone. */
+export function unpair(): void {
+  if (!pairing) return;
+  Storage.removeItemSync(HOST_KEY);
+  void SecureStore.deleteItemAsync(DEVICE_KEY);
+  pairing = null;
+  removed = true;
+  listeners.forEach((listener) => listener());
+}
+
+/** Where a path on the Mac is, with the header that lets this phone fetch it. */
+export function remote(path: string): Remote {
+  return { uri: `https://${pairing?.host}${path}`, headers: { Authorization: `Bearer ${pairing?.key}` } };
+}
+
+export function avatarSheet(avatarId: string): Remote {
+  return remote(`/avatars/${avatarId}/spritesheet`);
+}
+
+/** A file sent with a message, from its path in the agent's folder. */
+export function attachment(agentId: string, path: string): Remote {
+  return remote(`/agents/${agentId}/${path}`);
+}
+
+/** Calls the Mac this phone has paired with. A `body` is sent as JSON, or as it is when it is a form. */
+export async function request<T>(path: string, init: { method?: string; body?: unknown } = {}): Promise<T> {
+  if (!pairing) throw new ApiError("This phone isn't paired with a Mac.", 0);
+  const { uri, headers } = remote(path);
+  try {
+    return await send<T>(uri, headers.Authorization, init);
+  } catch (failure) {
+    if (failure instanceof ApiError && failure.status === 401) unpair();
+    throw failure;
+  }
+}
+
+async function send<T>(url: string, authorization: string, init: { method?: string; body?: unknown }): Promise<T> {
   const form = init.body instanceof FormData ? init.body : null;
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), form ? UPLOAD_TIMEOUT_MS : TIMEOUT_MS);
   let response: Response;
   try {
-    response = await fetch(base + path, {
+    response = await fetch(url, {
       method: init.method ?? "GET",
       // A form names its own content type, with the boundary between its parts.
-      headers: form ? undefined : { "Content-Type": "application/json" },
+      headers: form ? { Authorization: authorization } : { Authorization: authorization, "Content-Type": "application/json" },
       body: form ?? (init.body === undefined ? undefined : JSON.stringify(init.body)),
       signal: controller.signal,
     });
@@ -56,14 +141,4 @@ export async function request<T>(path: string, init: { method?: string; body?: u
   const data = await response.json().catch(() => null);
   if (!response.ok) throw new ApiError(data?.error ?? `The server answered ${response.status}.`, response.status);
   return data as T;
-}
-
-/** Checks that a Sidebots server answers at the address, then remembers it. */
-export async function connect(address: string): Promise<void> {
-  const trimmed = address.trim().replace(/\/+$/, "");
-  if (!trimmed) throw new ApiError("Enter the server's address.", 0);
-  const base = /^https?:\/\//.test(trimmed) ? trimmed : `https://${trimmed}`;
-  const avatars = await request<unknown>("/avatars", { base });
-  if (!Array.isArray(avatars)) throw new ApiError("That address isn't a Sidebots server.", 0);
-  Storage.setItemSync(SERVER_KEY, base);
 }

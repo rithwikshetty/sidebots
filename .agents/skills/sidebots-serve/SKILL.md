@@ -13,7 +13,7 @@ Only one Sidebots server runs at a time. The phone reaches port 4317 through `ta
 
 1. Note what is being served: `git rev-parse --show-toplevel`, `git status --short --branch` and `git log -1 --oneline`.
 2. In a fresh worktree, `server/` or `mobile/` has no `node_modules`. Run `pnpm install --frozen-lockfile` in each folder that lacks it.
-3. If this checkout changes the database, ask before starting. A change to `TABLE_CHANGES` or `SCHEMA` in `server/src/store.ts` against main (`git diff main -- server/src/store.ts`) migrates `~/.sidebots/sidebots.sqlite` as soon as the server starts. Main can't undo it, and serving main again afterwards can break.
+3. If this checkout changes the database, ask before starting. The server makes the tables in `SCHEMA` only when they are missing, so a change to `SCHEMA` in `server/src/store.ts` against main (`git diff main -- server/src/store.ts`) needs `~/.sidebots/sidebots.sqlite` changed by hand or made again. Main can't undo it, and serving main again afterwards can break.
 4. Find the running server with `lsof -tiTCP:4317 -sTCP:LISTEN`, and its checkout with `lsof -a -p <pid> -d cwd -Fn`, which prints `<checkout>/server`. Stop it with `kill <pid>`, whether it is another checkout's or this one's. Node doesn't reload changed code, so this one restarts too. A turn cut off by the stop is queued again when the next server starts.
 5. Start this checkout's server detached, so it outlives the session's limit on background jobs:
 
@@ -22,7 +22,7 @@ Only one Sidebots server runs at a time. The phone reaches port 4317 through `ta
    ```
 
    It is up once `lsof -tiTCP:4317 -sTCP:LISTEN` returns a process and the log's last line is `Sidebots is listening on http://127.0.0.1:4317`.
-6. Run `tailscale serve status`. Port 8443 must proxy to `http://127.0.0.1:4317`. When nothing serves 8443, publish it with `tailscale serve --bg --https=8443 http://127.0.0.1:4317`. The phone's server address is `https://<tailnet name>:8443`, where the name is `Self.DNSName` from `tailscale status --json` without the trailing dot.
+6. Run `tailscale serve status`. Port 8443 must proxy to `http://127.0.0.1:4317`. When nothing serves 8443, publish it with `tailscale serve --bg --https=8443 http://127.0.0.1:4317`. The phone reaches the server at `<tailnet name>:8443`, where the name is `Self.DNSName` from `tailscale status --json` without the trailing dot.
 
 ## The phone app
 
@@ -40,11 +40,11 @@ Install this checkout's app when the user wants to try the app or the phone. Ins
 
    - `RequestDenied` at launch means the phone was locked. The app is installed, so ask the user to open it.
    - A signing error means Xcode isn't signed in with an Apple ID on the team in `mobile/.env.local`.
-   - The app keeps the server address it was given at first launch. A fresh install asks for it, and the answer is the address from step 6.
+   - A phone that has paired stays paired when the app is installed over itself. A phone that hasn't opens on a camera. The user can't see your terminal, so give them the command that prints its pairing code, to run in `server/`: `pnpm pair <their name> --host <address from step 6>`. The names are in the `people` table.
 
 ## Handing over
 
-Report the checkout path, branch and commit being served. Name the server that was stopped and its checkout, give the phone's server address, and say whether the phone now has this checkout's app.
+Report the checkout path, branch and commit being served. Name the server that was stopped and its checkout, say whether the phone now has this checkout's app, and give the pairing command when the phone has to pair.
 
 After a later change, serve again. A server change needs steps 4 and 5. An app change needs step 9.
 

@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { Image } from "expo-image";
 import Animated, { useAnimatedStyle, withTiming } from "react-native-reanimated";
 import { AVATAR_SHEET, AVATAR_STATES, type AvatarState } from "@server/contract";
-import { avatarSheetUrl } from "@/lib/api";
+import { avatarSheet } from "@/lib/api";
 import { EASE } from "@/lib/motion";
 
 const { columns, cellWidth, cellHeight, art } = AVATAR_SHEET;
@@ -32,7 +32,7 @@ export function AvatarView({ avatarId, state, size, dimmed = false }: { avatarId
   return (
     <Animated.View style={[{ width: size, height: WINDOW_HEIGHT * scale, overflow: "hidden" }, fade]}>
       <Image
-        source={{ uri: avatarSheetUrl(avatarId) }}
+        source={avatarSheet(avatarId)}
         cachePolicy="disk"
         contentFit="fill"
         style={{

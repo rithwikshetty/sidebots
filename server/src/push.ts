@@ -3,13 +3,13 @@
 import { sign } from "node:crypto";
 import { connect, type ClientHttp2Session } from "node:http2";
 import { plainText } from "./contract.ts";
-import type { Device } from "./contract.ts";
+import type { PushToken } from "./contract.ts";
 import type { PushKey, Store } from "./store.ts";
 
 /** A notification: the agent's name over what it said, and the number the app's icon shows, which is everything the person hasn't read. */
 export type Notice = { title: string; body: string; badge: number; agentId: string; messageId: string };
 /** `gone` means Apple will never deliver to this phone's token again. */
-export type SendPush = (device: Device, notice: Notice) => Promise<"sent" | "gone" | "failed">;
+export type SendPush = (to: PushToken, notice: Notice) => Promise<"sent" | "gone" | "failed">;
 
 const ORIGINS = { production: "https://api.push.apple.com", sandbox: "https://api.sandbox.push.apple.com" } as const;
 // Apple accepts a provider token for an hour and refuses one renewed more often than every 20 minutes.
@@ -31,9 +31,9 @@ export function startPush(store: Store, send: SendPush): () => void {
     // A muted agent's unread replies show on its own row, and never on the app's icon.
     const badge = store.agentsFor(agent.person_id).reduce((total, each) => total + (each.muted ? 0 : each.unread), 0);
     const notice: Notice = { title: agent.name, body: plainText(message.body).slice(0, BODY_CHARS), badge, agentId: agent.id, messageId: message.id };
-    for (const device of store.devicesFor(agent.person_id)) {
-      void send(device, notice).then((result) => {
-        if (result === "gone") store.removeDevice(device.token);
+    for (const to of store.pushTokensFor(agent.person_id)) {
+      void send(to, notice).then((result) => {
+        if (result === "gone") store.clearPushToken(to.token);
       });
     }
   });
@@ -66,13 +66,13 @@ export function apns(key: PushKey): SendPush {
     return fresh;
   };
 
-  return (device, notice) =>
+  return (to, notice) =>
     new Promise((resolve) => {
-      const request = session(ORIGINS[device.environment]).request({
+      const request = session(ORIGINS[to.environment]).request({
         ":method": "POST",
-        ":path": `/3/device/${device.token}`,
+        ":path": `/3/device/${to.token}`,
         authorization: `bearer ${token()}`,
-        "apns-topic": device.topic,
+        "apns-topic": to.topic,
         "apns-push-type": "alert",
         "apns-priority": "10",
         "apns-collapse-id": notice.messageId,

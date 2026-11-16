@@ -1,7 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, statSync, writeFileSync } from "node:fs";
-import { DatabaseSync } from "node:sqlite";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { openStore } from "../src/store.ts";
@@ -25,33 +24,69 @@ function setup(answer: (turn: Turn) => Promise<Answer>, now: () => number = Date
   };
   const home = mkdtempSync(join(tmpdir(), "sidebots-test-"));
   const store = openStore(home);
-  store.addPerson({ name: "Alex", login: "alex@example.com", configDir: "/config/alex" });
-  store.addPerson({ name: "Robin", login: "robin@example.com", configDir: "/config/robin" });
+  store.addPerson({ name: "Alex", configDir: "/config/alex" });
+  store.addPerson({ name: "Robin", configDir: "/config/robin" });
   const queue = createQueue(store, runTurn, now);
-  const app = createApi(store, queue);
-  const call = async (login: string, method: string, path: string, body?: unknown) => {
+  const app = createApi(store, queue, "Test Mac");
+  /** Pairs another phone as the person, and returns what it sends with each request. */
+  const pair = (name: string) => ({ Authorization: `Bearer ${store.pair(store.addPairing(store.personByName(name)!.id), `${name}'s iPhone`)}` });
+  const phones = new Map<string, { Authorization: string }>();
+  /** What the person's phone sends with each request. The phone pairs the first time it is used. */
+  const phoneOf = (name: string) => phones.get(name) ?? phones.set(name, pair(name)).get(name)!;
+  const call = async (who: string | { Authorization: string }, method: string, path: string, body?: unknown) => {
     const response = await app.request(path, {
       method,
-      headers: { "Tailscale-User-Login": login, "Content-Type": "application/json" },
+      headers: { ...(typeof who === "string" ? phoneOf(who) : who), "Content-Type": "application/json" },
       body: body === undefined ? undefined : JSON.stringify(body),
     });
     return { status: response.status, json: await response.json() };
   };
   /** Sends a message the way the app does, as a form with any files. */
-  const say = async (login: string, agentId: string, body: string, files: File[] = []) => {
+  const say = async (name: string, agentId: string, body: string, files: File[] = []) => {
     const form = new FormData();
     form.append("body", body);
     for (const file of files) form.append("files", file);
-    const response = await app.request(`/agents/${agentId}/messages`, { method: "POST", headers: { "Tailscale-User-Login": login }, body: form });
+    const response = await app.request(`/agents/${agentId}/messages`, { method: "POST", headers: phoneOf(name), body: form });
     return { status: response.status, json: await response.json() };
   };
-  return { home, store, queue, call, say, app };
+  return { home, store, queue, call, say, app, phoneOf, pair };
 }
 
 const reply = (text: string, sessionId = "session-1", contextTokens = 0): Answer => ({ reply: text, sessionId, contextTokens });
 
-const ME = "alex@example.com";
-const HER = "robin@example.com";
+const ME = "Alex";
+const HER = "Robin";
+
+test("a phone pairs once with a code, and only a paired phone is let in", async (t) => {
+  t.mock.timers.enable({ apis: ["Date"], now: new Date(2026, 10, 16, 9, 0) });
+  const { store, call, app } = setup(async () => reply("ok"));
+  const alex = store.personByName(ME)!;
+  const pairWith = async (code: string) => {
+    const response = await app.request("/pair", {
+      method: "POST",
+      headers: { Authorization: `Pairing ${code}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ name: "Alex's iPhone" }),
+    });
+    return { status: response.status, json: await response.json() };
+  };
+
+  assert.equal((await app.request("/agents")).status, 401);
+  assert.equal((await call({ Authorization: "Bearer made-up" }, "GET", "/agents")).status, 401);
+  assert.equal((await pairWith("made-up")).status, 401);
+
+  const code = store.addPairing(alex.id);
+  const paired = await pairWith(code);
+  assert.equal(paired.status, 201);
+  assert.equal(paired.json.machine, "Test Mac");
+  assert.equal((await pairWith(code)).status, 401);
+  // The code works as a code only, and the key as a key only.
+  assert.equal((await call({ Authorization: `Bearer ${code}` }, "GET", "/agents")).status, 401);
+  assert.deepEqual((await call({ Authorization: `Bearer ${paired.json.key}` }, "GET", "/agents")).json, []);
+
+  const late = store.addPairing(alex.id);
+  t.mock.timers.tick(10 * 60_000);
+  assert.equal((await pairWith(late)).status, 401);
+});
 
 test("a message gets the agent's reply, run in the agent's folder under its owner's login", async () => {
   const turns: Turn[] = [];
@@ -134,14 +169,14 @@ test("a person with an API key has every turn, job and fresh start run on it, an
     if (turn.prompt.text.endsWith("buy it")) throw new Error(`Anthropic refused ${KEY}.`);
     return reply("ok");
   }, () => time);
-  store.setApiKey(store.personByLogin(HER)!.id, KEY);
+  store.setApiKey(store.personByName(HER)!.id, KEY);
   assert.equal(statSync(join(home, "api-keys.json")).mode & 0o777, 0o600);
   const notices: Notice[] = [];
   startPush(store, async (_device, notice) => {
     notices.push(notice);
     return "sent";
   });
-  await call(HER, "POST", "/devices", { token: "c".repeat(64), topic: "com.example.sidebots", environment: "production" });
+  await call(HER, "PUT", "/push-token", { token: "c".repeat(64), topic: "com.example.sidebots", environment: "production" });
 
   const hers = (await call(HER, "POST", "/agents", { name: "Scout", avatarId: "moss" })).json;
   await say(HER, hers.id, "watch the price");
@@ -184,16 +219,15 @@ test("each person only reaches their own agents", async () => {
   assert.deepEqual((await call(HER, "GET", "/agents")).json, []);
   assert.equal((await call(HER, "GET", `/agents/${mine.id}/messages`)).status, 404);
   assert.equal((await say(HER, mine.id, "hi")).status, 404);
-  assert.equal((await call("stranger@example.com", "GET", "/agents")).status, 403);
 });
 
 test("the event stream carries the person's own messages and their status changes, and nobody else's", async () => {
   let finish!: () => void;
-  const { queue, call, say, app } = setup(() => new Promise((resolve) => (finish = () => resolve(reply("done")))));
+  const { queue, call, say, app, phoneOf } = setup(() => new Promise((resolve) => (finish = () => resolve(reply("done")))));
   const mine = (await call(ME, "POST", "/agents", { name: "Wedding", avatarId: "mochi" })).json;
   const hers = (await call(HER, "POST", "/agents", { name: "Garden", avatarId: "moss" })).json;
 
-  const response = await app.request("/events", { headers: { "Tailscale-User-Login": ME } });
+  const response = await app.request("/events", { headers: phoneOf(ME) });
   const reader = response.body!.pipeThrough(new TextDecoderStream()).getReader();
   await say(HER, hers.id, "not for you");
   await say(ME, mine.id, "hello");
@@ -231,7 +265,7 @@ test("after a known message returns only what came later", async () => {
 
 test("files sent with a message go into the agent's folder, the agent is told where, and only their owner can open them", async () => {
   const prompts: string[] = [];
-  const { store, queue, call, say, app } = setup(async (turn) => {
+  const { store, queue, call, say, app, phoneOf } = setup(async (turn) => {
     prompts.push(turn.prompt.text);
     return reply("nice");
   });
@@ -245,11 +279,11 @@ test("files sent with a message go into the agent's folder, the agent is told wh
   assert.equal(readFileSync(join(store.agentHome(agent.id), path), "utf8"), "jpeg bytes");
   assert.equal(prompts[0], `what is this?\n\nSent with this message: ${path}`);
 
-  const mine = await app.request(`/agents/${agent.id}/${path}`, { headers: { "Tailscale-User-Login": ME } });
+  const mine = await app.request(`/agents/${agent.id}/${path}`, { headers: phoneOf(ME) });
   assert.equal(mine.headers.get("Content-Type"), "image/jpeg");
   assert.equal(await mine.text(), "jpeg bytes");
-  assert.equal((await app.request(`/agents/${agent.id}/${path}`, { headers: { "Tailscale-User-Login": HER } })).status, 404);
-  assert.equal((await app.request(`/agents/${agent.id}/attachments/..`, { headers: { "Tailscale-User-Login": ME } })).status, 404);
+  assert.equal((await app.request(`/agents/${agent.id}/${path}`, { headers: phoneOf(HER) })).status, 404);
+  assert.equal((await app.request(`/agents/${agent.id}/attachments/..`, { headers: phoneOf(ME) })).status, 404);
   assert.equal((await say(ME, agent.id, "  ")).status, 400);
   assert.equal((await call(ME, "POST", `/agents/${agent.id}/messages`, { body: "text alone, as JSON" })).json.body, "text alone, as JSON");
 });
@@ -332,7 +366,7 @@ test("a search, by an agent or from the app, reaches all of the person's chats a
 
 test("a reply or a failed turn notifies the person's phones, and a phone Apple has dropped is forgotten", async () => {
   let fail = false;
-  const { store, queue, call, say } = setup(async () => {
+  const { store, queue, call, say, phoneOf, pair } = setup(async () => {
     if (fail) throw new Error("Signed out.");
     return reply("Booked.");
   });
@@ -344,10 +378,10 @@ test("a reply or a failed turn notifies the person's phones, and a phone Apple h
   const PHONE = "a".repeat(64);
   const OLD_PHONE = "b".repeat(64);
   const HER_PHONE = "c".repeat(64);
-  for (const [login, token] of [[ME, PHONE], [ME, OLD_PHONE], [HER, HER_PHONE]]) {
-    assert.equal((await call(login, "POST", "/devices", { token, topic: "com.example.sidebots", environment: "production" })).status, 201);
+  for (const [phone, token] of [[phoneOf(ME), PHONE], [pair(ME), OLD_PHONE], [phoneOf(HER), HER_PHONE]] as const) {
+    assert.equal((await call(phone, "PUT", "/push-token", { token, topic: "com.example.sidebots", environment: "production" })).status, 200);
   }
-  assert.equal((await call(ME, "POST", "/devices", { token: "nope", topic: "com.example.sidebots", environment: "production" })).status, 400);
+  assert.equal((await call(ME, "PUT", "/push-token", { token: "nope", topic: "com.example.sidebots", environment: "production" })).status, 400);
   const agent = (await call(ME, "POST", "/agents", { name: "Wedding", avatarId: "mochi" })).json;
   // A reply counts as unread when it is newer than the chat was read, which begins at the agent's creation.
   await new Promise((resolve) => setTimeout(resolve, 1));
@@ -405,20 +439,20 @@ test("deleting an agent removes its messages, its jobs, its folder and its Claud
     return reply("ok");
   });
   const configDir = join(home, "claude");
-  store.addPerson({ name: "Sam", login: "sam@example.com", configDir });
-  const agent = (await call("sam@example.com", "POST", "/agents", { name: "Scout", avatarId: "moss" })).json;
+  store.addPerson({ name: "Sam", configDir });
+  const agent = (await call("Sam", "POST", "/agents", { name: "Scout", avatarId: "moss" })).json;
   const folder = store.agentHome(agent.id);
   const sessions = join(configDir, "projects", folder.replace(/[^a-zA-Z0-9]/g, "-"));
   mkdirSync(sessions, { recursive: true });
   writeFileSync(join(sessions, "session-1.jsonl"), "{}");
-  await say("sam@example.com", agent.id, "hello");
+  await say("Sam", agent.id, "hello");
   await queue.kick(agent.id);
 
   assert.equal((await call(ME, "DELETE", `/agents/${agent.id}`)).status, 404);
-  assert.equal((await call("sam@example.com", "DELETE", `/agents/${agent.id}`)).status, 200);
+  assert.equal((await call("Sam", "DELETE", `/agents/${agent.id}`)).status, 200);
 
-  assert.deepEqual((await call("sam@example.com", "GET", "/agents")).json, []);
-  assert.equal((await call("sam@example.com", "GET", `/agents/${agent.id}/messages`)).status, 404);
+  assert.deepEqual((await call("Sam", "GET", "/agents")).json, []);
+  assert.equal((await call("Sam", "GET", `/agents/${agent.id}/messages`)).status, 404);
   assert.deepEqual(store.jobs(agent.id), []);
   assert.equal(existsSync(folder), false);
   assert.equal(existsSync(sessions), false);
@@ -514,7 +548,7 @@ test("a job set for one time runs once, a daily one keeps to its days, and a job
 
 test("a reply to a message tells the agent which one, and the chat pages back through older messages", async () => {
   const prompts: string[] = [];
-  const { store, queue, call, say, app } = setup(async (turn) => {
+  const { store, queue, call, say, app, phoneOf } = setup(async (turn) => {
     prompts.push(turn.prompt.text);
     return reply("The florist is Petal & Co.");
   });
@@ -526,7 +560,7 @@ test("a reply to a message tells the agent which one, and the chat pages back th
   const form = new FormData();
   form.append("body", "call them");
   form.append("replyTo", answer.id);
-  const sent = await (await app.request(`/agents/${agent.id}/messages`, { method: "POST", headers: { "Tailscale-User-Login": ME }, body: form })).json();
+  const sent = await (await app.request(`/agents/${agent.id}/messages`, { method: "POST", headers: phoneOf(ME), body: form })).json();
   assert.equal(sent.reply_to, answer.id);
   await queue.kick(agent.id);
   assert.equal(prompts[1], 'Replying to your message: "The florist is Petal & Co."\n\ncall them');
@@ -546,7 +580,7 @@ test("a muted agent notifies nobody, and a hidden one comes back when it has som
     sent.push(notice);
     return "sent";
   });
-  await call(ME, "POST", "/devices", { token: "a".repeat(64), topic: "com.example.sidebots", environment: "production" });
+  await call(ME, "PUT", "/push-token", { token: "a".repeat(64), topic: "com.example.sidebots", environment: "production" });
   const loud = (await call(ME, "POST", "/agents", { name: "Errands", avatarId: "hop" })).json;
   const quiet = (await call(ME, "POST", "/agents", { name: "Scout", avatarId: "moss" })).json;
   await call(ME, "PATCH", `/agents/${loud.id}`, { hidden: true });
@@ -561,32 +595,6 @@ test("a muted agent notifies nobody, and a hidden one comes back when it has som
   const of = (id: string) => agents.find((agent) => agent.id === id)!;
   assert.deepEqual([of(loud.id).hidden, of(quiet.id).hidden, of(quiet.id).unread], [false, true, 1]);
   assert.deepEqual(sent.map((notice) => [notice.agentId, notice.badge]), [[loud.id, 1]]);
-});
-
-test("an older home is brought up to date, with what it held kept", () => {
-  const home = mkdtempSync(join(tmpdir(), "sidebots-test-"));
-  const old = new DatabaseSync(join(home, "sidebots.sqlite"));
-  old.exec(`
-    create table people (id text primary key, name text not null, tailscale_login text not null unique, claude_config_dir text not null);
-    create table agents (id text primary key, person_id text not null references people(id), name text not null, pet_id text not null, session_id text, read_at integer not null default 0, created_at integer not null);
-    create table messages (id text primary key, agent_id text not null references agents(id), sender text not null, body text not null, attachments text not null default '[]', status text not null, created_at integer not null);
-    insert into people values ('p', 'Alex', 'alex@example.com', '/config');
-    insert into agents values ('a', 'p', 'Scout', 'moss', 's', 0, 1);
-    insert into messages values ('m', 'a', 'person', 'hello', '[]', 'done', 1);
-  `);
-  old.close();
-  cpSync(join(import.meta.dirname, "..", "..", "avatars", "moss"), join(home, "pets", "moss"), { recursive: true });
-  renameSync(join(home, "pets", "moss", "avatar.json"), join(home, "pets", "moss", "pet.json"));
-
-  for (const _open of [1, 2]) {
-    const store = openStore(home);
-    assert.deepEqual(store.agent("a"), { id: "a", person_id: "p", name: "Scout", avatar_id: "moss", model: "opus", effort: "medium", muted: false, hidden: false, session_id: "s", read_at: 0, created_at: 1 });
-    assert.deepEqual(store.messages("a").map((m) => [m.body, m.reply_to, m.job_id]), [["hello", null, null]]);
-    assert.deepEqual(store.avatars().map((avatar) => avatar.id), ["moss"]);
-    assert.equal(store.avatarSheet("moss"), join(home, "avatars", "moss", "spritesheet.png"));
-    assert.equal(existsSync(join(home, "pets")), false);
-    store.close();
-  }
 });
 
 test("a message sent while the agent works goes into the turn it is running, and reads as read once the agent takes it in", async () => {
@@ -641,7 +649,7 @@ test("an agent's updates while it works wait a minute, then come no more than ev
     sent.push(notice);
     return "sent";
   });
-  await call(ME, "POST", "/devices", { token: "a".repeat(64), topic: "com.example.sidebots", environment: "production" });
+  await call(ME, "PUT", "/push-token", { token: "a".repeat(64), topic: "com.example.sidebots", environment: "production" });
   const agent = (await call(ME, "POST", "/agents", { name: "Scout", avatarId: "moss" })).json;
   await new Promise((resolve) => setTimeout(resolve, 1));
   await say(ME, agent.id, "find me a flat");
