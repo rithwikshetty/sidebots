@@ -10,6 +10,9 @@
     "add-person": "node src/main.ts add-person",
     "api-key": "node src/main.ts api-key",
     "pair": "node src/main.ts pair",
+    "devices": "node src/main.ts devices",
+    "remove-device": "node src/main.ts remove-device",
+    "status": "node src/main.ts status",
     "test": "node --test",
     "typecheck": "tsc --noEmit"
   },

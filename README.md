@@ -13,7 +13,19 @@ The full design is in [docs/specs/2026-11-15-sidebots.md](docs/specs/2026-11-15-
 - **Share a server only with people you would trust with that machine.** Each person sees only their own agents in the app, but all agents run as the same account.
 - **A pairing code lets a phone in.** The server has no passwords. It answers only phones that have paired with it, and a phone pairs by scanning a code you make for one person. Whoever scans the code reaches that person's agents, so show it only to them.
 
-## What you need
+## Sidebots for Mac
+
+Sidebots for Mac is the server as a menu bar app. It runs on a Mac with Apple silicon and macOS 14 or later, and carries everything the server needs: Node, the server itself, the starter avatars, Claude Code and `cloudflared`.
+
+1. Open `Sidebots.dmg`, drag Sidebots to Applications, and open it from there.
+2. Choose how your agents sign in to Claude: with Claude Code on this Mac when it is already signed in, with "Sign in to Claude", which opens Claude's own sign-in in your browser, or with an API key.
+3. Open Sidebots on your iPhone and scan the QR code the Mac shows.
+
+The Mac app adds you as the one person on the server, named as the Mac knows you, with `~/.claude` as your Claude Code config folder, and opens at login from then on. Its menu says whether phones can reach the Mac, lists the paired phones with Remove for each, and has "Pair a phone…", how your agents sign in with a way to change it, "Open at login" and Quit. The QR code holds the address the relay gave the Mac, so the window waits until the Mac has one. The server's output goes to `~/Library/Logs/Sidebots/server.log`.
+
+The Mac app uses the same data folder and port as a server you start yourself, so run one or the other.
+
+## What you need to run the server yourself
 
 - A machine that stays on, with [Node](https://nodejs.org) 24 or later, [pnpm](https://pnpm.io) and [Claude Code](https://claude.com/claude-code). It has been run on a Mac.
 - [Tailscale](https://tailscale.com) on that machine and on each phone, in the same tailnet.
@@ -50,7 +62,7 @@ With an Anthropic API key, the agents sign in with the key and nobody signs in t
 pnpm api-key Robin ~/robin-key.txt
 ```
 
-Sidebots copies the key into `~/.sidebots/api-keys.json`, which only your account can read, so delete your file afterwards. The person's agents run on the key from their next turn, even if their folder is also signed in to a subscription. Saving another key replaces it. Sidebots never puts the key in a log, a reply or a failure notice, but an agent's own commands can read the key it runs on, as they can any of your account's files.
+Sidebots copies the key into `~/.sidebots/api-keys.json`, which only your account can read, so delete your file afterwards. The person's agents run on the key from their next turn, even if their folder is also signed in to a subscription. Saving another key replaces it, and `pnpm api-key Robin --remove` puts the person's agents back on the login in their folder. Sidebots never puts the key in a log, a reply or a failure notice, but an agent's own commands can read the key it runs on, as they can any of your account's files.
 
 Start the server, then publish it to your tailnet:
 
@@ -61,7 +73,7 @@ tailscale serve --bg --https=443 http://127.0.0.1:4317
 
 The server listens on `127.0.0.1:4317` only. Phones reach it at the machine's Tailscale name, such as `macbook.your-tailnet.ts.net`. If something else on the machine already uses port 443, publish Sidebots on another one, such as `--https=8443`, and add it to the address: `macbook.your-tailnet.ts.net:8443`.
 
-Two settings change where things live: `PORT` for the port, and `SIDEBOTS_HOME` for the data folder, which is `~/.sidebots` unless you set it. That folder holds the database, each agent's home folder with its instructions, memory and attachments, the avatars, the API keys and the key that proves the server to the relay. If you set `SIDEBOTS_HOME` for the server, set it for `add-person`, `api-key` and `pair` too.
+Two settings change where things live: `PORT` for the port, and `SIDEBOTS_HOME` for the data folder, which is `~/.sidebots` unless you set it. That folder holds the database, each agent's home folder with its instructions, memory and attachments, the avatars, the API keys and the key that proves the server to the relay. If you set `SIDEBOTS_HOME` or `PORT` for the server, set them for its other commands too.
 
 To keep the server running on a Mac, use a launchd agent with `RunAtLoad` and `KeepAlive` set, `server/` as its working directory, and the full path to `node` running `src/main.ts`. Keep the code outside `~/Downloads`, `~/Documents` and `~/Desktop`, which macOS doesn't let a background service read.
 
@@ -100,7 +112,9 @@ cd server
 pnpm pair Alex --host macbook.your-tailnet.ts.net
 ```
 
-It prints a QR code, and the same code as a link. The person scans the code in the app, or taps the link button above the camera and pastes the link. The app and the server must speak the same version of their contract, `CONTRACT_VERSION` in `server/src/contract.ts`. When they don't, the app says which one to update. A code pairs one phone, once, within ten minutes. The phone gets a key of its own, which it keeps in the Keychain and sends with every request, and the server keeps only a hash of it. It also gets the key its notifications are encrypted with, so neither the relay nor Apple can read them.
+It prints a QR code, and the same code as a link. `--host` can be left out once the relay has given the machine an address. The person scans the code in the app, or taps the link button above the camera and pastes the link. The app and the server must speak the same version of their contract, `CONTRACT_VERSION` in `server/src/contract.ts`. When they don't, the app says which one to update. A code pairs one phone, once, within ten minutes. The phone gets a key of its own, which it keeps in the Keychain and sends with every request, and the server keeps only a hash of it. It also gets the key its notifications are encrypted with, so neither the relay nor Apple can read them.
+
+`pnpm devices` lists the paired phones with their ids, and `pnpm remove-device <id>` unpairs one at once. `pnpm status` says whether the server is running, whether phones reach it, and how each person's agents sign in. With `--json`, `status`, `devices` and `pair` print JSON, which is what the Mac app reads.
 
 ## Who pays for the model
 
@@ -114,6 +128,31 @@ Anthropic's terms decide which you may use. A subscription is for the subscriber
 ## The website
 
 `site/` is the page at [sidebots.app](https://sidebots.app), with the privacy policy the App Store asks for. It is static files in `site/public`, served by Cloudflare. Publish it with `npx wrangler deploy` from `site/`, with Wrangler signed in to the account that holds the domain.
+
+## Build the Mac app
+
+On a Mac with Apple silicon, Xcode and pnpm:
+
+```sh
+mac/build.sh
+```
+
+The script downloads Node and `cloudflared` at the versions it names and checks them against the checksums it names. It builds the menu bar app in `mac/`, adds the server with its production dependencies, which include the Claude Code program the Agent SDK ships, and the starter avatars, and signs every program inside with `SIDEBOTS_IDENTITY`. That is a code signing identity in your keychain, `Apple Development` unless you set it, or `-` to sign for your own Mac only. It makes `mac/build/Sidebots.app` and `mac/build/Sidebots.zip`.
+
+```sh
+mac/build.sh release
+```
+
+A release goes on from there. Xcode signs the app with the Developer ID of the identity's team, which Apple keeps in its cloud, and sends it to Apple to notarise. The script waits for Apple, up to two hours, and makes `mac/build/Sidebots.dmg` from the notarised app. Xcode must be signed in to an account in that team that may use the Developer ID, as the Account Holder and Admins can.
+
+To try a build beside the Sidebots you already run, start it from a terminal with a data folder and port of its own. The app passes `SIDEBOTS_HOME`, `PORT` and `SIDEBOTS_RELAY` on to the server, and sets a new person up with the Claude Code config folder in `CLAUDE_CONFIG_DIR` when it is set:
+
+```sh
+SIDEBOTS_HOME=/tmp/sidebots-try PORT=4320 SIDEBOTS_RELAY=off CLAUDE_CONFIG_DIR=/tmp/claude-try \
+  mac/build/Sidebots.app/Contents/MacOS/Sidebots
+```
+
+Setting up turns on "Open at login" for the copy you ran, so turn it off in the menu when you're done.
 
 ## Working on Sidebots
 

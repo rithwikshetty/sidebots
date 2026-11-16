@@ -184,13 +184,20 @@ A Swift app in `mac/`, drawn with SwiftUI's `MenuBarExtra`, with the identifier 
 
 - Node, for Apple silicon
 - the `server/` folder with its production dependencies, which include the Claude Code program the Agent SDK ships
+- the starter avatars
 - `cloudflared`
 
-It starts the server as a child process with `SIDEBOTS_CLOUDFLARED` pointing into the bundle, restarts it if it exits, and registers itself to open at login with `SMAppService`. It reads the server's state from the server's own commands: `status` (new: whether it is running, the machine's address, how Claude is signed in), `devices` (new: the paired phones), `pair`, `add-person` and `api-key`. For "Sign in to Claude" it runs the bundled Claude Code's sign-in with `CLAUDE_CONFIG_DIR` set to the person's folder.
+It starts the server as a child process with `SIDEBOTS_CLOUDFLARED` pointing into the bundle, restarts it if it exits, and registers itself to open at login with `SMAppService` once the person has set it up. The server's output goes to `~/Library/Logs/Sidebots/server.log`. The app passes its own environment on, so `SIDEBOTS_HOME`, `PORT` and `SIDEBOTS_RELAY` reach the server when they are set.
+
+It reads the server's state from the server's own commands, with `--json` where it reads what they print: `status` (whether the server answers on its port and at the machine's address, the people and how each one's agents sign in), `devices` (the paired phones), `remove-device`, `pair`, `add-person` and `api-key`, which with `--remove` puts a person back on their Claude login. It names the one person after the Mac user's full name, with `~/.claude` as their config folder, or the folder in `CLAUDE_CONFIG_DIR` when that is set.
+
+To learn whether Claude Code is signed in, it runs the bundled Claude Code's `claude auth status` with `CLAUDE_CONFIG_DIR` set to the person's folder. For "Sign in to Claude" it runs `claude auth login` the same way. Claude Code opens Claude's sign-in page in the browser and ends once the person has signed in there. When the page shows a code instead, the window takes it and passes it to Claude Code's input.
+
+The windows for signing in and for the QR code show the app in the Dock while they are open. The QR window makes a new code when the last one runs out, and says "Paired with" and the phone's name when a new phone appears in `devices`.
 
 It updates itself with Sparkle, from an update feed at `sidebots.app`, and waits for running turns to end before it restarts the server.
 
-A build script signs every program in the bundle with the Developer ID, notarises the app and makes the disk image.
+`mac/build.sh` signs every program in the bundle with a local identity. For a release it puts the app in an Xcode archive, and Xcode signs it with the team's Developer ID, which Apple keeps in its cloud, and uploads it to be notarised. The script waits for the notarised app and makes the disk image. Nobody needs the Developer ID certificate on their Mac, only Xcode signed in to an account that may use it.
 
 ### The site
 

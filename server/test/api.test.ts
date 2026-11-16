@@ -33,7 +33,7 @@ function setup(answer: (turn: Turn) => Promise<Answer>, now: () => number = Date
   const notificationKeys = new Map<string, string>();
   /** Pairs another phone as the person, and returns what it sends with each request. */
   const pair = (name: string) => {
-    const keys = store.pair(store.addPairing(store.personByName(name)!.id), `${name}'s iPhone`)!;
+    const keys = store.pair(store.addPairing(store.personByName(name)!.id).code, `${name}'s iPhone`)!;
     notificationKeys.set(keys.key, keys.notificationKey);
     return { Authorization: `Bearer ${keys.key}` };
   };
@@ -89,7 +89,7 @@ test("a phone pairs once with a code, and only a paired phone is let in", async 
   assert.equal((await call({ Authorization: "Bearer made-up" }, "GET", "/agents")).status, 401);
   assert.equal((await pairWith("made-up")).status, 401);
 
-  const code = store.addPairing(alex.id);
+  const { code } = store.addPairing(alex.id);
   const paired = await pairWith(code);
   assert.equal(paired.status, 201);
   assert.equal(paired.json.machine, "Test Mac");
@@ -99,13 +99,27 @@ test("a phone pairs once with a code, and only a paired phone is let in", async 
   assert.deepEqual((await call({ Authorization: `Bearer ${paired.json.key}` }, "GET", "/agents")).json, []);
 
   const late = store.addPairing(alex.id);
+  assert.equal(late.expiresAt, Date.now() + 10 * 60_000);
   t.mock.timers.tick(10 * 60_000);
-  assert.equal((await pairWith(late)).status, 401);
+  assert.equal((await pairWith(late.code)).status, 401);
+});
+
+test("a phone removed on the Mac is refused from its next request, and the person's other phones stay paired", async () => {
+  const { store, call, pair } = setup(async () => reply("ok"));
+  const kept = pair(ME);
+  const removed = pair(ME);
+  const [, phone] = store.devices();
+
+  assert.equal(store.removeDevice(phone.id)?.name, "Alex's iPhone");
+  assert.equal(store.removeDevice(phone.id), undefined);
+  assert.equal((await call(removed, "GET", "/agents")).status, 401);
+  assert.equal((await call(kept, "GET", "/agents")).status, 200);
+  assert.deepEqual(store.devices().map((device) => device.id), [store.deviceByKey(kept.Authorization.slice("Bearer ".length))!.id]);
 });
 
 test("an app on another version of the contract can't pair, and its code still works once the versions match", async () => {
   const { store, app } = setup(async () => reply("ok"));
-  const code = store.addPairing(store.personByName(ME)!.id);
+  const { code } = store.addPairing(store.personByName(ME)!.id);
   const pairAs = async (version?: number) => {
     const headers: Record<string, string> = { Authorization: `Pairing ${code}`, "Content-Type": "application/json" };
     if (version !== undefined) headers["Sidebots-Contract"] = String(version);
@@ -137,7 +151,7 @@ test("every answer says which version of the contract the server speaks", async 
   const phone = phoneOf(ME);
   const events = await app.request("/events", { headers: phone });
   const answers = [
-    await pairWith(store.addPairing(store.personByName(ME)!.id)),
+    await pairWith(store.addPairing(store.personByName(ME)!.id).code),
     await pairWith("made-up"),
     await app.request("/agents"),
     await app.request("/agents", { headers: phone }),
@@ -304,6 +318,12 @@ test("a person with an API key has every turn, job and fresh start run on it, an
   // The same notice goes to the home screen and to the phone as a notification.
   const sent = [messages, (await call(HER, "GET", "/agents")).json, notices];
   assert.equal(JSON.stringify(sent).includes(KEY), false);
+
+  // Without her key, her turns run on the Claude login in her config folder.
+  store.setApiKey(store.personByName(HER)!.id, null);
+  await say(HER, hers.id, "hello again");
+  await queue.kick(hers.id);
+  assert.deepEqual([turns.at(-1)!.apiKey, turns.at(-1)!.configDir], [undefined, "/config/robin"]);
 });
 
 test("each person only reaches their own agents", async () => {
