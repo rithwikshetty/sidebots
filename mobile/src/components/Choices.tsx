@@ -6,6 +6,8 @@ import { useTheme } from "@/lib/theme";
 
 const PAD = 4;
 const GAP = 4;
+// A choice's word fits its fixed height and its share of the row up to this text size.
+const MAX_SCALE = 1.3;
 
 /**
  * A row of choices where one is in effect, as for an agent's model or
@@ -37,7 +39,7 @@ export function Choices<Id extends string>({
       {width ? <Animated.View style={[styles.mark, plain ? [styles.raised, { backgroundColor: theme.raised }] : { backgroundColor: theme.tint }, { width: cell }, slide]} /> : null}
       {ids.map((id) => (
         <Pressable key={id} onPress={() => onChange(id)} accessibilityRole="button" accessibilityState={{ selected: id === value }} style={styles.choice}>
-          <Text style={[styles.choiceText, { color: id === value && !plain ? theme.onTint : theme.ink }]}>{options[id]}</Text>
+          <Text maxFontSizeMultiplier={MAX_SCALE} style={[styles.choiceText, { color: id === value && !plain ? theme.onTint : theme.ink }]}>{options[id]}</Text>
         </Pressable>
       ))}
     </View>

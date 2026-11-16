@@ -1,13 +1,13 @@
 import { useEffect, useRef, useState } from "react";
-import { ActivityIndicator, Alert, StyleSheet, View } from "react-native";
+import { ActivityIndicator, Alert, Linking, Pressable, StyleSheet, Text, View } from "react-native";
 import { useCameraPermissions } from "expo-camera";
-import { useLocalSearchParams } from "expo-router";
+import { router, useLocalSearchParams } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { Link } from "lucide-react-native";
+import { ChevronLeft, Link } from "lucide-react-native";
 import { CameraPreview } from "@/components/CameraPreview";
 import { FadingText } from "@/components/FadingText";
 import { IconButton } from "@/components/IconButton";
-import { keepPairing, readPairingLink, requestPairing, wasRemoved } from "@/lib/api";
+import { keepPairing, readPairingLink, requestPairing } from "@/lib/api";
 import { haptics } from "@/lib/haptics";
 import { useTheme } from "@/lib/theme";
 
@@ -18,13 +18,14 @@ const PAIRED_MS = 1200;
 const RETRY_MS = 3000;
 
 /**
- * The only screen until the phone has paired with a Mac, laid out as the
- * chat's camera: the preview on black, reading the code Sidebots shows on the
- * Mac, with one line under it that says what to do or what went wrong. The
- * link button above the preview asks for the code as its link instead, in the
- * system's own prompt. A pairing link opened anywhere on the phone lands here
- * and pairs the same way. Once paired, the line names the Mac, and the agents
- * take the screen.
+ * The scanner, opened from the welcome screen and laid out as the chat's
+ * camera: the preview on black, reading the code Sidebots shows on the Mac,
+ * with one line under it that says what to do or what went wrong. Back, above
+ * the preview, returns to the welcome screen. The link button beside it asks
+ * for the code as its link instead, in the system's own prompt. When the
+ * camera is refused, a button in its place opens Settings. A pairing link
+ * opened anywhere on the phone lands here and pairs the same way. Once
+ * paired, the line names the Mac, and the agents take the screen.
  */
 export default function Pair() {
   const theme = useTheme();
@@ -89,14 +90,13 @@ export default function Pair() {
   const noCamera = permission !== null && !permission.granted && !permission.canAskAgain;
   const prompt = noCamera
     ? "Allow Sidebots to use the camera in Settings to scan the code on your Mac, or enter its link."
-    : wasRemoved()
-      ? "Your Mac removed this phone. Scan a new code to pair again."
-      : "Scan the code Sidebots shows on your Mac.";
+    : "Scan the code Sidebots shows on your Mac.";
   const line = machine ? `Paired with ${machine}` : (error ?? prompt);
 
   return (
     <View style={[styles.screen, { backgroundColor: theme.viewer, paddingBottom: insets.bottom + 12 }]}>
       <View style={[styles.bar, { paddingTop: insets.top + 8 }]}>
+        <IconButton icon={ChevronLeft} label="Back" variant="overlay" size={40} iconSize={22} disabled={busy || machine !== null} onPress={() => router.back()} />
         <IconButton icon={Link} label="Enter a link instead" variant="overlay" size={40} iconSize={19} disabled={busy || machine !== null} onPress={enterLink} />
       </View>
       <View style={styles.stage}>
@@ -104,6 +104,15 @@ export default function Pair() {
           <CameraPreview backdrop={theme.viewerControl} onScanned={scanned}>
             {busy ? <ActivityIndicator style={StyleSheet.absoluteFill} color={theme.viewerInk} /> : null}
           </CameraPreview>
+        ) : noCamera ? (
+          <View style={styles.refused}>
+            <Pressable
+              onPress={() => void Linking.openSettings()}
+              accessibilityRole="button"
+              style={({ pressed }) => [styles.settings, { backgroundColor: theme.viewerInk, opacity: pressed ? 0.85 : 1 }]}>
+              <Text style={[styles.settingsText, { color: theme.viewer }]}>Open Settings</Text>
+            </Pressable>
+          </View>
         ) : null}
       </View>
       {/* Room for two lines, so the preview keeps its size whatever the line says. */}
@@ -116,8 +125,11 @@ export default function Pair() {
 
 const styles = StyleSheet.create({
   screen: { flex: 1 },
-  bar: { flexDirection: "row", alignItems: "center", justifyContent: "flex-end", paddingHorizontal: 16, paddingBottom: 12 },
+  bar: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingHorizontal: 16, paddingBottom: 12 },
   stage: { flex: 1, paddingHorizontal: 12 },
-  notice: { height: 72, justifyContent: "center", paddingHorizontal: 24, paddingTop: 12 },
+  refused: { flex: 1, alignItems: "center", justifyContent: "center" },
+  settings: { minHeight: 48, paddingHorizontal: 20, borderRadius: 999, justifyContent: "center" },
+  settingsText: { fontSize: 16, fontWeight: "600" },
+  notice: { minHeight: 72, justifyContent: "center", paddingHorizontal: 24, paddingTop: 12 },
   line: { textAlign: "center", fontSize: 15, lineHeight: 20 },
 });

@@ -8,7 +8,7 @@ import { fetch as streamingFetch } from "expo/fetch";
 import { File } from "expo-file-system";
 import Storage from "expo-sqlite/kv-store";
 import type { About, Agent, AgentWithLatest, Avatar, AvatarState, Effort, Found, Message, MessageEvent, Model } from "@server/contract";
-import { ApiError, isPaired, onPairing, remote, request, unpair } from "./api";
+import { ApiError, behind, isPaired, onPairing, remote, request, unpair, type Behind } from "./api";
 import type { Picked } from "./files";
 
 type State = {
@@ -24,6 +24,8 @@ type State = {
    */
   pending: Record<string, AgentChanges>;
   online: boolean;
+  /** Which side to update when the Mac speaks another version of the contract, or null while they match. */
+  behind: Behind | null;
 };
 
 /** What the person can change about an agent. */
@@ -44,7 +46,7 @@ function saved(): Partial<State> {
 
 const EMPTY = { agents: [], messages: {}, avatars: [], about: {}, pending: {} };
 
-let state: State = { ...EMPTY, ...saved(), online: true };
+let state: State = { ...EMPTY, ...saved(), online: true, behind: null };
 const listeners = new Set<() => void>();
 let saveTimer: ReturnType<typeof setTimeout> | null = null;
 
@@ -53,7 +55,7 @@ function set(patch: Partial<State>): void {
   listeners.forEach((listener) => listener());
   if (saveTimer) clearTimeout(saveTimer);
   saveTimer = setTimeout(() => {
-    const { online: _online, ...rest } = state;
+    const { online: _online, behind: _behind, ...rest } = state;
     void Storage.setItem(CACHE_KEY, JSON.stringify(rest));
   }, SAVE_DELAY_MS);
 }
@@ -85,6 +87,10 @@ export function useAbout(agentId: string): About | undefined {
 
 export function useOnline(): boolean {
   return useSyncExternalStore(subscribe, () => state.online);
+}
+
+export function useBehind(): Behind | null {
+  return useSyncExternalStore(subscribe, () => state.behind);
 }
 
 /** Which animation an agent's avatar plays. */
@@ -295,6 +301,13 @@ async function listen(signal: AbortSignal): Promise<void> {
     try {
       const events = remote("/events");
       const response = await streamingFetch(events.uri, { headers: { ...events.headers, Accept: "text/event-stream" }, signal });
+      // A Mac on another version of the contract is asked again until one side is updated.
+      const side = behind(response);
+      if (side !== state.behind) set({ behind: side });
+      if (side) {
+        void response.body?.cancel();
+        throw new Error("the Mac speaks another version");
+      }
       // The Mac doesn't know this phone, so there is nothing to listen to until it pairs again.
       if (response.status === 401) return unpair();
       if (!response.ok || !response.body) throw new Error(`events answered ${response.status}`);
@@ -326,5 +339,5 @@ async function listen(signal: AbortSignal): Promise<void> {
 onPairing(() => {
   if (isPaired()) return startSync();
   stopSync?.();
-  set({ ...EMPTY, online: true });
+  set({ ...EMPTY, online: true, behind: null });
 });

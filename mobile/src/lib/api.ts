@@ -4,7 +4,7 @@ import { useSyncExternalStore } from "react";
 import { deviceName } from "expo-device";
 import * as SecureStore from "expo-secure-store";
 import Storage from "expo-sqlite/kv-store";
-import type { Paired } from "@server/contract";
+import { CONTRACT_HEADER, CONTRACT_VERSION, type Paired } from "@server/contract";
 
 const HOST_KEY = "host";
 const DEVICE_KEY = "device-key";
@@ -25,6 +25,23 @@ export class ApiError extends Error {
     super(message);
     this.status = status;
   }
+}
+
+/** Which of the two to update when the Mac and this app speak different versions of the contract. */
+export type Behind = "mac" | "app";
+export const UPDATE: Record<Behind, string> = { mac: "Update Sidebots on your Mac", app: "Update Sidebots from the App Store" };
+
+/**
+ * Which side to update, from the contract version the Mac sent with its
+ * answer, or null when the two match. A Mac too old to send a version is
+ * behind. What `tailscale serve` answers in Sidebots' place carries no version
+ * and says nothing about it.
+ */
+export function behind(response: Pick<Response, "status" | "headers">): Behind | null {
+  if (NOT_RUNNING.has(response.status)) return null;
+  const version = Number(response.headers.get(CONTRACT_HEADER)) || 0;
+  if (version === CONTRACT_VERSION) return null;
+  return version < CONTRACT_VERSION ? "mac" : "app";
 }
 
 /** A Mac that has paired this phone: its address, the key that proves this phone to it, the key that opens its notifications, and its name. */
@@ -143,6 +160,9 @@ async function send<T>(url: string, authorization: string, init: { method?: stri
     clearTimeout(timer);
   }
   if (NOT_RUNNING.has(response.status)) throw new ApiError("Can't reach Sidebots. The server isn't running.", 0);
+  // Nothing a Mac on another version says is used, so it can't be read wrongly. Until one side is updated it is as good as out of reach.
+  const side = behind(response);
+  if (side) throw new ApiError(`${UPDATE[side]}.`, 0);
   const data = await response.json().catch(() => null);
   if (!response.ok) throw new ApiError(data?.error ?? `The server answered ${response.status}.`, response.status);
   return data as T;

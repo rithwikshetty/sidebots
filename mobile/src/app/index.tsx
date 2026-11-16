@@ -12,16 +12,19 @@ import { AvatarView } from "@/components/AvatarView";
 import { EdgeFade } from "@/components/EdgeFade";
 import { FadingText } from "@/components/FadingText";
 import { confirmDelete, problem } from "@/lib/alerts";
+import { UPDATE, type Behind } from "@/lib/api";
 import { useWorkingLine } from "@/lib/lines";
 import { preview } from "@/lib/messages";
 import { EASE, HIDE, MOVE, POP_IN, POP_OUT, SHOW } from "@/lib/motion";
-import { avatarStateOf, changeAgent, findMessages, useAgents, useOnline, type AgentChanges } from "@/lib/state";
+import { avatarStateOf, changeAgent, findMessages, useAgents, useAvatars, useBehind, useOnline, type AgentChanges } from "@/lib/state";
 import { usePush } from "@/lib/push";
 import { useTheme } from "@/lib/theme";
 import { listTime } from "@/lib/time";
 
 const ADD_BUTTON = 44;
 const SEARCH_HEIGHT = 44;
+// The search field and an unread count keep their size, and their text fits it up to this text size.
+const FIXED_MAX_SCALE = 1.3;
 // The room between the search field and the home indicator, or the keyboard once it is up.
 const SEARCH_GAP = 8;
 // How long the person rests from typing before the server is asked.
@@ -30,6 +33,12 @@ const SEARCH_DELAY_MS = 200;
 const SNIPPET_LEAD = 24;
 // The width of each action a swipe on a row shows.
 const ACTION = 76;
+
+/** What the home screen says in place of the agents when the Mac or the app is behind. */
+const BEHIND_NOTE: Record<Behind, string> = {
+  mac: "It's older than this app. Your agents show here again once it's updated.",
+  app: "Sidebots on your Mac is newer than this app. Your agents show here again once it's updated.",
+};
 
 /** A row of the list: an agent, or a message a search found in that agent's chat. */
 type Row = { agent: AgentWithLatest; found?: Found };
@@ -40,7 +49,9 @@ type Row = { agent: AgentWithLatest; found?: Found };
  * search field floating at the bottom, where a thumb reaches it. The field
  * rises with the keyboard. A swipe left on an agent shows what can be done
  * to it: mute, hide and delete. Hidden agents wait under a line at the
- * list's end, which a tap opens. While the search field holds text, the list
+ * list's end, which a tap opens. A person with no agents yet is pointed at
+ * the + button. When the Mac and the app speak different versions of the
+ * contract, a line saying which to update takes the agents' place. While the search field holds text, the list
  * is the agents whose name matches and then the messages that contain it,
  * from every chat. Rows slide to their new places as agents move up the
  * list, and fade in and out as they come and go.
@@ -51,6 +62,10 @@ export default function Home() {
   const insets = useSafeAreaInsets();
   const agents = useAgents();
   const online = useOnline();
+  const behind = useBehind();
+  // The avatars come with the Mac's first answer, so until then the phone can't tell whether there are no agents.
+  const loaded = useAvatars().length > 0;
+  const empty = loaded && agents.length === 0;
   const [typed, setTyped] = useState("");
   const search = typed.trim();
   const found = useFound(search);
@@ -59,16 +74,18 @@ export default function Home() {
   const opened = useRef<SwipeableMethods | null>(null);
   usePush();
 
-  const rows: Row[] = search
-    ? [
-        ...agents.filter((agent) => agent.name.toLowerCase().includes(search.toLowerCase())).map((agent) => ({ agent })),
-        ...(found ?? []).flatMap((message) => {
-          const agent = agents.find((item) => item.id === message.agent_id);
-          return agent ? [{ agent, found: message }] : [];
-        }),
-      ]
-    : agents.filter((agent) => !agent.hidden).map((agent) => ({ agent }));
-  const hidden = search ? [] : agents.filter((agent) => agent.hidden);
+  const rows: Row[] = behind
+    ? []
+    : search
+      ? [
+          ...agents.filter((agent) => agent.name.toLowerCase().includes(search.toLowerCase())).map((agent) => ({ agent })),
+          ...(found ?? []).flatMap((message) => {
+            const agent = agents.find((item) => item.id === message.agent_id);
+            return agent ? [{ agent, found: message }] : [];
+          }),
+        ]
+      : agents.filter((agent) => !agent.hidden).map((agent) => ({ agent }));
+  const hidden = search || behind ? [] : agents.filter((agent) => agent.hidden);
   const swipeRow = (agent: AgentWithLatest) => (
     <Animated.View key={agent.id} entering={SHOW} exiting={HIDE}>
       <AgentActions agent={agent} opened={opened}>
@@ -86,11 +103,19 @@ export default function Home() {
           keyExtractor={(row) => row.found?.id ?? row.agent.id}
           itemLayoutAnimation={MOVE}
           contentInsetAdjustmentBehavior="never"
-          contentContainerStyle={{ paddingTop: insets.top + ADD_BUTTON + 12, paddingBottom: insets.bottom + SEARCH_GAP + SEARCH_HEIGHT + 16 }}
+          contentContainerStyle={{ flexGrow: 1, paddingTop: insets.top + ADD_BUTTON + 12, paddingBottom: insets.bottom + SEARCH_GAP + SEARCH_HEIGHT + 16 }}
           // A drag lowers the keyboard, and a tap on a row opens it with the keyboard still up.
           keyboardDismissMode="on-drag"
           keyboardShouldPersistTaps="handled"
-          ListEmptyComponent={search && found ? <FadingText style={[styles.empty, { color: theme.ink2 }]}>No results</FadingText> : undefined}
+          ListEmptyComponent={
+            behind ? (
+              <Notice title={UPDATE[behind]} note={BEHIND_NOTE[behind]} />
+            ) : search && found ? (
+              <FadingText style={[styles.empty, { color: theme.ink2 }]}>No results</FadingText>
+            ) : empty ? (
+              <Notice title="No agents yet" note="Tap + to make one, then tell it what it's for." />
+            ) : undefined
+          }
           ListFooterComponent={
             hidden.length ? (
               <>
@@ -118,36 +143,52 @@ export default function Home() {
         />
       </LayoutAnimationConfig>
       <EdgeFade edge="top" height={insets.top + ADD_BUTTON + 16} solid={insets.top} />
-      <Pressable
-        onPress={() => router.push("/new-agent")}
-        accessibilityRole="button"
-        accessibilityLabel="New agent"
-        style={[styles.add, { top: insets.top }]}>
-        <Glass interactive style={styles.addGlass}>
-          <Plus size={24} strokeWidth={2.25} color={theme.tintInk} />
-        </Glass>
-      </Pressable>
-      {/* The keyboard covers the home indicator, so the field rises by the keyboard's height less that inset. */}
-      <KeyboardStickyView offset={{ closed: 0, opened: insets.bottom }} style={styles.sticky}>
-        <EdgeFade edge="bottom" height={insets.bottom + SEARCH_GAP + SEARCH_HEIGHT + 16} solid={insets.bottom} />
-        <View style={[styles.search, { paddingBottom: insets.bottom + SEARCH_GAP }]}>
-          <Glass style={styles.searchGlass}>
-            <Search size={18} strokeWidth={2.25} color={theme.ink2} />
-            <TextInput
-              value={typed}
-              onChangeText={setTyped}
-              placeholder="Search"
-              placeholderTextColor={theme.ink2}
-              selectionColor={theme.tintInk}
-              autoCorrect={false}
-              returnKeyType="search"
-              clearButtonMode="while-editing"
-              style={[styles.searchText, { color: theme.ink }]}
-            />
+      {behind ? null : (
+        <Pressable
+          onPress={() => router.push("/new-agent")}
+          accessibilityRole="button"
+          accessibilityLabel="New agent"
+          style={[styles.add, { top: insets.top }]}>
+          <Glass interactive style={styles.addGlass}>
+            <Plus size={24} strokeWidth={2.25} color={theme.tintInk} />
           </Glass>
-        </View>
-      </KeyboardStickyView>
+        </Pressable>
+      )}
+      {/* The keyboard covers the home indicator, so the field rises by the keyboard's height less that inset. */}
+      {behind || empty ? null : (
+        <KeyboardStickyView offset={{ closed: 0, opened: insets.bottom }} style={styles.sticky}>
+          <EdgeFade edge="bottom" height={insets.bottom + SEARCH_GAP + SEARCH_HEIGHT + 16} solid={insets.bottom} />
+          <View style={[styles.search, { paddingBottom: insets.bottom + SEARCH_GAP }]}>
+            <Glass style={styles.searchGlass}>
+              <Search size={18} strokeWidth={2.25} color={theme.ink2} />
+              <TextInput
+                value={typed}
+                onChangeText={setTyped}
+                placeholder="Search"
+                placeholderTextColor={theme.ink2}
+                selectionColor={theme.tintInk}
+                autoCorrect={false}
+                returnKeyType="search"
+                clearButtonMode="while-editing"
+              maxFontSizeMultiplier={FIXED_MAX_SCALE}
+                style={[styles.searchText, { color: theme.ink }]}
+              />
+            </Glass>
+          </View>
+        </KeyboardStickyView>
+      )}
     </View>
+  );
+}
+
+/** A few words in the middle of the screen where the agents would be. */
+function Notice({ title, note }: { title: string; note: string }) {
+  const theme = useTheme();
+  return (
+    <Animated.View entering={SHOW} exiting={HIDE} style={styles.notice}>
+      <Text style={[styles.noticeTitle, { color: theme.ink }]}>{title}</Text>
+      <Text style={[styles.noticeNote, { color: theme.ink2 }]}>{note}</Text>
+    </Animated.View>
   );
 }
 
@@ -259,7 +300,7 @@ function AgentRow({ agent, found, search, online, onPress }: { agent: AgentWithL
               exiting={POP_OUT}
               style={[styles.count, { backgroundColor: agent.muted ? theme.ink2 : theme.tint }]}
               accessibilityLabel={`${agent.unread} unread`}>
-              <Text style={[styles.countText, { color: theme.onTint }]}>{agent.unread > 99 ? "99+" : agent.unread}</Text>
+              <Text maxFontSizeMultiplier={FIXED_MAX_SCALE} style={[styles.countText, { color: theme.onTint }]}>{agent.unread > 99 ? "99+" : agent.unread}</Text>
             </Animated.View>
           ) : null}
         </View>
@@ -284,6 +325,9 @@ const styles = StyleSheet.create({
   searchGlass: { height: SEARCH_HEIGHT, borderRadius: SEARCH_HEIGHT / 2, flexDirection: "row", alignItems: "center", gap: 8, paddingLeft: 14, paddingRight: 8, overflow: "hidden" },
   searchText: { flex: 1, height: SEARCH_HEIGHT, fontSize: 17, padding: 0 },
   empty: { textAlign: "center", fontSize: 15, marginTop: 32 },
+  notice: { flex: 1, justifyContent: "center", gap: 6, paddingHorizontal: 32, paddingBottom: ADD_BUTTON },
+  noticeTitle: { fontSize: 20, fontWeight: "600", textAlign: "center" },
+  noticeNote: { fontSize: 15, lineHeight: 20, textAlign: "center" },
   add: { position: "absolute", right: 16, zIndex: 2 },
   addGlass: { width: ADD_BUTTON, height: ADD_BUTTON, borderRadius: ADD_BUTTON / 2, alignItems: "center", justifyContent: "center", overflow: "hidden" },
   row: { flexDirection: "row", alignItems: "center", gap: 12, paddingLeft: 16 },

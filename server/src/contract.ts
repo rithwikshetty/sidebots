@@ -1,6 +1,15 @@
 // The shapes the server sends over HTTP, and how they read in words. The
 // mobile app imports this file, so it imports nothing.
 
+/**
+ * The version of this contract. It goes up when a change means an older app
+ * or server can't work with a newer one. The server sends it on every
+ * response in the `Sidebots-Contract` header, and the app compares it with
+ * its own.
+ */
+export const CONTRACT_VERSION = 1;
+export const CONTRACT_HEADER = "Sidebots-Contract";
+
 export type Sender = "person" | "agent" | "sidebots";
 export type Status = "queued" | "running" | "done" | "failed";
 
