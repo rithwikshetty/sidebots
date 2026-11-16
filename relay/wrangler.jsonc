@@ -1,5 +1,5 @@
 // The relay at relay.sidebots.app. A relay for another copy of the app is this
-// file with its own domain, database and app identifier.
+// file with its own domain, zone, account, database and app identifier.
 {
   "name": "sidebots-relay",
   "main": "src/worker.ts",
@@ -8,7 +8,15 @@
   "d1_databases": [{ "binding": "DB", "database_name": "sidebots-relay", "database_id": "77e61447-2164-455c-b419-9451cb4f39ce" }],
   // Removes the machines that have gone quiet, once a day.
   "triggers": { "crons": ["17 3 * * *"] },
-  "vars": { "APNS_TOPIC": "app.sidebots", "NOTICES_PER_DAY": "1000" },
+  "vars": {
+    "APNS_TOPIC": "app.sidebots",
+    "NOTICES_PER_DAY": "1000",
+    "ZONE": "sidebots.app",
+    "ZONE_ID": "ZONE_ID_PENDING",
+    "CLOUDFLARE_ACCOUNT_ID": "a3214a4eaf739e455f2179a537fdf54b"
+  },
+  // New machines one network address may register in a minute.
+  "ratelimits": [{ "name": "NEW_MACHINES", "namespace_id": "1001", "simple": { "limit": 3, "period": 60 } }],
   // Set each with `wrangler secret put <name>`.
-  "secrets": { "required": ["APNS_KEY", "APNS_KEY_ID", "APNS_TEAM_ID"] }
+  "secrets": { "required": ["APNS_KEY", "APNS_KEY_ID", "APNS_TEAM_ID", "CLOUDFLARE_API_TOKEN"] }
 }

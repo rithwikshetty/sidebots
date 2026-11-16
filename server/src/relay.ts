@@ -1,14 +1,18 @@
-// The relay passes this server's notifications to Apple, under the push key of
-// the developer account that publishes the app. This is the only module that
-// talks to it. `relay/src/worker.ts` describes how a request is signed.
+// The relay gives this machine its address and tunnel, and passes the server's
+// notifications to Apple, under the push key of the developer account that
+// publishes the app. This is the only module that talks to it.
+// `relay/src/worker.ts` describes how a request is signed.
 
 import { createHash, createPrivateKey, generateKeyPairSync, sign, type KeyObject } from "node:crypto";
 import type { SendPush } from "./push.ts";
-import type { Store } from "./store.ts";
+import type { Machine, Store } from "./store.ts";
 
-/** Sends notifications through the relay at `origin`. The server registers with it the first time it sends one. `send` is how the server reaches the relay. */
-export function relay(store: Store, origin: string, send: typeof fetch = fetch): SendPush {
-  let registering: Promise<string> | null = null;
+/** The relay, as the server uses it: `register` brings the machine its id, address and tunnel token, and `notify` sends a notification. */
+export type Relay = { register(): Promise<Required<Machine>>; notify: SendPush };
+
+/** Talks to the relay at `origin` for a server listening on `port`. `send` is how the server reaches the relay. */
+export function relay(store: Store, origin: string, port: number, send: typeof fetch = fetch): Relay {
+  let registering: Promise<Required<Machine>> | null = null;
 
   /** The machine's signing key. The server makes one the first time it needs it, and keeps it. */
   const key = (): KeyObject => {
@@ -31,24 +35,29 @@ export function relay(store: Store, origin: string, send: typeof fetch = fetch):
     });
   };
 
-  /** The machine's id with the relay, which the server asks for once and keeps. */
-  const machineId = (): Promise<string> => {
-    const kept = store.machine()?.id;
-    if (kept) return Promise.resolve(kept);
-    // Notices that go at once share one registration.
+  /**
+   * Registers the machine and keeps what the relay answers. Registering again
+   * with the same key brings the same machine, and tells the relay it is still
+   * in use. Registrations at once share one call.
+   */
+  const register = (): Promise<Required<Machine>> => {
     registering ??= (async () => {
       const privateKey = key();
       const publicKey = privateKey.export({ format: "jwk" }).x!;
-      const response = await call("/machines", publicKey, privateKey, "");
+      const response = await call("/machines", publicKey, privateKey, JSON.stringify({ port }));
       if (!response.ok) throw new Error(`The relay answered ${response.status} to registering.`);
-      const { id } = (await response.json()) as { id: string };
-      store.setMachine({ privateKey: store.machine()!.privateKey, id });
-      return id;
+      const { id, address, tunnelToken } = (await response.json()) as { id: string; address: string; tunnelToken: string };
+      const machine = { privateKey: store.machine()!.privateKey, id, address, tunnelToken };
+      store.setMachine(machine);
+      return machine;
     })().finally(() => (registering = null));
     return registering;
   };
 
-  return async (to, notice) => {
+  /** The machine's id with the relay, which the server registers for when it has none. */
+  const machineId = async (): Promise<string> => store.machine()?.id ?? (await register()).id;
+
+  const notify: SendPush = async (to, notice) => {
     const body = JSON.stringify({ token: to.token, environment: to.environment, ...notice });
     try {
       let response = await call("/notifications", await machineId(), key(), body);
@@ -63,4 +72,6 @@ export function relay(store: Store, origin: string, send: typeof fetch = fetch):
       return "failed";
     }
   };
+
+  return { register, notify };
 }

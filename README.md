@@ -28,7 +28,7 @@ The Mac app uses the same data folder and port as a server you start yourself, s
 ## What you need to run the server yourself
 
 - A machine that stays on, with [Node](https://nodejs.org) 24 or later, [pnpm](https://pnpm.io) and [Claude Code](https://claude.com/claude-code). It has been run on a Mac.
-- [Tailscale](https://tailscale.com) on that machine and on each phone, in the same tailnet.
+- [cloudflared](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/), which gives the machine its address. On a Mac, `brew install cloudflared`.
 - For each person, a Claude subscription or an Anthropic API key.
 - An iPhone, and a Mac with Xcode to build the app. There is no Android build today.
 - A paid Apple Developer account. The app uses push notifications, which a free account can't sign.
@@ -64,24 +64,23 @@ pnpm api-key Robin ~/robin-key.txt
 
 Sidebots copies the key into `~/.sidebots/api-keys.json`, which only your account can read, so delete your file afterwards. The person's agents run on the key from their next turn, even if their folder is also signed in to a subscription. Saving another key replaces it, and `pnpm api-key Robin --remove` puts the person's agents back on the login in their folder. Sidebots never puts the key in a log, a reply or a failure notice, but an agent's own commands can read the key it runs on, as they can any of your account's files.
 
-Start the server, then publish it to your tailnet:
+Start the server:
 
 ```sh
 pnpm start
-tailscale serve --bg --https=443 http://127.0.0.1:4317
 ```
 
-The server listens on `127.0.0.1:4317` only. Phones reach it at the machine's Tailscale name, such as `macbook.your-tailnet.ts.net`. If something else on the machine already uses port 443, publish Sidebots on another one, such as `--https=8443`, and add it to the address: `macbook.your-tailnet.ts.net:8443`.
+The server listens on `127.0.0.1:4317` only. When it starts, it registers with the relay, which gives the machine an address of its own, such as `k3v9x2m8q1w7p4ta.sidebots.app`, and a Cloudflare Tunnel to it. The server keeps `cloudflared` running with the tunnel, and phones reach the machine at that address from anywhere, with nothing to change on the router. The server prints the address as it starts. It finds `cloudflared` on the `PATH`, or at the path in `SIDEBOTS_CLOUDFLARED`.
 
-Two settings change where things live: `PORT` for the port, and `SIDEBOTS_HOME` for the data folder, which is `~/.sidebots` unless you set it. That folder holds the database, each agent's home folder with its instructions, memory and attachments, the avatars, the API keys and the key that proves the server to the relay. If you set `SIDEBOTS_HOME` or `PORT` for the server, set them for its other commands too.
+Two settings change where things live: `PORT` for the port, and `SIDEBOTS_HOME` for the data folder, which is `~/.sidebots` unless you set it. That folder holds the database, each agent's home folder with its instructions, memory and attachments, the avatars, the API keys, and the machine's key, address and tunnel token. If you set `SIDEBOTS_HOME` or `PORT` for the server, set them for its other commands too.
 
 To keep the server running on a Mac, use a launchd agent with `RunAtLoad` and `KeepAlive` set, `server/` as its working directory, and the full path to `node` running `src/main.ts`. Keep the code outside `~/Downloads`, `~/Documents` and `~/Desktop`, which macOS doesn't let a background service read.
 
-### Notifications
+### The relay
 
-Only the Apple Developer account that builds the app can notify it, so the server sends its notifications through a relay that holds that account's push key. The server registers with the relay the first time it sends one, with a key it makes and keeps in `machine.json`, and signs every request with it. The relay keeps the server's public key and nothing about people, agents or messages.
+The relay gives the machine its address and tunnel, and passes its notifications to Apple. Only the Apple Developer account that builds the app can notify it, so the relay holds that account's push key. The server registers with the relay when it starts, and again each day, with a key it makes and keeps in `machine.json`, and signs every request with it. The relay keeps the server's public key, its tunnel and its address, and nothing about people, agents or messages. A relay that hears nothing from a machine for 60 days removes it with its address, so after a longer break the machine gets a new address and each phone pairs again.
 
-The server uses the relay at `https://relay.sidebots.app`, which notifies the Sidebots app on the App Store. Your own build has its own identifier, so it needs your own relay: deploy the one in `relay/` to your Cloudflare account, as [relay/README.md](relay/README.md) explains, and start the server with `SIDEBOTS_RELAY` set to its address. `SIDEBOTS_RELAY=off` turns notifications off, and everything else works.
+The server uses the relay at `https://relay.sidebots.app`, which notifies the Sidebots app on the App Store. Your own build has its own identifier, so it needs your own relay: deploy the one in `relay/` to your Cloudflare account, as [relay/README.md](relay/README.md) explains, and start the server with `SIDEBOTS_RELAY` set to its address. `SIDEBOTS_RELAY=off` turns off the relay, the tunnel and notifications. The server then needs another way for phones to reach it, such as `tailscale serve --bg --https=443 http://127.0.0.1:4317`, and `pair` needs that address in `--host`.
 
 ### New avatars
 
@@ -105,14 +104,16 @@ For other people's phones, open `mobile/ios/Sidebots.xcworkspace` in Xcode, arch
 
 ### Pair each phone
 
-Until its phone has paired with a server, the app opens on a welcome screen whose button opens a camera. On the server, make a pairing code for the person, with the address their phone reaches the server at:
+Until its phone has paired with a server, the app opens on a welcome screen whose button opens a camera. On the server, make a pairing code for the person:
 
 ```sh
 cd server
-pnpm pair Alex --host macbook.your-tailnet.ts.net
+pnpm pair Alex
 ```
 
-It prints a QR code, and the same code as a link. `--host` can be left out once the relay has given the machine an address. The person scans the code in the app, or taps the link button above the camera and pastes the link. The app and the server must speak the same version of their contract, `CONTRACT_VERSION` in `server/src/contract.ts`. When they don't, the app says which one to update. A code pairs one phone, once, within ten minutes. The phone gets a key of its own, which it keeps in the Keychain and sends with every request, and the server keeps only a hash of it. It also gets the key its notifications are encrypted with, so neither the relay nor Apple can read them.
+The code carries the machine's address. To have the phone reach the server at another address, such as its Tailscale name, add it as `--host macbook.your-tailnet.ts.net`.
+
+It prints a QR code, and the same code as a link. The person scans the code in the app, or taps the link button above the camera and pastes the link. The app and the server must speak the same version of their contract, `CONTRACT_VERSION` in `server/src/contract.ts`. When they don't, the app says which one to update. A code pairs one phone, once, within ten minutes. The phone gets a key of its own, which it keeps in the Keychain and sends with every request, and the server keeps only a hash of it. It also gets the key its notifications are encrypted with, so neither the relay nor Apple can read them.
 
 `pnpm devices` lists the paired phones with their ids, and `pnpm remove-device <id>` unpairs one at once. `pnpm status` says whether the server is running, whether phones reach it, and how each person's agents sign in. With `--json`, `status`, `devices` and `pair` print JSON, which is what the Mac app reads.
 
@@ -162,7 +163,7 @@ Setting up turns on "Open at login" for the copy you ran, so turn it off in the 
 (cd mobile && pnpm typecheck)
 ```
 
-The server's tests run through its HTTP routes with the model swapped for a fake, so they need no Claude sign-in or API key. The relay's tests run the server's relay module against the relay's own request handler, with Cloudflare's database and Apple's push service faked. The app imports the server's wire types from `server/src/contract.ts`.
+The server's tests run through its HTTP routes with the model swapped for a fake, so they need no Claude sign-in or API key. The relay's tests run the server's relay module against the relay's own request handler, with Cloudflare's database and API and Apple's push service faked. The app imports the server's wire types from `server/src/contract.ts`.
 
 ## Licence
 
