@@ -13,11 +13,12 @@ const CODE_FONT = "Menlo";
  * with headings, lists, task lists, quotes, tables, highlighted code and
  * links. The text is selectable with the system's own menu. A web link opens
  * in a Safari sheet over the app; any other link, such as a phone number or
- * an email address, goes to the app that handles it.
+ * an email address, goes to the app that handles it. `on` is what the text
+ * sits on: the agent's chat bubble, or the page, as in a note the agent wrote.
  */
-export function Markdown({ text }: { text: string }) {
+export function Markdown({ text, on = "bubble" }: { text: string; on?: Backdrop }) {
   const theme = useTheme();
-  const markdownStyle = useMemo(() => styleFor(theme), [theme]);
+  const markdownStyle = useMemo(() => styleFor(theme, on), [theme, on]);
   return (
     <EnrichedMarkdownText
       markdown={text}
@@ -37,9 +38,14 @@ async function openLink(url: string, theme: Theme): Promise<void> {
   }
 }
 
-/** The reply's look, from the chat's own sizes and colours, on the grey of the agent's bubble. */
-function styleFor(theme: Theme): MarkdownStyle {
+type Backdrop = "bubble" | "page";
+
+/** The text's look, from the chat's own sizes and colours, on the grey of the agent's bubble or on the page. */
+function styleFor(theme: Theme, on: Backdrop): MarkdownStyle {
   const text = { fontSize: FONT_SIZE, lineHeight: LINE_HEIGHT, color: theme.ink };
+  // Code and a table's header stand out from what the text sits on, in both modes.
+  const behind = on === "bubble" ? theme.bubble : theme.bg;
+  const apart = on === "bubble" ? theme.bg : theme.field;
   const heading = (fontSize: number, lineHeight: number) => ({ ...text, fontSize, lineHeight, fontWeight: "700", marginTop: 4, marginBottom: 6 });
   return {
     paragraph: { ...text, marginTop: 0, marginBottom: 10 },
@@ -51,30 +57,29 @@ function styleFor(theme: Theme): MarkdownStyle {
     h6: heading(FONT_SIZE, LINE_HEIGHT),
     list: { ...text, bulletColor: theme.ink2, markerColor: theme.ink2, gapWidth: 8, marginLeft: 2, itemSpacing: 4, marginBottom: 10 },
     blockquote: { ...text, color: theme.ink2, backgroundColor: "transparent", borderColor: theme.faint, borderWidth: 3, gapWidth: 10, padding: 0, marginBottom: 10 },
-    // Code sits on the page colour, so it stands out from the bubble's grey in both modes.
     codeBlock: {
       fontFamily: CODE_FONT,
       fontSize: 14,
       lineHeight: 20,
       color: theme.ink,
-      backgroundColor: theme.bg,
+      backgroundColor: apart,
       borderColor: theme.line,
       borderWidth: StyleSheet.hairlineWidth,
       borderRadius: 12,
       padding: 12,
       marginBottom: 10,
     },
-    code: { fontFamily: CODE_FONT, fontSize: 15, color: theme.ink, backgroundColor: theme.bg, borderColor: theme.line },
+    code: { fontFamily: CODE_FONT, fontSize: 15, color: theme.ink, backgroundColor: apart, borderColor: theme.line },
     link: { color: theme.tintInk, underline: true },
     strong: { fontWeight: "bold" },
     table: {
       fontSize: 15,
       lineHeight: 20,
       color: theme.ink,
-      headerBackgroundColor: theme.bg,
+      headerBackgroundColor: apart,
       headerTextColor: theme.ink,
-      rowEvenBackgroundColor: theme.bubble,
-      rowOddBackgroundColor: theme.bubble,
+      rowEvenBackgroundColor: behind,
+      rowOddBackgroundColor: behind,
       borderColor: theme.line,
       borderWidth: StyleSheet.hairlineWidth,
       borderRadius: 10,

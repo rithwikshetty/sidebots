@@ -1,12 +1,14 @@
 import { Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { Markdown } from "@/components/Markdown";
 import { useAbout } from "@/lib/state";
 import { useTheme } from "@/lib/theme";
 
 /**
  * Something an agent wrote for itself, to read in full: the instructions it
- * follows, or with `memory` one of the things it remembers.
+ * follows, or with `memory` one of the things it remembers. The agent writes
+ * both in markdown, which shows as rich text, as its replies do.
  */
 export default function Note() {
   const theme = useTheme();
@@ -24,9 +26,7 @@ export default function Note() {
       </Pressable>
       <ScrollView contentContainerStyle={[styles.page, { paddingBottom: insets.bottom + 32 }]}>
         <Text style={[styles.title, { color: theme.ink }]}>{title}</Text>
-        <Text selectable style={[styles.body, { color: theme.ink }]}>
-          {body}
-        </Text>
+        {body ? <Markdown text={body} on="page" /> : null}
       </ScrollView>
     </View>
   );
@@ -39,5 +39,4 @@ const styles = StyleSheet.create({
   done: { alignSelf: "flex-end", paddingHorizontal: 20, paddingTop: 16, paddingBottom: 8 },
   doneText: { fontSize: 17, fontWeight: "600" },
   title: { fontSize: 22, fontWeight: "700", lineHeight: 28 },
-  body: { fontSize: 16, lineHeight: 23 },
 });

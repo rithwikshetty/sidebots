@@ -31,7 +31,9 @@ export function seal(notice: Notice, notificationKey: string): string {
 
 /** Tells the person's phones when an agent replies or a turn fails, unless the agent is muted. An update while it works tells nobody. Returns a function that stops it. */
 export function startPush(store: Store, send: SendPush): () => void {
-  return store.onMessage((message) => {
+  return store.onChange((change) => {
+    if (!("message" in change)) return;
+    const { message } = change;
     const finished = (message.sender === "agent" && !message.interim) || (message.sender === "sidebots" && message.status === "failed");
     const agent = finished ? store.agent(message.agent_id) : undefined;
     if (!agent || agent.muted) return;

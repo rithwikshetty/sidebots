@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { ActivityIndicator, Pressable, StyleSheet, Text, TextInput, View } from "react-native";
+import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, TextInput } from "react-native";
 import { useRouter } from "expo-router";
 import { AvatarPicker } from "@/components/AvatarPicker";
 import { FadingText } from "@/components/FadingText";
@@ -13,6 +13,11 @@ function hash(text: string): number {
   return sum;
 }
 
+/**
+ * The sheet for a new agent: its name, its avatar, and Create agent. The
+ * keyboard covers the sheet's lower part, so the sheet scrolls up from behind
+ * it when large text doesn't fit, which keeps Create agent in reach.
+ */
 export default function NewAgent() {
   const theme = useTheme();
   const router = useRouter();
@@ -41,7 +46,11 @@ export default function NewAgent() {
   }
 
   return (
-    <View style={[styles.sheet, { backgroundColor: theme.bg }]}>
+    <ScrollView
+      style={{ backgroundColor: theme.bg }}
+      contentContainerStyle={styles.page}
+      automaticallyAdjustKeyboardInsets
+      keyboardShouldPersistTaps="handled">
       <Text style={[styles.title, { color: theme.ink }]}>New agent</Text>
       <TextInput
         value={name}
@@ -62,12 +71,12 @@ export default function NewAgent() {
         style={({ pressed }) => [styles.button, { backgroundColor: theme.tint, opacity: pressed || busy || !trimmed ? 0.5 : 1 }]}>
         {busy ? <ActivityIndicator color={theme.onTint} /> : <Text style={[styles.buttonText, { color: theme.onTint }]}>Create agent</Text>}
       </Pressable>
-    </View>
+    </ScrollView>
   );
 }
 
 const styles = StyleSheet.create({
-  sheet: { flex: 1, paddingHorizontal: 24, paddingTop: 28, gap: 16 },
+  page: { paddingHorizontal: 24, paddingTop: 28, paddingBottom: 24, gap: 16 },
   title: { fontSize: 17, fontWeight: "600", textAlign: "center" },
   name: { fontSize: 26, fontWeight: "700", textAlign: "center", paddingVertical: 8, borderBottomWidth: StyleSheet.hairlineWidth },
   hint: { fontSize: 15, textAlign: "center" },

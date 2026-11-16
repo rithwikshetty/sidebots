@@ -325,6 +325,22 @@ Do it now. This run is a session of its own. It remembers no earlier run and not
 Your reply is sent to ${person.name} as a message and notifies their phone. If this run found nothing worth telling them, reply with only the word ${SILENT}.`;
 }
 
+/**
+ * Why a turn failed, in words for the person on their phone. Claude Code's
+ * words for the common causes are instructions for its own terminal, such as
+ * "Not logged in · Please run /login", so those say what to do on the Mac
+ * instead. Anything else keeps Claude Code's words.
+ */
+function plainFailure(words: string): string {
+  if (/invalid api key|invalid x-api-key/i.test(words)) return "Anthropic refused your API key. Save a new one on your Mac.";
+  if (/not logged in|please run \/login|sign in again/i.test(words)) return "Claude Code on your Mac is signed out. Sign in to it there.";
+  if (/you've (?:hit|reached) your|usage limit/i.test(words)) {
+    const resets = /resets ([^·\n]+)/.exec(words)?.[1].trim();
+    return `Your Claude usage limit is reached. ${resets ? `It resets at ${resets}.` : "Try again once it resets."}`;
+  }
+  return words;
+}
+
 /** Whether a job's run chose to send nothing. */
 const silent = (reply: string) => reply.trim() === "" || new RegExp(`^\\W*${SILENT}\\W*$`, "i").test(reply);
 
@@ -394,7 +410,7 @@ export function createQueue(store: Store, runTurn: RunTurn, now: () => number = 
         });
       // Why a turn failed, as the chat says it. An error can quote what the turn ran with, and the person's API key never goes with it.
       const reason = (error: unknown) => {
-        const words = error instanceof Error ? error.message : String(error);
+        const words = plainFailure(error instanceof Error ? error.message : String(error));
         return apiKey ? words.replaceAll(apiKey, "your API key") : words;
       };
 

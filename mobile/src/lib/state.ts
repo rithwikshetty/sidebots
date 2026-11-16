@@ -7,7 +7,7 @@ import { AppState } from "react-native";
 import { fetch as streamingFetch } from "expo/fetch";
 import { File } from "expo-file-system";
 import Storage from "expo-sqlite/kv-store";
-import type { About, Agent, AgentWithLatest, Avatar, AvatarState, Effort, Found, Message, MessageEvent, Model } from "@server/contract";
+import type { About, Agent, AgentWithLatest, Avatar, AvatarState, Effort, Found, Message, Model, StreamEvent } from "@server/contract";
 import { ApiError, behind, isPaired, onPairing, remote, request, unpair, type Behind } from "./api";
 import type { Picked } from "./files";
 
@@ -114,12 +114,23 @@ function upsert(list: Message[], message: Message): Message[] {
   return at < 0 ? [...list, message] : list.map((item, index) => (index === at ? message : item));
 }
 
-function apply({ message, agent }: MessageEvent): void {
+/** Takes in what the event stream says: a message and its agent, a new agent, or an agent that was deleted. */
+function apply(event: StreamEvent): void {
+  if ("deleted" in event) return forget(event.deleted);
+  const { message, agent } = event;
   const known = state.messages[agent.id];
   set({
     agents: [withPending(agent), ...state.agents.filter((item) => item.id !== agent.id)],
-    messages: known ? { ...state.messages, [agent.id]: upsert(known, message) } : state.messages,
+    messages: known && message ? { ...state.messages, [agent.id]: upsert(known, message) } : state.messages,
   });
+}
+
+/** Lets go of everything the phone kept of an agent that is gone. */
+function forget(agentId: string): void {
+  const { [agentId]: _messages, ...messages } = state.messages;
+  const { [agentId]: _about, ...about } = state.about;
+  const { [agentId]: _pending, ...pending } = state.pending;
+  set({ agents: state.agents.filter((agent) => agent.id !== agentId), messages, about, pending });
 }
 
 /**
@@ -185,7 +196,9 @@ export async function freshStart(agentId: string): Promise<void> {
 
 export async function createAgent(name: string, avatarId: string): Promise<Agent> {
   const agent = await request<Agent>("/agents", { method: "POST", body: { name, avatarId } });
-  set({ agents: [{ ...agent, latest: null, working: false, unread: 0 }, ...state.agents], messages: { ...state.messages, [agent.id]: [] } });
+  // The event stream may have brought the agent already.
+  const others = state.agents.filter((each) => each.id !== agent.id);
+  set({ agents: [{ ...agent, latest: null, working: false, unread: 0 }, ...others], messages: { ...state.messages, [agent.id]: [] } });
   return agent;
 }
 
@@ -242,10 +255,7 @@ function keepPending(agentId: string, changes: AgentChanges | undefined): void {
 /** Removes an agent for good, with its chat, its memory, its jobs and its files. */
 export async function deleteAgent(agentId: string): Promise<void> {
   await request(`/agents/${agentId}`, { method: "DELETE" });
-  const { [agentId]: _messages, ...messages } = state.messages;
-  const { [agentId]: _about, ...about } = state.about;
-  const { [agentId]: _pending, ...pending } = state.pending;
-  set({ agents: state.agents.filter((agent) => agent.id !== agentId), messages, about, pending });
+  forget(agentId);
 }
 
 /** Fetches what an agent's page shows: its instructions, what it remembers and its jobs. */
@@ -322,7 +332,7 @@ async function listen(signal: AbortSignal): Promise<void> {
         for (let end = buffer.indexOf("\n\n"); end >= 0; end = buffer.indexOf("\n\n")) {
           const data = buffer.slice(0, end).split("\n").find((line) => line.startsWith("data: {"));
           buffer = buffer.slice(end + 2);
-          if (data) apply(JSON.parse(data.slice(6)) as MessageEvent);
+          if (data) apply(JSON.parse(data.slice(6)) as StreamEvent);
         }
       }
     } catch {

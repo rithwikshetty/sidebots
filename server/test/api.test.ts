@@ -79,7 +79,7 @@ test("a phone pairs once with a code, and only a paired phone is let in", async 
   const pairWith = async (code: string) => {
     const response = await app.request("/pair", {
       method: "POST",
-      headers: { Authorization: `Pairing ${code}`, "Content-Type": "application/json" },
+      headers: { Authorization: `Pairing ${code}`, "Content-Type": "application/json", "Sidebots-Contract": String(CONTRACT_VERSION) },
       body: JSON.stringify({ name: "Alex's iPhone" }),
     });
     return { status: response.status, json: await response.json() };
@@ -103,10 +103,37 @@ test("a phone pairs once with a code, and only a paired phone is let in", async 
   assert.equal((await pairWith(late)).status, 401);
 });
 
+test("an app on another version of the contract can't pair, and its code still works once the versions match", async () => {
+  const { store, app } = setup(async () => reply("ok"));
+  const code = store.addPairing(store.personByName(ME)!.id);
+  const pairAs = async (version?: number) => {
+    const headers: Record<string, string> = { Authorization: `Pairing ${code}`, "Content-Type": "application/json" };
+    if (version !== undefined) headers["Sidebots-Contract"] = String(version);
+    const response = await app.request("/pair", { method: "POST", headers, body: JSON.stringify({ name: "Alex's iPhone" }) });
+    return { status: response.status, version: response.headers.get("Sidebots-Contract"), json: await response.json() };
+  };
+
+  // An older app, a newer one, and one that sends no version. Each hears the server's version, so it can say which side to update.
+  for (const version of [CONTRACT_VERSION - 1, CONTRACT_VERSION + 1, undefined]) {
+    const refused = await pairAs(version);
+    assert.equal(refused.status, 409);
+    assert.equal(refused.version, String(CONTRACT_VERSION));
+    assert.equal(refused.json.key, undefined);
+  }
+  // A phone is stored only as its code is used, so the code still pairing shows none was stored before.
+  const paired = await pairAs(CONTRACT_VERSION);
+  assert.equal(paired.status, 201);
+  assert.equal(store.deviceByKey(paired.json.key)?.name, "Alex's iPhone");
+});
+
 test("every answer says which version of the contract the server speaks", async () => {
   const { store, app, phoneOf } = setup(async () => reply("ok"));
   const pairWith = (code: string) =>
-    app.request("/pair", { method: "POST", headers: { Authorization: `Pairing ${code}`, "Content-Type": "application/json" }, body: JSON.stringify({ name: "Alex's iPhone" }) });
+    app.request("/pair", {
+      method: "POST",
+      headers: { Authorization: `Pairing ${code}`, "Content-Type": "application/json", "Sidebots-Contract": String(CONTRACT_VERSION) },
+      body: JSON.stringify({ name: "Alex's iPhone" }),
+    });
   const phone = phoneOf(ME);
   const events = await app.request("/events", { headers: phone });
   const answers = [
@@ -180,7 +207,7 @@ test("messages sent while the agent is busy run one at a time, in order, on the 
 
 test("a failed turn keeps the message and adds a note from Sidebots saying why", async () => {
   const { queue, call, say } = setup(async () => {
-    throw new Error("You've reached your usage limit.");
+    throw new Error("Claude Code process exited with code 1");
   });
   const agent = (await call(ME, "POST", "/agents", { name: "Scout", avatarId: "moss" })).json;
 
@@ -192,7 +219,36 @@ test("a failed turn keeps the message and adds a note from Sidebots saying why",
     messages.map((m: { sender: string; body: string; status: string }) => [m.sender, m.body, m.status]),
     [
       ["person", "find me a flat", "failed"],
-      ["sidebots", "Sidebots couldn't finish this. You've reached your usage limit.", "failed"],
+      ["sidebots", "Sidebots couldn't finish this. Claude Code process exited with code 1", "failed"],
+    ],
+  );
+});
+
+test("a turn that fails for a reason the person can fix says what to do on the Mac, not in Claude Code", async () => {
+  // Each turn fails with what the person's newest message says, which ends the prompt.
+  const { queue, call, say } = setup(async (turn) => {
+    throw new Error(turn.prompt.text.split("\n").at(-1));
+  });
+  const agent = (await call(ME, "POST", "/agents", { name: "Scout", avatarId: "moss" })).json;
+  const failures = [
+    "Not logged in · Please run /login",
+    "Invalid API key · Fix external API key",
+    "You've hit your 5-hour limit · resets 3pm (Europe/London)",
+    "Claude usage limit reached.",
+  ];
+  for (const failure of failures) {
+    await say(ME, agent.id, failure);
+    await queue.kick(agent.id);
+  }
+
+  const notices = (await call(ME, "GET", `/agents/${agent.id}/messages`)).json.filter((m: { sender: string }) => m.sender === "sidebots");
+  assert.deepEqual(
+    notices.map((m: { body: string }) => m.body),
+    [
+      "Sidebots couldn't finish this. Claude Code on your Mac is signed out. Sign in to it there.",
+      "Sidebots couldn't finish this. Anthropic refused your API key. Save a new one on your Mac.",
+      "Sidebots couldn't finish this. Your Claude usage limit is reached. It resets at 3pm (Europe/London).",
+      "Sidebots couldn't finish this. Your Claude usage limit is reached. Try again once it resets.",
     ],
   );
 });
@@ -289,6 +345,28 @@ test("the event stream carries the person's own messages and their status change
       ["person", "hello", "done", "Wedding", false],
     ],
   );
+});
+
+test("the event stream carries the agents the person adds and deletes on another phone, and nobody else's", async () => {
+  const { call, app, phoneOf, pair } = setup(async () => reply("ok"));
+  const otherPhone = pair(ME);
+  const response = await app.request("/events", { headers: phoneOf(ME) });
+  const reader = response.body!.pipeThrough(new TextDecoderStream()).getReader();
+  await call(HER, "POST", "/agents", { name: "Garden", avatarId: "moss" });
+  const added = (await call(otherPhone, "POST", "/agents", { name: "Wedding", avatarId: "mochi" })).json;
+  await call(otherPhone, "DELETE", `/agents/${added.id}`);
+
+  let text = "";
+  while (!text.includes("event: deleted")) text += (await reader.read()).value;
+  await reader.cancel();
+  const events = text
+    .split("\n")
+    .filter((line) => line.startsWith("data: {"))
+    .map((line) => JSON.parse(line.slice(6)));
+  assert.deepEqual(events, [
+    { message: null, agent: { ...added, latest: null, working: false, unread: 0 } },
+    { deleted: added.id },
+  ]);
 });
 
 test("after a known message returns only what came later", async () => {
@@ -586,7 +664,7 @@ test("a job set for one time runs once, a daily one keeps to its days, and a job
   time = new Date(2026, 10, 23, 8, 0).getTime();
   await queue.kick(agent.id);
   const after = (await call(ME, "GET", `/agents/${agent.id}/messages`)).json.map((m: { body: string }) => m.body);
-  assert.deepEqual(after.slice(-2), ["Time to call the garage.", "Sidebots couldn't run a job. You've reached your usage limit."]);
+  assert.deepEqual(after.slice(-2), ["Time to call the garage.", "Sidebots couldn't run a job. Your Claude usage limit is reached. Try again once it resets."]);
 });
 
 test("a reply to a message tells the agent which one, and the chat pages back through older messages", async () => {

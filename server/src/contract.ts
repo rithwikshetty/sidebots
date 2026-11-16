@@ -5,7 +5,8 @@
  * The version of this contract. It goes up when a change means an older app
  * or server can't work with a newer one. The server sends it on every
  * response in the `Sidebots-Contract` header, and the app compares it with
- * its own.
+ * its own. The app sends its own in the same header, and the server refuses
+ * to pair an app on another version.
  */
 export const CONTRACT_VERSION = 1;
 export const CONTRACT_HEADER = "Sidebots-Contract";
@@ -121,8 +122,12 @@ export function plainText(markdown: string): string {
     .trim();
 }
 
-/** What the event stream sends when a message is added or changes status. */
-export type MessageEvent = { message: Message; agent: AgentWithLatest };
+/**
+ * What the event stream sends. A message that was added or changed status
+ * comes with its agent as the home screen shows it. A new agent comes the same
+ * way, with no message. A deleted agent comes as its id.
+ */
+export type StreamEvent = { message: Message | null; agent: AgentWithLatest } | { deleted: string };
 /**
  * What a phone gets when it pairs: the key it sends with every request from
  * then on, the key its notifications are encrypted with, in base64, and the

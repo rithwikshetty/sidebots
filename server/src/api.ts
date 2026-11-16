@@ -6,7 +6,7 @@ import { Hono } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import { streamSSE } from "hono/streaming";
 import { CONTRACT_HEADER, CONTRACT_VERSION, EFFORTS, MODELS } from "./contract.ts";
-import type { Effort, MessageEvent, Model, Paired, PushToken } from "./contract.ts";
+import type { Effort, Model, Paired, PushToken, StreamEvent } from "./contract.ts";
 import type { AgentChanges, Device, Person, Store } from "./store.ts";
 import type { Queue } from "./runner.ts";
 
@@ -40,8 +40,16 @@ export function createApi(store: Store, queue: Queue, machine: string) {
     await next();
   });
 
-  /** Pairs a phone that brings a code made by `pair`. It is the one route a phone can call without a key. */
+  /**
+   * Pairs a phone that brings a code made by `pair`. It is the one route a
+   * phone can call without a key. An app on another version of the contract
+   * is refused before the code is used, so the code still works once one side
+   * is updated. An app that sends no version counts as older.
+   */
   app.post("/pair", async (c) => {
+    if (Number(c.req.header(CONTRACT_HEADER)) !== CONTRACT_VERSION) {
+      return c.json({ error: "This app and Sidebots on this Mac speak different versions. Update the older one." }, 409);
+    }
     const code = credential(c.req.header("Authorization"), "Pairing");
     const { name } = await c.req.json<{ name?: string }>();
     const keys = code && store.pair(code, name?.trim() || "iPhone");
@@ -193,15 +201,23 @@ export function createApi(store: Store, queue: Queue, machine: string) {
     return c.body(readFileSync(path), 200, { "Content-Type": "image/png", "Cache-Control": "max-age=3600" });
   });
 
-  /** New messages and status changes for the person's agents, each with its agent as the home screen shows it. */
+  /**
+   * New messages and status changes for the person's agents, each with its
+   * agent as the home screen shows it, and the agents the person adds and
+   * deletes, so every phone of theirs keeps up.
+   */
   app.get("/events", (c) => {
     const person = c.var.person;
     return streamSSE(c, async (stream) => {
-      const stop = store.onMessage((message) => {
-        const agent = store.agentWithLatest(message.agent_id);
-        if (agent?.person_id !== person.id) return;
-        const event: MessageEvent = { message, agent };
-        void stream.writeSSE({ event: "message", data: JSON.stringify(event) });
+      const send = (name: string, event: StreamEvent) => void stream.writeSSE({ event: name, data: JSON.stringify(event) });
+      const stop = store.onChange((change) => {
+        if ("agent" in change) {
+          if (change.agent.person_id !== person.id) return;
+          if (change.deleted) return send("deleted", { deleted: change.agent.id });
+          return send("agent", { message: null, agent: store.agentWithLatest(change.agent.id)! });
+        }
+        const agent = store.agentWithLatest(change.message.agent_id);
+        if (agent?.person_id === person.id) send("message", { message: change.message, agent });
       });
       stream.onAbort(stop);
       while (!stream.aborted) {

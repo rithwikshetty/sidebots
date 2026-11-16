@@ -20,6 +20,8 @@ export type Upload = { name: string; bytes: Uint8Array };
 export type Extras = { files?: Upload[]; replyTo?: string; jobId?: string; interim?: boolean };
 /** What the person can change about an agent. */
 export type AgentChanges = Partial<Pick<Agent, "name" | "avatar_id" | "model" | "effort" | "muted" | "hidden">>;
+/** What the store tells its listeners about: a message that was added or changed status, or an agent that was added or deleted. */
+export type Change = { message: Message } | { agent: Agent; deleted: boolean };
 /** How this server is known to the relay: its signing key, and the id the relay gave it once it has registered. */
 export type Machine = { privateKey: string; id?: string };
 
@@ -134,8 +136,8 @@ export function openStore(home: string) {
   const apiKeysPath = join(home, "api-keys.json");
   /** Each person's Anthropic API key, by the person's id, for the people who have one. */
   const apiKeys = (): Record<string, string> => (existsSync(apiKeysPath) ? (JSON.parse(readFileSync(apiKeysPath, "utf8")) as Record<string, string>) : {});
-  const listeners = new Set<(message: Message) => void>();
-  const changed = (message: Message) => listeners.forEach((listener) => listener(message));
+  const listeners = new Set<(change: Change) => void>();
+  const changed = (change: Change) => listeners.forEach((listener) => listener(change));
 
   const one = (sql: string, ...values: (string | number)[]): Message | undefined => {
     const row = db.prepare(sql).get(...values) as Row | undefined;
@@ -164,8 +166,8 @@ export function openStore(home: string) {
   return {
     agentHome,
 
-    /** Calls `listener` with every message that is added or changes status. Returns a function that stops it. */
-    onMessage(listener: (message: Message) => void): () => void {
+    /** Calls `listener` with every message that is added or changes status, and every agent that is added or deleted. Returns a function that stops it. */
+    onChange(listener: (change: Change) => void): () => void {
       listeners.add(listener);
       return () => listeners.delete(listener);
     },
@@ -253,6 +255,7 @@ export function openStore(home: string) {
         agent.read_at,
         agent.created_at,
       );
+      changed({ agent, deleted: false });
       return agent;
     },
 
@@ -295,6 +298,7 @@ export function openStore(home: string) {
       db.prepare("delete from agents where id = ?").run(agent.id);
       rmSync(agentHome(agent.id), { recursive: true, force: true });
       rmSync(join(person.claude_config_dir, "projects", agentHome(agent.id).replace(/[^a-zA-Z0-9]/g, "-")), { recursive: true, force: true });
+      changed({ agent, deleted: true });
     },
 
     /** The instructions an agent follows, what it remembers and its jobs. */
@@ -398,7 +402,7 @@ export function openStore(home: string) {
       if ((sender === "agent" && !interim) || (sender === "sidebots" && status === "failed")) {
         db.prepare("update agents set hidden = 0 where id = ? and muted = 0").run(agentId);
       }
-      changed(message);
+      changed({ message });
       return message;
     },
 
@@ -415,14 +419,14 @@ export function openStore(home: string) {
       for (const id of messageIds) {
         const read = db.prepare("update messages set status = 'running', seen_at = ? where id = ? and sender = 'person' and status = 'queued'").run(now, id);
         const message = read.changes ? one("select * from messages where id = ?", id) : undefined;
-        if (message) changed(message);
+        if (message) changed({ message });
       }
     },
 
     setStatus(messageId: string, status: Status): void {
       db.prepare("update messages set status = ? where id = ?").run(status, messageId);
       const message = one("select * from messages where id = ?", messageId);
-      if (message) changed(message);
+      if (message) changed({ message });
     },
 
     /** Oldest first: everything after a known message, the page before one, or the latest page. */
