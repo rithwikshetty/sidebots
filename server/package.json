@@ -10,7 +10,6 @@
     "add-person": "node src/main.ts add-person",
     "api-key": "node src/main.ts api-key",
     "pair": "node src/main.ts pair",
-    "push-key": "node src/main.ts push-key",
     "test": "node --test",
     "typecheck": "tsc --noEmit"
   },

@@ -18,8 +18,8 @@ export type Upload = { name: string; bytes: Uint8Array };
 export type Extras = { files?: Upload[]; replyTo?: string; jobId?: string; interim?: boolean };
 /** What the person can change about an agent. */
 export type AgentChanges = Partial<Pick<Agent, "name" | "avatar_id" | "model" | "effort" | "muted" | "hidden">>;
-/** The key Apple gives a developer account for sending notifications, with the key's ID and the account's team ID. */
-export type PushKey = { keyId: string; teamId: string; key: string };
+/** How this server is known to the relay: its signing key, and the id the relay gave it once it has registered. */
+export type Machine = { privateKey: string; id?: string };
 
 const SCHEMA = `
 create table if not exists people (
@@ -67,7 +67,6 @@ create table if not exists devices (
   name        text not null,
   key_hash    text not null unique,
   push_token  text,
-  topic       text,
   environment text check (environment in ('sandbox', 'production')),
   paired_at   integer not null
 );
@@ -128,7 +127,7 @@ export function openStore(home: string) {
 
   const agentHome = (agentId: string) => join(home, "agents", agentId);
   const avatarsHome = join(home, "avatars");
-  const pushKeyPath = join(home, "push.json");
+  const machinePath = join(home, "machine.json");
   const apiKeysPath = join(home, "api-keys.json");
   /** Each person's Anthropic API key, by the person's id, for the people who have one. */
   const apiKeys = (): Record<string, string> => (existsSync(apiKeysPath) ? (JSON.parse(readFileSync(apiKeysPath, "utf8")) as Record<string, string>) : {});
@@ -150,7 +149,7 @@ export function openStore(home: string) {
     const row = db.prepare("select * from agents where id = ?").get(id) as AgentRow | undefined;
     return row && toAgent(row);
   };
-  const clearPushToken = db.prepare("update devices set push_token = null, topic = null, environment = null where push_token = ?");
+  const clearPushToken = db.prepare("update devices set push_token = null, environment = null where push_token = ?");
   const jobsFor = (agentId: string): Job[] => (db.prepare("select * from jobs where agent_id = ? order by next_at").all(agentId) as JobRow[]).map(toJob);
   const withLatest = (agent: Agent): AgentWithLatest => ({
     ...agent,
@@ -534,12 +533,12 @@ export function openStore(home: string) {
     /** Remembers where Apple delivers a phone's notifications. A token another paired phone held becomes this one's. */
     setPushToken(deviceId: string, push: PushToken): void {
       clearPushToken.run(push.token);
-      db.prepare("update devices set push_token = ?, topic = ?, environment = ? where id = ?").run(push.token, push.topic, push.environment, deviceId);
+      db.prepare("update devices set push_token = ?, environment = ? where id = ?").run(push.token, push.environment, deviceId);
     },
 
     /** Where Apple delivers the notifications of the person's phones, for the phones that allow them. */
     pushTokensFor(personId: string): PushToken[] {
-      return db.prepare("select push_token as token, topic, environment from devices where person_id = ? and push_token is not null").all(personId) as PushToken[];
+      return db.prepare("select push_token as token, environment from devices where person_id = ? and push_token is not null").all(personId) as PushToken[];
     },
 
     /** Forgets a token Apple no longer delivers to. The phone stays paired. */
@@ -547,12 +546,13 @@ export function openStore(home: string) {
       clearPushToken.run(token);
     },
 
-    setPushKey(key: PushKey): void {
-      writeFileSync(pushKeyPath, JSON.stringify(key), { mode: 0o600 });
+    /** Keeps how this server is known to the relay, readable only by the server's user account. */
+    setMachine(machine: Machine): void {
+      writeFileSync(machinePath, JSON.stringify(machine), { mode: 0o600 });
     },
 
-    pushKey(): PushKey | undefined {
-      return existsSync(pushKeyPath) ? (JSON.parse(readFileSync(pushKeyPath, "utf8")) as PushKey) : undefined;
+    machine(): Machine | undefined {
+      return existsSync(machinePath) ? (JSON.parse(readFileSync(machinePath, "utf8")) as Machine) : undefined;
     },
 
     close(): void {

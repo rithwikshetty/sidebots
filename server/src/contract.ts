@@ -116,8 +116,8 @@ export function plainText(markdown: string): string {
 export type MessageEvent = { message: Message; agent: AgentWithLatest };
 /** What a phone gets when it pairs: the key it sends with every request from then on, and the name of the machine it paired with. */
 export type Paired = { key: string; machine: string };
-/** Where Apple delivers a phone's notifications: its Apple device token, the app identifier Apple delivers to, and which of Apple's push services issued the token. */
-export type PushToken = { token: string; topic: string; environment: "sandbox" | "production" };
+/** Where Apple delivers a phone's notifications: its Apple device token, and which of Apple's push services issued it. */
+export type PushToken = { token: string; environment: "sandbox" | "production" };
 export type Avatar = { id: string; displayName: string; description: string; spritesheetPath: string };
 
 /**

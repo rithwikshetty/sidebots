@@ -176,7 +176,7 @@ test("a person with an API key has every turn, job and fresh start run on it, an
     notices.push(notice);
     return "sent";
   });
-  await call(HER, "PUT", "/push-token", { token: "c".repeat(64), topic: "com.example.sidebots", environment: "production" });
+  await call(HER, "PUT", "/push-token", { token: "c".repeat(64), environment: "production" });
 
   const hers = (await call(HER, "POST", "/agents", { name: "Scout", avatarId: "moss" })).json;
   await say(HER, hers.id, "watch the price");
@@ -379,9 +379,9 @@ test("a reply or a failed turn notifies the person's phones, and a phone Apple h
   const OLD_PHONE = "b".repeat(64);
   const HER_PHONE = "c".repeat(64);
   for (const [phone, token] of [[phoneOf(ME), PHONE], [pair(ME), OLD_PHONE], [phoneOf(HER), HER_PHONE]] as const) {
-    assert.equal((await call(phone, "PUT", "/push-token", { token, topic: "com.example.sidebots", environment: "production" })).status, 200);
+    assert.equal((await call(phone, "PUT", "/push-token", { token, environment: "production" })).status, 200);
   }
-  assert.equal((await call(ME, "PUT", "/push-token", { token: "nope", topic: "com.example.sidebots", environment: "production" })).status, 400);
+  assert.equal((await call(ME, "PUT", "/push-token", { token: "nope", environment: "production" })).status, 400);
   const agent = (await call(ME, "POST", "/agents", { name: "Wedding", avatarId: "mochi" })).json;
   // A reply counts as unread when it is newer than the chat was read, which begins at the agent's creation.
   await new Promise((resolve) => setTimeout(resolve, 1));
@@ -580,7 +580,7 @@ test("a muted agent notifies nobody, and a hidden one comes back when it has som
     sent.push(notice);
     return "sent";
   });
-  await call(ME, "PUT", "/push-token", { token: "a".repeat(64), topic: "com.example.sidebots", environment: "production" });
+  await call(ME, "PUT", "/push-token", { token: "a".repeat(64), environment: "production" });
   const loud = (await call(ME, "POST", "/agents", { name: "Errands", avatarId: "hop" })).json;
   const quiet = (await call(ME, "POST", "/agents", { name: "Scout", avatarId: "moss" })).json;
   await call(ME, "PATCH", `/agents/${loud.id}`, { hidden: true });
@@ -649,7 +649,7 @@ test("an agent's updates while it works wait a minute, then come no more than ev
     sent.push(notice);
     return "sent";
   });
-  await call(ME, "PUT", "/push-token", { token: "a".repeat(64), topic: "com.example.sidebots", environment: "production" });
+  await call(ME, "PUT", "/push-token", { token: "a".repeat(64), environment: "production" });
   const agent = (await call(ME, "POST", "/agents", { name: "Scout", avatarId: "moss" })).json;
   await new Promise((resolve) => setTimeout(resolve, 1));
   await say(ME, agent.id, "find me a flat");
