@@ -1,4 +1,4 @@
-// Starts the Simon server. `add-person` adds a person, `api-key` has a person's agents run on an
+// Starts the Sidebots server. `add-person` adds a person, `api-key` has a person's agents run on an
 // Anthropic API key, and `push-key` sets the key for notifications.
 
 import { readFileSync } from "node:fs";
@@ -11,7 +11,7 @@ import { claudeTurn, createQueue } from "./runner.ts";
 import { createApi } from "./api.ts";
 import { apns, startPush } from "./push.ts";
 
-const home = process.env.SIMON_HOME ?? join(homedir(), ".simon");
+const home = process.env.SIDEBOTS_HOME ?? join(homedir(), ".sidebots");
 const store = openStore(home);
 
 if (process.argv[2] === "add-person") {
@@ -68,5 +68,5 @@ else console.log("Notifications are off. Turn them on with `pnpm push-key <AuthK
 const port = Number(process.env.PORT ?? 4317);
 // Local only. `tailscale serve` publishes it to our own devices.
 serve({ fetch: createApi(store, queue).fetch, hostname: "127.0.0.1", port }, () => {
-  console.log(`Simon is listening on http://127.0.0.1:${port}, with data in ${home}`);
+  console.log(`Sidebots is listening on http://127.0.0.1:${port}, with data in ${home}`);
 });

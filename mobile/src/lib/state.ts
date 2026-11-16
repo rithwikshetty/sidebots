@@ -88,7 +88,7 @@ export function useOnline(): boolean {
 /** Which animation an agent's avatar plays. */
 export function avatarStateOf(agent: AgentWithLatest): AvatarState {
   if (agent.working) return "working";
-  if (agent.latest?.sender === "simon" && agent.latest.status === "failed") return "failed";
+  if (agent.latest?.sender === "sidebots" && agent.latest.status === "failed") return "failed";
   if (agent.unread > 0) return "replied";
   return "resting";
 }

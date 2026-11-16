@@ -13,7 +13,7 @@ import { startPush, type Notice } from "../src/push.ts";
 type Answer = TurnResult & { reply?: string };
 
 /**
- * A Simon whose turns `answer` runs instead of Claude Code. The fake reads
+ * A Sidebots whose turns `answer` runs instead of Claude Code. The fake reads
  * the turn's first message, then replies to it.
  */
 function setup(answer: (turn: Turn) => Promise<Answer>, now: () => number = Date.now) {
@@ -23,7 +23,7 @@ function setup(answer: (turn: Turn) => Promise<Answer>, now: () => number = Date
     if (text !== undefined) turn.replied(text, [turn.prompt.id]);
     return result;
   };
-  const home = mkdtempSync(join(tmpdir(), "simon-test-"));
+  const home = mkdtempSync(join(tmpdir(), "sidebots-test-"));
   const store = openStore(home);
   store.addPerson({ name: "Alex", login: "alex@example.com", configDir: "/config/alex" });
   store.addPerson({ name: "Robin", login: "robin@example.com", configDir: "/config/robin" });
@@ -105,7 +105,7 @@ test("messages sent while the agent is busy run one at a time, in order, on the 
   ]);
 });
 
-test("a failed turn keeps the message and adds a note from Simon saying why", async () => {
+test("a failed turn keeps the message and adds a note from Sidebots saying why", async () => {
   const { queue, call, say } = setup(async () => {
     throw new Error("You've reached your usage limit.");
   });
@@ -119,7 +119,7 @@ test("a failed turn keeps the message and adds a note from Simon saying why", as
     messages.map((m: { sender: string; body: string; status: string }) => [m.sender, m.body, m.status]),
     [
       ["person", "find me a flat", "failed"],
-      ["simon", "Simon couldn't finish this. You've reached your usage limit.", "failed"],
+      ["sidebots", "Sidebots couldn't finish this. You've reached your usage limit.", "failed"],
     ],
   );
 });
@@ -141,7 +141,7 @@ test("a person with an API key has every turn, job and fresh start run on it, an
     notices.push(notice);
     return "sent";
   });
-  await call(HER, "POST", "/devices", { token: "c".repeat(64), topic: "com.example.simon", environment: "production" });
+  await call(HER, "POST", "/devices", { token: "c".repeat(64), topic: "com.example.sidebots", environment: "production" });
 
   const hers = (await call(HER, "POST", "/agents", { name: "Scout", avatarId: "moss" })).json;
   await say(HER, hers.id, "watch the price");
@@ -171,7 +171,7 @@ test("a person with an API key has every turn, job and fresh start run on it, an
   assert.deepEqual([turns[4].apiKey, turns[4].configDir], [undefined, "/config/alex"]);
 
   const messages = (await call(HER, "GET", `/agents/${hers.id}/messages`)).json;
-  assert.equal(messages.at(-1).body, "Simon couldn't finish this. Anthropic refused your API key.");
+  assert.equal(messages.at(-1).body, "Sidebots couldn't finish this. Anthropic refused your API key.");
   // The same notice goes to the home screen and to the phone as a notification.
   const sent = [messages, (await call(HER, "GET", "/agents")).json, notices];
   assert.equal(JSON.stringify(sent).includes(KEY), false);
@@ -281,7 +281,7 @@ test("a fresh start has the agent save its memory, then gives the next message a
     [
       ["person", "book the band", "done"],
       ["agent", "sure", "done"],
-      ["simon", "Fresh start", "done"],
+      ["sidebots", "Fresh start", "done"],
       ["person", "any news?", "done"],
       ["agent", "sure", "done"],
     ],
@@ -345,9 +345,9 @@ test("a reply or a failed turn notifies the person's phones, and a phone Apple h
   const OLD_PHONE = "b".repeat(64);
   const HER_PHONE = "c".repeat(64);
   for (const [login, token] of [[ME, PHONE], [ME, OLD_PHONE], [HER, HER_PHONE]]) {
-    assert.equal((await call(login, "POST", "/devices", { token, topic: "com.example.simon", environment: "production" })).status, 201);
+    assert.equal((await call(login, "POST", "/devices", { token, topic: "com.example.sidebots", environment: "production" })).status, 201);
   }
-  assert.equal((await call(ME, "POST", "/devices", { token: "nope", topic: "com.example.simon", environment: "production" })).status, 400);
+  assert.equal((await call(ME, "POST", "/devices", { token: "nope", topic: "com.example.sidebots", environment: "production" })).status, 400);
   const agent = (await call(ME, "POST", "/agents", { name: "Wedding", avatarId: "mochi" })).json;
   // A reply counts as unread when it is newer than the chat was read, which begins at the agent's creation.
   await new Promise((resolve) => setTimeout(resolve, 1));
@@ -366,7 +366,7 @@ test("a reply or a failed turn notifies the person's phones, and a phone Apple h
     [
       [PHONE, "Wedding", "Booked.", 1, agent.id],
       [OLD_PHONE, "Wedding", "Booked.", 1, agent.id],
-      [PHONE, "Wedding", "Simon couldn't finish this. Signed out.", 2, agent.id],
+      [PHONE, "Wedding", "Sidebots couldn't finish this. Signed out.", 2, agent.id],
     ],
   );
 
@@ -501,7 +501,7 @@ test("a job set for one time runs once, a daily one keeps to its days, and a job
   assert.equal(typeof messages.at(-1).job_id, "string");
   assert.deepEqual(store.jobs(agent.id).map((job) => job.what), ["Morning brief."]);
 
-  // Friday's run fails, and so does the next Monday's. Simon says so once.
+  // Friday's run fails, and so does the next Monday's. Sidebots says so once.
   fail = true;
   time = new Date(2026, 10, 20, 8, 0).getTime();
   await queue.kick(agent.id);
@@ -509,7 +509,7 @@ test("a job set for one time runs once, a daily one keeps to its days, and a job
   time = new Date(2026, 10, 23, 8, 0).getTime();
   await queue.kick(agent.id);
   const after = (await call(ME, "GET", `/agents/${agent.id}/messages`)).json.map((m: { body: string }) => m.body);
-  assert.deepEqual(after.slice(-2), ["Time to call the garage.", "Simon couldn't run a job. You've reached your usage limit."]);
+  assert.deepEqual(after.slice(-2), ["Time to call the garage.", "Sidebots couldn't run a job. You've reached your usage limit."]);
 });
 
 test("a reply to a message tells the agent which one, and the chat pages back through older messages", async () => {
@@ -546,7 +546,7 @@ test("a muted agent notifies nobody, and a hidden one comes back when it has som
     sent.push(notice);
     return "sent";
   });
-  await call(ME, "POST", "/devices", { token: "a".repeat(64), topic: "com.example.simon", environment: "production" });
+  await call(ME, "POST", "/devices", { token: "a".repeat(64), topic: "com.example.sidebots", environment: "production" });
   const loud = (await call(ME, "POST", "/agents", { name: "Errands", avatarId: "hop" })).json;
   const quiet = (await call(ME, "POST", "/agents", { name: "Scout", avatarId: "moss" })).json;
   await call(ME, "PATCH", `/agents/${loud.id}`, { hidden: true });
@@ -564,8 +564,8 @@ test("a muted agent notifies nobody, and a hidden one comes back when it has som
 });
 
 test("an older home is brought up to date, with what it held kept", () => {
-  const home = mkdtempSync(join(tmpdir(), "simon-test-"));
-  const old = new DatabaseSync(join(home, "simon.sqlite"));
+  const home = mkdtempSync(join(tmpdir(), "sidebots-test-"));
+  const old = new DatabaseSync(join(home, "sidebots.sqlite"));
   old.exec(`
     create table people (id text primary key, name text not null, tailscale_login text not null unique, claude_config_dir text not null);
     create table agents (id text primary key, person_id text not null references people(id), name text not null, pet_id text not null, session_id text, read_at integer not null default 0, created_at integer not null);
@@ -641,7 +641,7 @@ test("an agent's updates while it works wait a minute, then come no more than ev
     sent.push(notice);
     return "sent";
   });
-  await call(ME, "POST", "/devices", { token: "a".repeat(64), topic: "com.example.simon", environment: "production" });
+  await call(ME, "POST", "/devices", { token: "a".repeat(64), topic: "com.example.sidebots", environment: "production" });
   const agent = (await call(ME, "POST", "/agents", { name: "Scout", avatarId: "moss" })).json;
   await new Promise((resolve) => setTimeout(resolve, 1));
   await say(ME, agent.id, "find me a flat");

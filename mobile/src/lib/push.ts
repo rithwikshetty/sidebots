@@ -46,7 +46,7 @@ async function register(): Promise<void> {
 }
 
 /**
- * Asks the phone once whether Simon may notify the person. The chat calls it
+ * Asks the phone once whether Sidebots may notify the person. The chat calls it
  * when they have just sent a message and may leave while the agent works.
  */
 export async function askForPush(): Promise<void> {
