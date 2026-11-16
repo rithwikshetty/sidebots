@@ -3,11 +3,13 @@ import { DarkTheme, DefaultTheme, Stack, ThemeProvider } from "expo-router";
 import { StatusBar } from "expo-status-bar";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { KeyboardProvider } from "react-native-keyboard-controller";
+import { usePaired } from "@/lib/api";
 import { startSync } from "@/lib/state";
 import { useTheme } from "@/lib/theme";
 
 export default function Layout() {
   const theme = useTheme();
+  const paired = usePaired();
   useEffect(startSync, []);
 
   const base = theme.dark ? DarkTheme : DefaultTheme;
@@ -24,18 +26,23 @@ export default function Layout() {
         <ThemeProvider value={navigation}>
           <StatusBar style="auto" />
           <Stack screenOptions={{ headerShown: false }}>
-            <Stack.Screen name="index" />
-            <Stack.Screen name="setup" options={{ animation: "none" }} />
-            <Stack.Screen name="chat/[id]" />
-            <Stack.Screen name="new-agent" options={{ presentation: "formSheet", sheetAllowedDetents: [0.62], sheetGrabberVisible: true }} />
-            {/* An agent's page, and a note opened from it, each a sheet over what is behind. */}
-            <Stack.Screen name="agent/[id]" options={{ presentation: "modal" }} />
-            <Stack.Screen name="note" options={{ presentation: "modal" }} />
-            <Stack.Screen
-              name="camera"
-              // Full screen and a quick fade, so the camera is up the moment it's chosen.
-              options={{ presentation: "fullScreenModal", animation: "fade", animationDuration: 150, contentStyle: { backgroundColor: theme.viewer } }}
-            />
+            {/* A phone that hasn't paired with a Mac has the pairing screen and nothing else. Once paired, it has everything but that. */}
+            <Stack.Protected guard={paired}>
+              <Stack.Screen name="index" />
+              <Stack.Screen name="chat/[id]" />
+              <Stack.Screen name="new-agent" options={{ presentation: "formSheet", sheetAllowedDetents: [0.62], sheetGrabberVisible: true }} />
+              {/* An agent's page, and a note opened from it, each a sheet over what is behind. */}
+              <Stack.Screen name="agent/[id]" options={{ presentation: "modal" }} />
+              <Stack.Screen name="note" options={{ presentation: "modal" }} />
+              <Stack.Screen
+                name="camera"
+                // Full screen and a quick fade, so the camera is up the moment it's chosen.
+                options={{ presentation: "fullScreenModal", animation: "fade", animationDuration: 150, contentStyle: { backgroundColor: theme.viewer } }}
+              />
+            </Stack.Protected>
+            <Stack.Protected guard={!paired}>
+              <Stack.Screen name="pair" options={{ animation: "fade" }} />
+            </Stack.Protected>
           </Stack>
         </ThemeProvider>
       </KeyboardProvider>

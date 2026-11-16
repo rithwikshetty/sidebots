@@ -1,4 +1,4 @@
-// The api owns the HTTP routes and works out which person is asking.
+// The api owns the HTTP routes and works out which paired phone is asking, and whose it is.
 
 import { readFileSync } from "node:fs";
 import { extname } from "node:path";
@@ -6,12 +6,10 @@ import { Hono } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import { streamSSE } from "hono/streaming";
 import { EFFORTS, MODELS } from "./contract.ts";
-import type { Device, Effort, MessageEvent, Model } from "./contract.ts";
-import type { AgentChanges, Person, Store } from "./store.ts";
+import type { Effort, MessageEvent, Model, Paired, PushToken } from "./contract.ts";
+import type { AgentChanges, Device, Person, Store } from "./store.ts";
 import type { Queue } from "./runner.ts";
 
-// `tailscale serve` adds the sender's Tailscale login to every request.
-const LOGIN_HEADER = "Tailscale-User-Login";
 const KEEPALIVE_MS = 25_000;
 // Room for ten full-size photos in one message, the most the app sends.
 const MESSAGE_BYTES = 200 * 1024 * 1024;
@@ -27,14 +25,31 @@ const CONTENT_TYPES: Record<string, string> = {
   ".pdf": "application/pdf",
 };
 
-export function createApi(store: Store, queue: Queue) {
-  const app = new Hono<{ Variables: { person: Person } }>();
+/** What a request's `Authorization` header carries under a scheme, as in `Bearer <key>`. */
+function credential(header: string | undefined, scheme: string): string | undefined {
+  return header?.startsWith(`${scheme} `) ? header.slice(scheme.length + 1) : undefined;
+}
+
+/** `machine` is the name of the machine the server runs on, which a phone shows once it has paired. */
+export function createApi(store: Store, queue: Queue, machine: string) {
+  const app = new Hono<{ Variables: { person: Person; device: Device } }>();
+
+  /** Pairs a phone that brings a code made by `pair`. It is the one route a phone can call without a key. */
+  app.post("/pair", async (c) => {
+    const code = credential(c.req.header("Authorization"), "Pairing");
+    const { name } = await c.req.json<{ name?: string }>();
+    const key = code && store.pair(code, name?.trim() || "iPhone");
+    if (!key) return c.json({ error: "That code has been used or has run out. Make a new one on the Mac." }, 401);
+    const paired: Paired = { key, machine };
+    return c.json(paired, 201);
+  });
 
   app.use(async (c, next) => {
-    const login = c.req.header(LOGIN_HEADER);
-    const person = login ? store.personByLogin(login) : undefined;
-    if (!person) return c.json({ error: "This Tailscale login isn't set up on this Sidebots server." }, 403);
-    c.set("person", person);
+    const key = credential(c.req.header("Authorization"), "Bearer");
+    const device = key ? store.deviceByKey(key) : undefined;
+    if (!device) return c.json({ error: "This phone isn't paired with this Mac." }, 401);
+    c.set("device", device);
+    c.set("person", store.person(device.person_id)!);
     await next();
   });
 
@@ -153,14 +168,15 @@ export function createApi(store: Store, queue: Queue) {
     return c.json(text ? store.searchMessages(c.var.person.id, text) : []);
   });
 
-  app.post("/devices", async (c) => {
-    const { token, topic, environment } = await c.req.json<Partial<Device>>();
+  /** The phone says where Apple delivers its notifications, once it allows them. */
+  app.put("/push-token", async (c) => {
+    const { token, topic, environment } = await c.req.json<Partial<PushToken>>();
     if (!token || !DEVICE_TOKEN.test(token) || !topic || (environment !== "sandbox" && environment !== "production")) {
-      return c.json({ error: "A device needs its token, its app identifier and its push service." }, 400);
+      return c.json({ error: "A push token comes with its app identifier and its push service." }, 400);
     }
-    const device: Device = { token, topic, environment };
-    store.saveDevice(c.var.person.id, device);
-    return c.json(device, 201);
+    const push: PushToken = { token, topic, environment };
+    store.setPushToken(c.var.device.id, push);
+    return c.json(push);
   });
 
   app.get("/avatars", (c) => c.json(store.avatars()));

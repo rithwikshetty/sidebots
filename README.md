@@ -2,7 +2,7 @@
 
 Sidebots is an iPhone messaging app for your own Claude agents. Each chat is an agent. You send it a message, it does the work on a machine you own, and the finished reply arrives like a text from a person, with a notification.
 
-You run Sidebots yourself. There is no hosted service: a small server runs on your machine, drives Claude Code there, and keeps every message in a folder on that machine. You build your own copy of the app and point it at your server.
+You run Sidebots yourself. There is no hosted service: a small server runs on your machine, drives Claude Code there, and keeps every message in a folder on that machine. You build your own copy of the app and pair it with your server.
 
 The full design is in [docs/specs/2026-11-15-sidebots.md](docs/specs/2026-11-15-sidebots.md).
 
@@ -11,7 +11,7 @@ The full design is in [docs/specs/2026-11-15-sidebots.md](docs/specs/2026-11-15-
 - **Agents act without asking.** They run in Claude Code's auto mode, where Claude Code's own safety check decides what is safe to run. Nobody is asked to approve anything. An action the check can't decide on is skipped.
 - **Agents can reach everything the server's user account can.** Every agent runs as the account that started the server, and can read and change that account's files, run commands as it, and use each person's Claude Code skills and connections.
 - **Share a server only with people you would trust with that machine.** Each person sees only their own agents in the app, but all agents run as the same account.
-- **Never expose the server's port any other way than `tailscale serve`.** The server has no passwords. It trusts the `Tailscale-User-Login` header that `tailscale serve` adds to each request, so anything that can reach the port directly can claim to be anyone.
+- **A pairing code lets a phone in.** The server has no passwords. It answers only phones that have paired with it, and a phone pairs by scanning a code you make for one person. Whoever scans the code reaches that person's agents, so show it only to them.
 
 ## What you need
 
@@ -28,10 +28,10 @@ cd server
 pnpm install
 ```
 
-Add each person once, with their Tailscale login, their name, and a Claude Code config folder of their own:
+Add each person once, with a name and a Claude Code config folder of their own:
 
 ```sh
-pnpm add-person alex@example.com Alex ~/.claude
+pnpm add-person Alex ~/.claude
 ```
 
 Claude Code keeps the person's sessions in that folder and loads their own rules, skills and connections from it. A second person needs a folder of their own, such as `~/.claude-robin`.
@@ -47,7 +47,7 @@ CLAUDE_CONFIG_DIR=~/.claude claude
 With an Anthropic API key, the agents sign in with the key and nobody signs in to Claude Code. Put the key in a file, with nothing else in it, and save it for the person:
 
 ```sh
-pnpm api-key robin@example.com ~/robin-key.txt
+pnpm api-key Robin ~/robin-key.txt
 ```
 
 Sidebots copies the key into `~/.sidebots/api-keys.json`, which only your account can read, so delete your file afterwards. The person's agents run on the key from their next turn, even if their folder is also signed in to a subscription. Saving another key replaces it. Sidebots never puts the key in a log, a reply or a failure notice, but an agent's own commands can read the key it runs on, as they can any of your account's files.
@@ -59,9 +59,9 @@ pnpm start
 tailscale serve --bg --https=443 http://127.0.0.1:4317
 ```
 
-The server listens on `127.0.0.1:4317` only. The app's server address is the machine's Tailscale name, such as `macbook.your-tailnet.ts.net`. If something else on the machine already uses port 443, publish Sidebots on another one, such as `--https=8443`, and add it to the address: `macbook.your-tailnet.ts.net:8443`.
+The server listens on `127.0.0.1:4317` only. Phones reach it at the machine's Tailscale name, such as `macbook.your-tailnet.ts.net`. If something else on the machine already uses port 443, publish Sidebots on another one, such as `--https=8443`, and add it to the address: `macbook.your-tailnet.ts.net:8443`.
 
-Two settings change where things live: `PORT` for the port, and `SIDEBOTS_HOME` for the data folder, which is `~/.sidebots` unless you set it. That folder holds the database, each agent's home folder with its instructions, memory and attachments, the avatars, the API keys and the push key. If you set `SIDEBOTS_HOME` for the server, set it for `add-person`, `api-key` and `push-key` too.
+Two settings change where things live: `PORT` for the port, and `SIDEBOTS_HOME` for the data folder, which is `~/.sidebots` unless you set it. That folder holds the database, each agent's home folder with its instructions, memory and attachments, the avatars, the API keys and the push key. If you set `SIDEBOTS_HOME` for the server, set it for `add-person`, `api-key`, `pair` and `push-key` too.
 
 To keep the server running on a Mac, use a launchd agent with `RunAtLoad` and `KeepAlive` set, `server/` as its working directory, and the full path to `node` running `src/main.ts`. Keep the code outside `~/Downloads`, `~/Documents` and `~/Desktop`, which macOS doesn't let a background service read.
 
@@ -93,7 +93,18 @@ Fill in `.env.local` with a bundle identifier of your own and your Apple team ID
 npx expo run:ios --device --configuration Release
 ```
 
-The app asks for the server's address the first time it opens. For other people's phones, open `mobile/ios/Sidebots.xcworkspace` in Xcode, archive the app and upload it to TestFlight.
+For other people's phones, open `mobile/ios/Sidebots.xcworkspace` in Xcode, archive the app and upload it to TestFlight.
+
+### Pair each phone
+
+The app opens on a camera until its phone has paired with a server. On the server, make a pairing code for the person, with the address their phone reaches the server at:
+
+```sh
+cd server
+pnpm pair Alex --host macbook.your-tailnet.ts.net
+```
+
+It prints a QR code, and the same code as a link. The person scans the code in the app, or taps the link button above the camera and pastes the link. A code pairs one phone, once, within ten minutes. The phone gets a key of its own, which it keeps in the Keychain and sends with every request, and the server keeps only a hash of it.
 
 ## Who pays for the model
 

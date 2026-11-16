@@ -16,7 +16,7 @@ import { Markdown } from "@/components/Markdown";
 import { FileCard, MessagePhotos, type Shown } from "@/components/MessageAttachments";
 import { SwipeToReply } from "@/components/SwipeToReply";
 import { problem } from "@/lib/alerts";
-import { attachmentUrl } from "@/lib/api";
+import { attachment } from "@/lib/api";
 import { isImage, MAX_FILES, pick, type Picked, type PickSource } from "@/lib/files";
 import { haptics } from "@/lib/haptics";
 import { useWorkingLine } from "@/lib/lines";
@@ -297,7 +297,7 @@ function Bubble({
 }) {
   if (message.sender === "sidebots") return <Text style={[styles.note, { color: theme.ink2 }]}>{message.body}</Text>;
   const mine = message.sender === "person";
-  const shown = message.attachments.map((path) => ({ uri: attachmentUrl(message.agent_id, path), name: fileName(path) }));
+  const shown = message.attachments.map((path) => ({ ...attachment(message.agent_id, path), name: fileName(path) }));
   return (
     <SwipeToReply onReply={onReply}>
       <View style={mine ? styles.mine : styles.theirs}>

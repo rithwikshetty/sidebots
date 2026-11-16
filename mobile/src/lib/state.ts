@@ -8,7 +8,7 @@ import { fetch as streamingFetch } from "expo/fetch";
 import { File } from "expo-file-system";
 import Storage from "expo-sqlite/kv-store";
 import type { About, Agent, AgentWithLatest, Avatar, AvatarState, Effort, Found, Message, MessageEvent, Model } from "@server/contract";
-import { ApiError, request, serverUrl } from "./api";
+import { ApiError, isPaired, onPairing, remote, request, unpair } from "./api";
 import type { Picked } from "./files";
 
 type State = {
@@ -42,7 +42,9 @@ function saved(): Partial<State> {
   }
 }
 
-let state: State = { agents: [], messages: {}, avatars: [], about: {}, pending: {}, ...saved(), online: true };
+const EMPTY = { agents: [], messages: {}, avatars: [], about: {}, pending: {} };
+
+let state: State = { ...EMPTY, ...saved(), online: true };
 const listeners = new Set<() => void>();
 let saveTimer: ReturnType<typeof setTimeout> | null = null;
 
@@ -270,7 +272,7 @@ let stopSync: (() => void) | null = null;
 
 /** Keeps the app's copy current: listens to the server's event stream and reconnects when it drops. */
 export function startSync(): void {
-  if (stopSync || !serverUrl()) return;
+  if (stopSync || !isPaired()) return;
   const abort = new AbortController();
   const appState = AppState.addEventListener("change", (next) => {
     // iOS drops the stream while the app is in the background.
@@ -291,7 +293,10 @@ async function listen(signal: AbortSignal): Promise<void> {
   let wait = 1000;
   while (!signal.aborted) {
     try {
-      const response = await streamingFetch(`${serverUrl()}/events`, { headers: { Accept: "text/event-stream" }, signal });
+      const events = remote("/events");
+      const response = await streamingFetch(events.uri, { headers: { ...events.headers, Accept: "text/event-stream" }, signal });
+      // The Mac doesn't know this phone, so there is nothing to listen to until it pairs again.
+      if (response.status === 401) return unpair();
       if (!response.ok || !response.body) throw new Error(`events answered ${response.status}`);
       await refresh();
       set({ online: true });
@@ -316,3 +321,10 @@ async function listen(signal: AbortSignal): Promise<void> {
     wait = Math.min(wait * 2, 15_000);
   }
 }
+
+// Pairing with a Mac starts the sync. Losing the pairing stops it, and clears what the phone kept of that Mac.
+onPairing(() => {
+  if (isPaired()) return startSync();
+  stopSync?.();
+  set({ ...EMPTY, online: true });
+});

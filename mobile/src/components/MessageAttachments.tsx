@@ -23,8 +23,8 @@ import { FILE_ICONS, fileKind, fileKindWord, formatFileSize } from "@/lib/files"
 import { haptics } from "@/lib/haptics";
 import { useTheme } from "@/lib/theme";
 
-/** A photo or file a message carries: its address and its own name. */
-export type Shown = { uri: string; name: string; size?: number | null };
+/** A photo or file a message carries: its address, the header the Mac asks for before it sends one of its own, and its own name. */
+export type Shown = { uri: string; headers?: Record<string, string>; name: string; size?: number | null };
 
 // A message's one photo fits this box; several are a row of square tiles.
 const PHOTO_BOX = 228;
@@ -49,7 +49,7 @@ async function local(item: Shown): Promise<string> {
   if (!item.uri.startsWith("http")) return item.uri;
   const folder = new Directory(Paths.cache, "sent");
   folder.create({ idempotent: true, intermediates: true });
-  const file = await File.downloadFileAsync(item.uri, new File(folder, item.uri.split("/").pop() ?? item.name), { idempotent: true });
+  const file = await File.downloadFileAsync(item.uri, new File(folder, item.uri.split("/").pop() ?? item.name), { idempotent: true, headers: item.headers });
   return file.uri;
 }
 
@@ -80,7 +80,7 @@ export function MessagePhotos({ photos, end }: { photos: Shown[]; end: boolean }
           accessibilityHint="Opens it full screen"
           style={[styles.tile, { width: lone?.width ?? PHOTO_TILE, height: lone?.height ?? PHOTO_TILE, backgroundColor: theme.field }]}>
           <Image
-            source={{ uri: photo.uri }}
+            source={{ uri: photo.uri, headers: photo.headers }}
             contentFit="cover"
             transition={120}
             style={StyleSheet.absoluteFill}
@@ -134,7 +134,7 @@ function ViewerPage({ photo, width, height, reservedTop, reservedBottom, onClose
       }}
       scrollEventThrottle={32}>
       <View style={box}>
-        <Image source={{ uri: photo.uri }} contentFit="contain" transition={200} style={StyleSheet.absoluteFill} onLoad={() => setLoaded(true)} accessibilityLabel={photo.name} />
+        <Image source={{ uri: photo.uri, headers: photo.headers }} contentFit="contain" transition={200} style={StyleSheet.absoluteFill} onLoad={() => setLoaded(true)} accessibilityLabel={photo.name} />
         {loaded ? null : <ActivityIndicator style={StyleSheet.absoluteFill} color={theme.viewerInk} />}
       </View>
     </ScrollView>

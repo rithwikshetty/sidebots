@@ -3,13 +3,15 @@
 
 import { cpSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { basename, join } from "node:path";
-import { randomUUID } from "node:crypto";
+import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
 
 import { DEFAULT_EFFORT, DEFAULT_MODEL } from "./contract.ts";
-import type { About, Agent, AgentWithLatest, Avatar, Device, Found, Job, Memory, Message, Schedule, Sender, Status } from "./contract.ts";
+import type { About, Agent, AgentWithLatest, Avatar, Found, Job, Memory, Message, PushToken, Schedule, Sender, Status } from "./contract.ts";
 
-export type Person = { id: string; name: string; tailscale_login: string; claude_config_dir: string };
+export type Person = { id: string; name: string; claude_config_dir: string };
+/** A phone that has paired with this server, and the person whose agents it reaches. */
+export type Device = { id: string; person_id: string; name: string; paired_at: number };
 /** A file as it arrives with a message. */
 export type Upload = { name: string; bytes: Uint8Array };
 /** What a message can carry besides its text: files, the message it answers, and the job that sent it. */
@@ -22,8 +24,7 @@ export type PushKey = { keyId: string; teamId: string; key: string };
 const SCHEMA = `
 create table if not exists people (
   id                text primary key,
-  name              text not null,
-  tailscale_login   text not null unique,
+  name              text not null unique,
   claude_config_dir text not null
 );
 create table if not exists agents (
@@ -61,33 +62,34 @@ create table if not exists jobs (
   created_at  integer not null
 );
 create table if not exists devices (
-  push_token  text primary key,
+  id          text primary key,
   person_id   text not null references people(id),
-  topic       text not null,
-  environment text not null check (environment in ('sandbox', 'production'))
+  name        text not null,
+  key_hash    text not null unique,
+  push_token  text,
+  topic       text,
+  environment text check (environment in ('sandbox', 'production')),
+  paired_at   integer not null
+);
+create table if not exists pairings (
+  code_hash  text primary key,
+  person_id  text not null references people(id),
+  expires_at integer not null
 );
 `;
-
-// Changes to tables since the first database. A database made before one
-// gets it here, in order, and counts how many it has in `user_version`. A new
-// database has them all from SCHEMA.
-const TABLE_CHANGES = [
-  "alter table agents add column model text not null default 'opus'",
-  "alter table agents add column muted integer not null default 0",
-  "alter table agents add column hidden integer not null default 0",
-  "alter table messages add column reply_to text",
-  "alter table messages add column job_id text",
-  "alter table agents add column effort text not null default 'medium'",
-  "alter table messages add column seen_at integer",
-  "alter table messages add column interim integer not null default 0",
-  "alter table agents rename column pet_id to avatar_id",
-];
 
 const PAGE = 50;
 const SEARCH_LIMIT = 20;
 const AVATAR_ID = /^[a-z0-9-]+$/;
 // A stored attachment's file name: no folders, and never a dot first.
 const ATTACHMENT_NAME = /^[\w-][\w.-]*$/;
+// How long a pairing code works.
+const PAIRING_MS = 10 * 60_000;
+
+/** A pairing code or a device key: 32 random bytes, as text that fits in a link. */
+const secret = () => randomBytes(32).toString("base64url");
+/** What the database keeps of a secret, so that nobody who reads the database can use it. */
+const hashOf = (value: string) => createHash("sha256").update(value).digest("hex");
 
 /** A message as SQLite holds it, with its attachments as JSON text and yes and no as 1 and 0. */
 type Row = Omit<Message, "attachments" | "interim"> & { attachments: string; interim: number };
@@ -122,22 +124,10 @@ export function openStore(home: string) {
   mkdirSync(join(home, "agents"), { recursive: true });
   const db = new DatabaseSync(join(home, "sidebots.sqlite"));
   db.exec("pragma journal_mode = wal; pragma foreign_keys = on;");
-  const made = db.prepare("select 1 from sqlite_master where name = 'agents'").get() !== undefined;
   db.exec(SCHEMA);
-  const { user_version: has } = db.prepare("pragma user_version").get() as { user_version: number };
-  for (const change of made ? TABLE_CHANGES.slice(has) : []) db.exec(change);
-  db.exec(`pragma user_version = ${TABLE_CHANGES.length}`);
 
   const agentHome = (agentId: string) => join(home, "agents", agentId);
   const avatarsHome = join(home, "avatars");
-  // A home that keeps its avatars in `pets`, each described by a `pet.json`, has them moved to `avatars`.
-  const petsHome = join(home, "pets");
-  if (existsSync(petsHome)) {
-    for (const id of readdirSync(petsHome)) {
-      if (existsSync(join(petsHome, id, "pet.json"))) renameSync(join(petsHome, id, "pet.json"), join(petsHome, id, "avatar.json"));
-    }
-    renameSync(petsHome, avatarsHome);
-  }
   const pushKeyPath = join(home, "push.json");
   const apiKeysPath = join(home, "api-keys.json");
   /** Each person's Anthropic API key, by the person's id, for the people who have one. */
@@ -160,6 +150,7 @@ export function openStore(home: string) {
     const row = db.prepare("select * from agents where id = ?").get(id) as AgentRow | undefined;
     return row && toAgent(row);
   };
+  const clearPushToken = db.prepare("update devices set push_token = null, topic = null, environment = null where push_token = ?");
   const jobsFor = (agentId: string): Job[] => (db.prepare("select * from jobs where agent_id = ? order by next_at").all(agentId) as JobRow[]).map(toJob);
   const withLatest = (agent: Agent): AgentWithLatest => ({
     ...agent,
@@ -199,19 +190,15 @@ export function openStore(home: string) {
       return existsSync(path) ? path : undefined;
     },
 
-    addPerson(input: { name: string; login: string; configDir: string }): Person {
-      const person: Person = { id: randomUUID(), name: input.name, tailscale_login: input.login, claude_config_dir: input.configDir };
-      db.prepare("insert into people (id, name, tailscale_login, claude_config_dir) values (?, ?, ?, ?)").run(
-        person.id,
-        person.name,
-        person.tailscale_login,
-        person.claude_config_dir,
-      );
+    /** Adds a person. Each person on a server has a name of their own, which the commands know them by. */
+    addPerson(input: { name: string; configDir: string }): Person {
+      const person: Person = { id: randomUUID(), name: input.name, claude_config_dir: input.configDir };
+      db.prepare("insert into people (id, name, claude_config_dir) values (?, ?, ?)").run(person.id, person.name, person.claude_config_dir);
       return person;
     },
 
-    personByLogin(login: string): Person | undefined {
-      return db.prepare("select * from people where tailscale_login = ?").get(login) as Person | undefined;
+    personByName(name: string): Person | undefined {
+      return db.prepare("select * from people where name = ?").get(name) as Person | undefined;
     },
 
     person(id: string): Person | undefined {
@@ -515,20 +502,49 @@ export function openStore(home: string) {
       return rows.map((row) => row.agent_id);
     },
 
-    /** Remembers a phone for the person. A phone that was someone else's becomes theirs. */
-    saveDevice(personId: string, device: Device): void {
-      db.prepare(
-        `insert into devices (push_token, person_id, topic, environment) values (?, ?, ?, ?)
-         on conflict (push_token) do update set person_id = excluded.person_id, topic = excluded.topic, environment = excluded.environment`,
-      ).run(device.token, personId, device.topic, device.environment);
+    /** Makes a code that pairs one phone as the person, once, within ten minutes. */
+    addPairing(personId: string): string {
+      const now = Date.now();
+      db.prepare("delete from pairings where expires_at <= ?").run(now);
+      const code = secret();
+      db.prepare("insert into pairings (code_hash, person_id, expires_at) values (?, ?, ?)").run(hashOf(code), personId, now + PAIRING_MS);
+      return code;
     },
 
-    devicesFor(personId: string): Device[] {
-      return db.prepare("select push_token as token, topic, environment from devices where person_id = ?").all(personId) as Device[];
+    /**
+     * Pairs a phone that brings a pairing code, and uses the code up. Returns
+     * the key the phone sends with every request from then on, or nothing when
+     * the code is unknown, used or too old.
+     */
+    pair(code: string, name: string): string | undefined {
+      const pairing = db.prepare("delete from pairings where code_hash = ? returning person_id, expires_at").get(hashOf(code)) as
+        | { person_id: string; expires_at: number }
+        | undefined;
+      if (!pairing || pairing.expires_at <= Date.now()) return undefined;
+      const key = secret();
+      db.prepare("insert into devices (id, person_id, name, key_hash, paired_at) values (?, ?, ?, ?, ?)").run(randomUUID(), pairing.person_id, name, hashOf(key), Date.now());
+      return key;
     },
 
-    removeDevice(token: string): void {
-      db.prepare("delete from devices where push_token = ?").run(token);
+    /** The paired phone that holds this key. */
+    deviceByKey(key: string): Device | undefined {
+      return db.prepare("select id, person_id, name, paired_at from devices where key_hash = ?").get(hashOf(key)) as Device | undefined;
+    },
+
+    /** Remembers where Apple delivers a phone's notifications. A token another paired phone held becomes this one's. */
+    setPushToken(deviceId: string, push: PushToken): void {
+      clearPushToken.run(push.token);
+      db.prepare("update devices set push_token = ?, topic = ?, environment = ? where id = ?").run(push.token, push.topic, push.environment, deviceId);
+    },
+
+    /** Where Apple delivers the notifications of the person's phones, for the phones that allow them. */
+    pushTokensFor(personId: string): PushToken[] {
+      return db.prepare("select push_token as token, topic, environment from devices where person_id = ? and push_token is not null").all(personId) as PushToken[];
+    },
+
+    /** Forgets a token Apple no longer delivers to. The phone stays paired. */
+    clearPushToken(token: string): void {
+      clearPushToken.run(token);
     },
 
     setPushKey(key: PushKey): void {

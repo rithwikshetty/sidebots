@@ -2,7 +2,7 @@ import { useEffect, useRef, useState, type ComponentType, type ReactNode, type R
 import { Pressable, StyleSheet, Text, TextInput, View } from "react-native";
 import Animated, { LayoutAnimationConfig, useAnimatedStyle, withTiming } from "react-native-reanimated";
 import Swipeable, { type SwipeableMethods } from "react-native-gesture-handler/ReanimatedSwipeable";
-import { Redirect, useRouter } from "expo-router";
+import { useRouter } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { KeyboardStickyView } from "react-native-keyboard-controller";
 import { Bell, BellOff, ChevronRight, Eye, EyeOff, Plus, Search, Trash2 } from "lucide-react-native";
@@ -12,7 +12,6 @@ import { AvatarView } from "@/components/AvatarView";
 import { EdgeFade } from "@/components/EdgeFade";
 import { FadingText } from "@/components/FadingText";
 import { confirmDelete, problem } from "@/lib/alerts";
-import { serverUrl } from "@/lib/api";
 import { useWorkingLine } from "@/lib/lines";
 import { preview } from "@/lib/messages";
 import { EASE, HIDE, MOVE, POP_IN, POP_OUT, SHOW } from "@/lib/motion";
@@ -59,8 +58,6 @@ export default function Home() {
   // The row whose actions are showing, which closes when another row's open.
   const opened = useRef<SwipeableMethods | null>(null);
   usePush();
-
-  if (!serverUrl()) return <Redirect href="/setup" />;
 
   const rows: Row[] = search
     ? [

@@ -12,6 +12,8 @@ export const haptics = {
   shutter: () => quietly(Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light)),
   /** A swipe reached the point where letting go acts. */
   threshold: () => quietly(Haptics.selectionAsync()),
+  /** The phone paired with a Mac. */
+  paired: () => quietly(Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success)),
   /** A choice was made, such as the flash, or a photo opened full screen. */
   select: () => quietly(Haptics.selectionAsync()),
 };
