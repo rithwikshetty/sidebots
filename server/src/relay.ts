@@ -49,7 +49,7 @@ export function relay(store: Store, origin: string, send: typeof fetch = fetch):
   };
 
   return async (to, notice) => {
-    const body = JSON.stringify({ token: to.token, environment: to.environment, notice });
+    const body = JSON.stringify({ token: to.token, environment: to.environment, ...notice });
     try {
       let response = await call("/notifications", await machineId(), key(), body);
       // The relay removes a machine it hasn't heard from in 60 days. The machine registers again with the key it has.

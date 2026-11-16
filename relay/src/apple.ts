@@ -5,8 +5,12 @@ import { sha256 } from "@noble/hashes/sha2";
 
 /** A push key from Apple: the key's text as Apple downloads it, its ID, and the account's team ID. */
 export type PushKey = { key: string; keyId: string; teamId: string };
-/** What a notification says: the agent's name over what it said, and the number for the app's icon. */
-export type Notice = { title: string; body: string; badge: number; agentId: string; messageId: string };
+/**
+ * A notification as a server encrypted it for one phone, in base64, and the
+ * message it is about. Only the phone can read it. The app opens it as it
+ * arrives, and shows what the agent said in place of the relay's words.
+ */
+export type Sealed = { sealed: string; messageId: string };
 /** `gone` means Apple will never deliver to this phone's token again. */
 export type Result = "sent" | "gone" | "failed";
 
@@ -53,7 +57,7 @@ export async function notify(
   push: PushKey,
   topic: string,
   to: { token: string; environment: "sandbox" | "production" },
-  notice: Notice,
+  notice: Sealed,
   send: typeof fetch,
   now: number,
 ): Promise<Result> {
@@ -69,10 +73,9 @@ export async function notify(
         "apns-collapse-id": notice.messageId,
       },
       body: JSON.stringify({
-        // One agent's notifications stack together on the Lock Screen.
-        aps: { alert: { title: notice.title, body: notice.body }, badge: notice.badge, sound: SOUND, "thread-id": notice.agentId },
-        // expo-notifications hands the app whatever is under "body" as the notification's data.
-        body: { agent_id: notice.agentId },
+        // What shows if the app can't open the notice. `mutable-content` has iOS hand it to the app's notification extension first.
+        aps: { alert: { title: "Sidebots", body: "New message" }, sound: SOUND, "mutable-content": 1 },
+        sealed: notice.sealed,
       }),
     });
   } catch {

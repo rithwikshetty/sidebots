@@ -17,6 +17,8 @@ const config: ExpoConfig = {
     bundleIdentifier: identifier,
     appleTeamId: process.env.SIDEBOTS_APPLE_TEAM_ID,
     infoPlist: { ITSAppUsesNonExemptEncryption: false },
+    // The Keychain group the app shares with its notification extension, which reads the notification key from it.
+    entitlements: { "keychain-access-groups": [`$(AppIdentifierPrefix)${identifier}`] },
   },
   android: {
     package: identifier,
@@ -46,8 +48,10 @@ const config: ExpoConfig = {
     ],
     // Records what you say for dictation, which Apple's speech model turns into text on the phone.
     ["expo-audio", { microphonePermission: MICROPHONE_PERMISSION, recordAudioAndroid: false }],
-    // Keeps the key that proves this phone to its Mac in the Keychain.
+    // Keeps the keys that prove this phone to its Mac and open its notifications in the Keychain.
     "expo-secure-store",
+    // Builds the native targets in targets/, such as the extension that opens each notification as it arrives.
+    "@bacons/apple-targets",
     "expo-document-picker",
     "expo-web-browser",
   ],

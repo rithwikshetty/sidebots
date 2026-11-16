@@ -8,6 +8,10 @@ import type { Paired } from "@server/contract";
 
 const HOST_KEY = "host";
 const DEVICE_KEY = "device-key";
+// The notification extension reads this one by its name, from the Keychain group it shares with the app.
+const NOTIFICATION_KEY = "notification-key";
+// Readable while the phone is locked, once it has been unlocked since it started, as a notification needs.
+const KEYCHAIN = { keychainAccessible: SecureStore.AFTER_FIRST_UNLOCK };
 const TIMEOUT_MS = 10_000;
 // A message carrying photos, over a phone's connection.
 const UPLOAD_TIMEOUT_MS = 120_000;
@@ -23,13 +27,13 @@ export class ApiError extends Error {
   }
 }
 
-/** A Mac that has paired this phone: its address, the key that proves this phone to it, and its name. */
-export type Pairing = { host: string; key: string; machine: string };
+/** A Mac that has paired this phone: its address, the key that proves this phone to it, the key that opens its notifications, and its name. */
+export type Pairing = { host: string; key: string; notificationKey: string; machine: string };
 /** A file on the Mac: its address, and the header that lets this phone fetch it. */
 export type Remote = { uri: string; headers: Record<string, string> };
 
 // The address is in the app's store and the key in the Keychain, so a phone has paired when it holds both.
-function kept(): Omit<Pairing, "machine"> | null {
+function kept(): { host: string; key: string } | null {
   const host = Storage.getItemSync(HOST_KEY);
   const key = host ? SecureStore.getItem(DEVICE_KEY) : null;
   return host && key ? { host, key } : null;
@@ -70,14 +74,14 @@ export function readPairingLink(link: string): { host: string; code: string } | 
 /** Asks the Mac at `host` to pair this phone, with a code the Mac made. The code works once. */
 export async function requestPairing({ host, code }: { host: string; code: string }): Promise<Pairing> {
   const paired = await send<Paired>(`https://${host}/pair`, `Pairing ${code}`, { method: "POST", body: { name: deviceName ?? "iPhone" } });
-  return { host, key: paired.key, machine: paired.machine };
+  return { host, ...paired };
 }
 
 /** Keeps a pairing, from which point every call goes to that Mac. */
-export function keepPairing({ host, key }: Pairing): void {
+export function keepPairing({ host, key, notificationKey }: Pairing): void {
   Storage.setItemSync(HOST_KEY, host);
-  // Readable while the phone is locked, once it has been unlocked since it started.
-  SecureStore.setItem(DEVICE_KEY, key, { keychainAccessible: SecureStore.AFTER_FIRST_UNLOCK });
+  SecureStore.setItem(DEVICE_KEY, key, KEYCHAIN);
+  SecureStore.setItem(NOTIFICATION_KEY, notificationKey, KEYCHAIN);
   pairing = { host, key };
   removed = false;
   listeners.forEach((listener) => listener());
@@ -88,6 +92,7 @@ export function unpair(): void {
   if (!pairing) return;
   Storage.removeItemSync(HOST_KEY);
   void SecureStore.deleteItemAsync(DEVICE_KEY);
+  void SecureStore.deleteItemAsync(NOTIFICATION_KEY);
   pairing = null;
   removed = true;
   listeners.forEach((listener) => listener());

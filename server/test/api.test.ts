@@ -1,4 +1,5 @@
 import { test } from "node:test";
+import { createDecipheriv } from "node:crypto";
 import assert from "node:assert/strict";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -6,7 +7,7 @@ import { join } from "node:path";
 import { openStore } from "../src/store.ts";
 import { createQueue, type Turn, type TurnResult } from "../src/runner.ts";
 import { createApi } from "../src/api.ts";
-import { startPush, type Notice } from "../src/push.ts";
+import { startPush, type Notice, type Sealed } from "../src/push.ts";
 
 /** A turn's reply, as a fake Claude Code gives it. No reply means the fake gave its replies itself. */
 type Answer = TurnResult & { reply?: string };
@@ -28,8 +29,21 @@ function setup(answer: (turn: Turn) => Promise<Answer>, now: () => number = Date
   store.addPerson({ name: "Robin", configDir: "/config/robin" });
   const queue = createQueue(store, runTurn, now);
   const app = createApi(store, queue, "Test Mac");
+  const notificationKeys = new Map<string, string>();
   /** Pairs another phone as the person, and returns what it sends with each request. */
-  const pair = (name: string) => ({ Authorization: `Bearer ${store.pair(store.addPairing(store.personByName(name)!.id), `${name}'s iPhone`)}` });
+  const pair = (name: string) => {
+    const keys = store.pair(store.addPairing(store.personByName(name)!.id), `${name}'s iPhone`)!;
+    notificationKeys.set(keys.key, keys.notificationKey);
+    return { Authorization: `Bearer ${keys.key}` };
+  };
+  /** Opens a notice sealed for a phone, with that phone's notification key. */
+  const open = (phone: { Authorization: string }, { sealed }: Sealed): Notice => {
+    const bytes = Buffer.from(sealed, "base64");
+    const key = Buffer.from(notificationKeys.get(phone.Authorization.slice("Bearer ".length))!, "base64");
+    const decipher = createDecipheriv("aes-256-gcm", key, bytes.subarray(0, 12));
+    decipher.setAuthTag(bytes.subarray(-16));
+    return JSON.parse(Buffer.concat([decipher.update(bytes.subarray(12, -16)), decipher.final()]).toString()) as Notice;
+  };
   const phones = new Map<string, { Authorization: string }>();
   /** What the person's phone sends with each request. The phone pairs the first time it is used. */
   const phoneOf = (name: string) => phones.get(name) ?? phones.set(name, pair(name)).get(name)!;
@@ -49,7 +63,7 @@ function setup(answer: (turn: Turn) => Promise<Answer>, now: () => number = Date
     const response = await app.request(`/agents/${agentId}/messages`, { method: "POST", headers: phoneOf(name), body: form });
     return { status: response.status, json: await response.json() };
   };
-  return { home, store, queue, call, say, app, phoneOf, pair };
+  return { home, store, queue, call, say, app, phoneOf, pair, open };
 }
 
 const reply = (text: string, sessionId = "session-1", contextTokens = 0): Answer => ({ reply: text, sessionId, contextTokens });
@@ -163,7 +177,7 @@ test("a person with an API key has every turn, job and fresh start run on it, an
   const KEY = "sk-ant-robins-key";
   let time = new Date(2026, 10, 16, 9, 0).getTime();
   const turns: Turn[] = [];
-  const { home, store, queue, call, say } = setup(async (turn) => {
+  const { home, store, queue, call, say, phoneOf, open } = setup(async (turn) => {
     turns.push(turn);
     if (turn.prompt.text === "watch the price") turn.scheduleJob({ what: "Check the price.", every_minutes: 5 });
     if (turn.prompt.text.endsWith("buy it")) throw new Error(`Anthropic refused ${KEY}.`);
@@ -173,7 +187,7 @@ test("a person with an API key has every turn, job and fresh start run on it, an
   assert.equal(statSync(join(home, "api-keys.json")).mode & 0o777, 0o600);
   const notices: Notice[] = [];
   startPush(store, async (_device, notice) => {
-    notices.push(notice);
+    notices.push(open(phoneOf(HER), notice));
     return "sent";
   });
   await call(HER, "PUT", "/push-token", { token: "c".repeat(64), environment: "production" });
@@ -366,19 +380,24 @@ test("a search, by an agent or from the app, reaches all of the person's chats a
 
 test("a reply or a failed turn notifies the person's phones, and a phone Apple has dropped is forgotten", async () => {
   let fail = false;
-  const { store, queue, call, say, phoneOf, pair } = setup(async () => {
+  const { store, queue, call, say, phoneOf, pair, open } = setup(async () => {
     if (fail) throw new Error("Signed out.");
     return reply("Booked.");
   });
   const sent: [string, Notice][] = [];
+  const myPhone = phoneOf(ME);
+  const oldPhone = pair(ME);
   startPush(store, async (device, notice) => {
-    sent.push([device.token, notice]);
+    const phone = device.token === OLD_PHONE ? oldPhone : device.token === PHONE ? myPhone : phoneOf(HER);
+    // Each phone's notice opens with its own key, and with no other phone's.
+    assert.throws(() => open(phone === oldPhone ? myPhone : oldPhone, notice));
+    sent.push([device.token, open(phone, notice)]);
     return device.token === OLD_PHONE ? "gone" : "sent";
   });
   const PHONE = "a".repeat(64);
   const OLD_PHONE = "b".repeat(64);
   const HER_PHONE = "c".repeat(64);
-  for (const [phone, token] of [[phoneOf(ME), PHONE], [pair(ME), OLD_PHONE], [phoneOf(HER), HER_PHONE]] as const) {
+  for (const [phone, token] of [[myPhone, PHONE], [oldPhone, OLD_PHONE], [phoneOf(HER), HER_PHONE]] as const) {
     assert.equal((await call(phone, "PUT", "/push-token", { token, environment: "production" })).status, 200);
   }
   assert.equal((await call(ME, "PUT", "/push-token", { token: "nope", environment: "production" })).status, 400);
@@ -574,10 +593,10 @@ test("a reply to a message tells the agent which one, and the chat pages back th
 });
 
 test("a muted agent notifies nobody, and a hidden one comes back when it has something to say unless it is muted", async () => {
-  const { store, queue, call, say } = setup(async () => reply("Booked."));
+  const { store, queue, call, say, phoneOf, open } = setup(async () => reply("Booked."));
   const sent: Notice[] = [];
   startPush(store, async (_device, notice) => {
-    sent.push(notice);
+    sent.push(open(phoneOf(ME), notice));
     return "sent";
   });
   await call(ME, "PUT", "/push-token", { token: "a".repeat(64), environment: "production" });
@@ -636,7 +655,7 @@ test("a message sent while the agent works goes into the turn it is running, and
 test("an agent's updates while it works wait a minute, then come no more than every few minutes, and notify nobody; its reply does", async () => {
   let time = new Date(2026, 10, 16, 9, 0).getTime();
   const answers: string[] = [];
-  const { store, queue, call, say } = setup(async (turn) => {
+  const { store, queue, call, say, phoneOf, open } = setup(async (turn) => {
     answers.push(turn.sendUpdate!("Started."));
     time += 2 * 60_000;
     answers.push(turn.sendUpdate!("Found three flats, checking the third."));
@@ -646,7 +665,7 @@ test("an agent's updates while it works wait a minute, then come no more than ev
   }, () => time);
   const sent: Notice[] = [];
   startPush(store, async (_device, notice) => {
-    sent.push(notice);
+    sent.push(open(phoneOf(ME), notice));
     return "sent";
   });
   await call(ME, "PUT", "/push-token", { token: "a".repeat(64), environment: "production" });
