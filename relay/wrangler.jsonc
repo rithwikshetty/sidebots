@@ -1,0 +1,14 @@
+// The relay at relay.sidebots.app. A relay for another copy of the app is this
+// file with its own domain, database and app identifier.
+{
+  "name": "sidebots-relay",
+  "main": "src/worker.ts",
+  "compatibility_date": "2026-11-01",
+  "routes": [{ "pattern": "relay.sidebots.app", "custom_domain": true }],
+  "d1_databases": [{ "binding": "DB", "database_name": "sidebots-relay", "database_id": "77e61447-2164-455c-b419-9451cb4f39ce" }],
+  // Removes the machines that have gone quiet, once a day.
+  "triggers": { "crons": ["17 3 * * *"] },
+  "vars": { "APNS_TOPIC": "app.sidebots", "NOTICES_PER_DAY": "1000" },
+  // Set each with `wrangler secret put <name>`.
+  "secrets": { "required": ["APNS_KEY", "APNS_KEY_ID", "APNS_TEAM_ID"] }
+}

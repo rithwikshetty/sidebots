@@ -39,9 +39,8 @@ async function environment(): Promise<PushToken["environment"]> {
 async function register(): Promise<void> {
   if (!isPaired() || (await Notifications.getPermissionsAsync()).status !== "granted") return;
   const token = (await Notifications.getDevicePushTokenAsync()).data;
-  const topic = Application.applicationId;
-  if (typeof token !== "string" || !topic) return;
-  const push: PushToken = { token, topic, environment: await environment() };
+  if (typeof token !== "string") return;
+  const push: PushToken = { token, environment: await environment() };
   await request("/push-token", { method: "PUT", body: push });
 }
 

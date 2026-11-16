@@ -1,10 +1,10 @@
 // Starts the Sidebots server. `add-person` adds a person, `api-key` has a person's agents run on an
-// Anthropic API key, `pair` makes the code a phone pairs with, and `push-key` sets the key for notifications.
+// Anthropic API key, and `pair` makes the code a phone pairs with.
 
 import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { homedir, hostname } from "node:os";
-import { basename, dirname, join } from "node:path";
+import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
 import { serve } from "@hono/node-server";
@@ -12,7 +12,8 @@ import qrcode from "qrcode-terminal";
 import { openStore, type Person } from "./store.ts";
 import { claudeTurn, createQueue } from "./runner.ts";
 import { createApi } from "./api.ts";
-import { apns, startPush } from "./push.ts";
+import { startPush } from "./push.ts";
+import { relay } from "./relay.ts";
 
 const home = process.env.SIDEBOTS_HOME ?? join(homedir(), ".sidebots");
 const store = openStore(home);
@@ -71,27 +72,15 @@ if (process.argv[2] === "pair") {
   process.exit(0);
 }
 
-if (process.argv[2] === "push-key") {
-  const [path, teamId] = process.argv.slice(3);
-  // Apple names the file it downloads after the key's ID.
-  const keyId = path && /^AuthKey_(\w+)\.p8$/.exec(basename(path))?.[1];
-  if (!keyId || !teamId) {
-    console.error("usage: node src/main.ts push-key <AuthKey_XXXXXXXXXX.p8> <apple-team-id>");
-    process.exit(1);
-  }
-  store.setPushKey({ keyId, teamId, key: readFileSync(path, "utf8") });
-  console.log(`Saved push key ${keyId}. Restart the server to use it.`);
-  process.exit(0);
-}
-
 store.installStarterAvatars(join(dirname(fileURLToPath(import.meta.url)), "..", "..", "avatars"));
 const queue = createQueue(store, claudeTurn);
 for (const agentId of store.requeueInterrupted()) void queue.kick(agentId);
 queue.startClock();
 
-const pushKey = store.pushKey();
-if (pushKey) startPush(store, apns(pushKey));
-else console.log("Notifications are off. Turn them on with `pnpm push-key <AuthKey_XXXXXXXXXX.p8> <apple-team-id>`.");
+// The relay that passes notifications to Apple. `off` sends none, for a server nobody needs notifications from.
+const relayOrigin = process.env.SIDEBOTS_RELAY ?? "https://relay.sidebots.app";
+if (relayOrigin !== "off") startPush(store, relay(store, relayOrigin));
+else console.log("Notifications are off, as SIDEBOTS_RELAY is off.");
 
 // The machine's name as its owner knows it. macOS keeps one apart from the network's name for the machine.
 const machine = process.platform === "darwin" ? execFileSync("scutil", ["--get", "ComputerName"], { encoding: "utf8" }).trim() : hostname();

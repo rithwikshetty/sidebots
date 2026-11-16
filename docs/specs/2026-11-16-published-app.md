@@ -19,7 +19,7 @@ The agents, the messages and the Claude sign-in stay on the person's Mac, as the
 - **The relay does two jobs: it gives a machine its tunnel, and it passes notifications to Apple.** Only the holder of the app's push key can notify the app, so the key lives in the relay and nowhere else. The relay is a Cloudflare Worker at `relay.sidebots.app`. It is not on the path between phone and Mac: chat traffic goes from the phone through the tunnel to the Mac.
 - **The relay never sees a message.** The server encrypts each notification with a key that only the paired phone holds, and the phone decrypts it as it arrives. The relay and Apple pass along bytes they can't read. The relay stores a machine's public key, its tunnel and its address, and nothing about people, agents or messages.
 - **The tunnel's traffic is protected in transit, not end to end.** Cloudflare carries it encrypted to each end and ends the encryption at its edge, as it does for any site behind it. Whoever owns the `sidebots.app` zone could put code on that path. Nothing in this design does, and the relay's code is open, but a person who wants no third party at all runs their own relay on their own domain.
-- **A machine proves itself to the relay with a key of its own.** The server makes a signing key pair on first start and registers the public half. Every later request to the relay is signed with it. There are no accounts to keep, so the relay limits abuse by address and by machine: a few new machines per network address per day, a cap on notifications per machine, and removal of machines that stay away for 60 days.
+- **A machine proves itself to the relay with a key of its own.** The server makes a signing key pair on first start and registers the public half. Every later request to the relay is signed with it. There are no accounts to keep, so the relay limits abuse by machine: a cap of 1000 notifications per machine per day, and removal of machines that stay away for 60 days. When registering makes a tunnel, the relay also limits new machines per network address.
 - **A tunnel address is useless for anything but Sidebots.** A rule on the zone refuses any request to a machine's address that carries no `Authorization` header. The phone always sends one and a web browser following a link never does, so nobody can host a web page under `sidebots.app` by claiming a tunnel.
 - **The server owns pairing, the relay connection and the tunnel. The Mac app is a shell around it.** The Mac app starts the server, shows its state and runs the server's own commands, as a person at a terminal does today. A server started from a checkout, with no Mac app, does everything the Mac app's server does.
 - **One way to notify.** The server always sends notifications through a relay. The push key, the `push-key` command and the direct connection to Apple leave the server. Someone who builds their own copy of the app runs their own relay with their own key.
@@ -114,7 +114,7 @@ create table pairings (
 
 ### The machine's identity
 
-On first start the server makes an Ed25519 key pair and registers with the relay. `~/.sidebots/machine.json` holds the private key, the machine's id and address, and the tunnel's token, readable only by the server's user account. It takes the place of `push.json`.
+The first time it needs the relay, the server makes an Ed25519 key pair and registers with it. `~/.sidebots/machine.json` holds the private key, the machine's id and address, and the tunnel's token, readable only by the server's user account. It takes the place of `push.json`.
 
 ### Server modules
 
@@ -200,7 +200,7 @@ A build script signs every program in the bundle with the Developer ID, notarise
 
 The server's tests run through its HTTP routes as today, with `SIDEBOTS_RELAY=off` and a fake in place of the relay module where notices are checked. New cases: a request without a key is refused; a code pairs once and expires; a removed device is refused; one person's device never sees another's agents; a notice decrypts with the device's key and with no other.
 
-The relay's tests run through its `fetch` handler with Cloudflare's API and Apple's push service faked at the boundary: a signed request is accepted and an unsigned, stale or replayed one is not; the limits hold; a stale machine is removed.
+The relay's tests run through its `fetch` handler with Cloudflare's API and Apple's push service faked at the boundary: a signed request is accepted and an unsigned or stale one is not; the limits hold; a stale machine is removed. A request replayed within the five minutes repeats the same notice, which Apple shows once, as it carries the message id as its collapse id.
 
 One manual check per slice, on a real phone: pair by scanning, reach the Mac on mobile data with Tailscale off, and get a notification that reads correctly on the Lock Screen.
 

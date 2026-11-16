@@ -61,19 +61,15 @@ tailscale serve --bg --https=443 http://127.0.0.1:4317
 
 The server listens on `127.0.0.1:4317` only. Phones reach it at the machine's Tailscale name, such as `macbook.your-tailnet.ts.net`. If something else on the machine already uses port 443, publish Sidebots on another one, such as `--https=8443`, and add it to the address: `macbook.your-tailnet.ts.net:8443`.
 
-Two settings change where things live: `PORT` for the port, and `SIDEBOTS_HOME` for the data folder, which is `~/.sidebots` unless you set it. That folder holds the database, each agent's home folder with its instructions, memory and attachments, the avatars, the API keys and the push key. If you set `SIDEBOTS_HOME` for the server, set it for `add-person`, `api-key`, `pair` and `push-key` too.
+Two settings change where things live: `PORT` for the port, and `SIDEBOTS_HOME` for the data folder, which is `~/.sidebots` unless you set it. That folder holds the database, each agent's home folder with its instructions, memory and attachments, the avatars, the API keys and the key that proves the server to the relay. If you set `SIDEBOTS_HOME` for the server, set it for `add-person`, `api-key` and `pair` too.
 
 To keep the server running on a Mac, use a launchd agent with `RunAtLoad` and `KeepAlive` set, `server/` as its working directory, and the full path to `node` running `src/main.ts`. Keep the code outside `~/Downloads`, `~/Documents` and `~/Desktop`, which macOS doesn't let a background service read.
 
 ### Notifications
 
-Create a push key (an APNs auth key) in your Apple Developer account, then save it and restart the server:
+Only the Apple Developer account that builds the app can notify it, so the server sends its notifications through a relay that holds that account's push key. The server registers with the relay the first time it sends one, with a key it makes and keeps in `machine.json`, and signs every request with it. The relay keeps the server's public key and nothing about people, agents or messages.
 
-```sh
-pnpm push-key ~/Downloads/AuthKey_XXXXXXXXXX.p8 <apple-team-id>
-```
-
-Until then notifications are off and everything else works.
+The server uses the relay at `https://relay.sidebots.app`, which notifies the Sidebots app on the App Store. Your own build has its own identifier, so it needs your own relay: deploy the one in `relay/` to your Cloudflare account, as [relay/README.md](relay/README.md) explains, and start the server with `SIDEBOTS_RELAY` set to its address. `SIDEBOTS_RELAY=off` turns notifications off, and everything else works.
 
 ### New avatars
 
@@ -119,10 +115,11 @@ Anthropic's terms decide which you may use. A subscription is for the subscriber
 
 ```sh
 (cd server && pnpm test && pnpm typecheck)
+(cd relay && pnpm test && pnpm typecheck)
 (cd mobile && pnpm typecheck)
 ```
 
-The server's tests run through its HTTP routes with the model swapped for a fake, so they need no Claude sign-in or API key. The app imports the server's wire types from `server/src/contract.ts`.
+The server's tests run through its HTTP routes with the model swapped for a fake, so they need no Claude sign-in or API key. The relay's tests run the server's relay module against the relay's own request handler, with Cloudflare's database and Apple's push service faked. The app imports the server's wire types from `server/src/contract.ts`.
 
 ## Licence
 

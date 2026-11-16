@@ -170,11 +170,11 @@ export function createApi(store: Store, queue: Queue, machine: string) {
 
   /** The phone says where Apple delivers its notifications, once it allows them. */
   app.put("/push-token", async (c) => {
-    const { token, topic, environment } = await c.req.json<Partial<PushToken>>();
-    if (!token || !DEVICE_TOKEN.test(token) || !topic || (environment !== "sandbox" && environment !== "production")) {
-      return c.json({ error: "A push token comes with its app identifier and its push service." }, 400);
+    const { token, environment } = await c.req.json<Partial<PushToken>>();
+    if (!token || !DEVICE_TOKEN.test(token) || (environment !== "sandbox" && environment !== "production")) {
+      return c.json({ error: "A push token comes with its push service." }, 400);
     }
-    const push: PushToken = { token, topic, environment };
+    const push: PushToken = { token, environment };
     store.setPushToken(c.var.device.id, push);
     return c.json(push);
   });
