@@ -79,7 +79,7 @@ export function useDictation(): {
   const start = async () => {
     try {
       const permission = await requestRecordingPermissionsAsync();
-      if (!permission.granted) throw new Error("Allow Simon to use the microphone in Settings to dictate a message.");
+      if (!permission.granted) throw new Error("Allow Sidebots to use the microphone in Settings to dictate a message.");
       const preparing = Dictation.prepare();
       // A failure here is told when the person stops, with the recording's.
       preparing.catch(() => {});

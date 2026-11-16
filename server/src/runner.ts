@@ -134,18 +134,18 @@ export const claudeTurn: RunTurn = async ({
   cancelJob,
   sendUpdate,
 }) => {
-  const simon = createSdkMcpServer({
-    name: "simon",
+  const sidebots = createSdkMcpServer({
+    name: "sidebots",
     tools: [
       tool(
         "search_history",
-        "Search the messages in every chat this person has in Simon, with this agent and their other agents. Use it for things said before this session or to another agent.",
+        "Search the messages in every chat this person has in Sidebots, with this agent and their other agents. Use it for things said before this session or to another agent.",
         { text: z.string().describe("A word or phrase the messages contain") },
         async (search) => text(searchHistory(search.text)),
       ),
       tool(
         "schedule_job",
-        "Save a job that Simon runs for you later with nobody asking: once at a time, at a time of day, or every so many minutes. Use it for a reminder, a regular check, or anything the person wants done or watched without asking again. Each run is a session of its own that is given `what` and remembers nothing else, and what you reply then is sent to the person, so write `what` as full instructions to yourself, including when a run should stay silent. Give exactly one of every_minutes, daily_at and once_at. Times are this machine's local time, and the answer tells you the time now.",
+        "Save a job that Sidebots runs for you later with nobody asking: once at a time, at a time of day, or every so many minutes. Use it for a reminder, a regular check, or anything the person wants done or watched without asking again. Each run is a session of its own that is given `what` and remembers nothing else, and what you reply then is sent to the person, so write `what` as full instructions to yourself, including when a run should stay silent. Give exactly one of every_minutes, daily_at and once_at. Times are this machine's local time, and the answer tells you the time now.",
         {
           what: z.string().describe("What to do on each run, written to yourself"),
           every_minutes: z.number().optional().describe("Run every this many minutes"),
@@ -216,12 +216,12 @@ export const claudeTurn: RunTurn = async ({
       // Claude Code's full prompt. Left out, the SDK gives a short one that says nothing of memory.
       systemPrompt: { type: "preset", preset: "claude_code" },
       // Claude Code's own memory, kept in the agent's folder so it outlives
-      // every session. It is on for a Simon agent even when its owner has
+      // every session. It is on for a Sidebots agent even when its owner has
       // turned it off for their own Claude Code.
       settings: { autoMemoryEnabled: true, autoMemoryDirectory: join(cwd, "memory"), env: { CLAUDE_CODE_DISABLE_AUTO_MEMORY: "0" } },
       skills: "all",
-      mcpServers: { simon },
-      allowedTools: [...TOOLS, ...(sendUpdate ? ["send_update"] : [])].map((name) => `mcp__simon__${name}`),
+      mcpServers: { sidebots },
+      allowedTools: [...TOOLS, ...(sendUpdate ? ["send_update"] : [])].map((name) => `mcp__sidebots__${name}`),
       permissionMode: "auto",
       // Auto mode asks here when its classifier can't decide. Nobody is at
       // the keyboard, so the agent carries on without the action.
@@ -316,7 +316,7 @@ export function nextRun(schedule: Schedule, after: number): number | null {
 
 /** What the agent is asked on a run of one of its jobs. */
 function jobPrompt(job: Job, person: Person): string {
-  return `This is a run of one of your jobs (${scheduleWords(job.schedule)}), started by Simon's clock. ${person.name} hasn't sent anything. What you saved for it:
+  return `This is a run of one of your jobs (${scheduleWords(job.schedule)}), started by Sidebots' clock. ${person.name} hasn't sent anything. What you saved for it:
 
 ${job.what}
 
@@ -408,7 +408,7 @@ export function createQueue(store: Store, runTurn: RunTurn, now: () => number = 
           if (stop.signal.aborted) return;
           // A job that keeps failing says so once, not on every run.
           const latest = store.agentWithLatest(agent.id)?.latest;
-          if (latest?.sender !== "simon" || latest.status !== "failed") store.addMessage(agent.id, "simon", `Simon couldn't run a job. ${reason(error)}`, "failed");
+          if (latest?.sender !== "sidebots" || latest.status !== "failed") store.addMessage(agent.id, "sidebots", `Sidebots couldn't run a job. ${reason(error)}`, "failed");
         }
         // The next run counts from the end of this one. A job that ran its one time is done.
         const next = nextRun(job.schedule, now());
@@ -418,7 +418,7 @@ export function createQueue(store: Store, runTurn: RunTurn, now: () => number = 
       }
       if (!message) return;
 
-      if (message.sender === "simon") {
+      if (message.sender === "sidebots") {
         // A fresh start. The session goes even when the agent couldn't save
         // first, since the chat itself is still there to search.
         store.setStatus(message.id, "running");
@@ -478,10 +478,10 @@ export function createQueue(store: Store, runTurn: RunTurn, now: () => number = 
           },
         );
         store.setSession(agent.id, result.sessionId);
-        if (result.contextTokens > FRESH_START_TOKENS) store.addMessage(agent.id, "simon", FRESH_START, "queued");
+        if (result.contextTokens > FRESH_START_TOKENS) store.addMessage(agent.id, "sidebots", FRESH_START, "queued");
       } catch (error) {
         if (stop.signal.aborted) return;
-        store.addMessage(agent.id, "simon", `Simon couldn't finish this. ${reason(error)}`, "failed");
+        store.addMessage(agent.id, "sidebots", `Sidebots couldn't finish this. ${reason(error)}`, "failed");
         for (const id of sent) if (store.message(agent.id, id)?.status !== "done") store.setStatus(id, "failed");
       }
     }
@@ -512,7 +512,7 @@ export function createQueue(store: Store, runTurn: RunTurn, now: () => number = 
      * agent first saves what is worth keeping to its memory.
      */
     freshStart(agentId: string): Message {
-      const message = store.addMessage(agentId, "simon", FRESH_START, "queued");
+      const message = store.addMessage(agentId, "sidebots", FRESH_START, "queued");
       void kick(agentId);
       return message;
     },

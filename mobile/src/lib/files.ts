@@ -107,7 +107,7 @@ export async function pick(source: PickSource, room: number): Promise<Picked[]> 
   }
   if (source === "camera") {
     const permission = await Camera.requestCameraPermissionsAsync();
-    if (!permission.granted) throw new Error("Allow Simon to use the camera in Settings to take a photo.");
+    if (!permission.granted) throw new Error("Allow Sidebots to use the camera in Settings to take a photo.");
     // The keyboard goes first, so the camera has the screen.
     void KeyboardController.dismiss();
     return openCamera(room);

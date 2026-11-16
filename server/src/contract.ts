@@ -1,7 +1,7 @@
 // The shapes the server sends over HTTP, and how they read in words. The
 // mobile app imports this file, so it imports nothing.
 
-export type Sender = "person" | "agent" | "simon";
+export type Sender = "person" | "agent" | "sidebots";
 export type Status = "queued" | "running" | "done" | "failed";
 
 export type Message = {

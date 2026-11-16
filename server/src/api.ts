@@ -33,7 +33,7 @@ export function createApi(store: Store, queue: Queue) {
   app.use(async (c, next) => {
     const login = c.req.header(LOGIN_HEADER);
     const person = login ? store.personByLogin(login) : undefined;
-    if (!person) return c.json({ error: "This Tailscale login isn't set up on this Simon server." }, 403);
+    if (!person) return c.json({ error: "This Tailscale login isn't set up on this Sidebots server." }, 403);
     c.set("person", person);
     await next();
   });

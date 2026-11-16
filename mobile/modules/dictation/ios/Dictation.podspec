@@ -4,8 +4,8 @@ Pod::Spec.new do |s|
   s.summary        = 'Turns a recording into text on the phone.'
   s.description    = s.summary
   s.license        = 'MIT'
-  s.author         = 'Simon'
-  s.homepage       = 'https://github.com/rithwikshetty/simon'
+  s.author         = 'Sidebots'
+  s.homepage       = 'https://github.com/rithwikshetty/sidebots'
   s.platforms      = { :ios => '16.4' }
   s.source         = { git: '' }
   s.dependency 'ExpoModulesCore'

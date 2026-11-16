@@ -1,5 +1,5 @@
 // The store owns the database and the agent folders. Nothing else touches
-// SQLite or ~/.simon.
+// SQLite or ~/.sidebots.
 
 import { cpSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { basename, join } from "node:path";
@@ -42,7 +42,7 @@ create table if not exists agents (
 create table if not exists messages (
   id          text primary key,
   agent_id    text not null references agents(id),
-  sender      text not null check (sender in ('person', 'agent', 'simon')),
+  sender      text not null check (sender in ('person', 'agent', 'sidebots')),
   body        text not null,
   attachments text not null default '[]',
   status      text not null check (status in ('queued', 'running', 'done', 'failed')),
@@ -108,7 +108,7 @@ function toMemory(file: string, text: string): Memory {
 function instructions(agentName: string, personName: string): string {
   return `# ${agentName}
 
-You are ${agentName}, one of ${personName}'s agents in Simon. Simon is a messaging app on their iPhone, and each agent is one chat in it.
+You are ${agentName}, one of ${personName}'s agents in Sidebots. Sidebots is a messaging app on their iPhone, and each agent is one chat in it.
 
 ${personName} only sees your final reply, as a text message on their phone. They never see your tool calls or working steps. Write the way a capable person texts: short, plain sentences, no headings or tables unless they ask for them.
 
@@ -120,7 +120,7 @@ You don't know what you're for yet. If this is a new chat, ask what ${personName
 
 export function openStore(home: string) {
   mkdirSync(join(home, "agents"), { recursive: true });
-  const db = new DatabaseSync(join(home, "simon.sqlite"));
+  const db = new DatabaseSync(join(home, "sidebots.sqlite"));
   db.exec("pragma journal_mode = wal; pragma foreign_keys = on;");
   const made = db.prepare("select 1 from sqlite_master where name = 'agents'").get() !== undefined;
   db.exec(SCHEMA);
@@ -152,9 +152,9 @@ export function openStore(home: string) {
   const many = (sql: string, ...values: (string | number)[]): Message[] => (db.prepare(sql).all(...values) as Row[]).map(toMessage);
 
   const pendingTurn = db.prepare("select 1 from messages where agent_id = ? and status in ('queued', 'running') limit 1");
-  // What waits to be read: the agent's replies and Simon's failure notices.
+  // What waits to be read: the agent's replies and Sidebots' failure notices.
   const unread = db.prepare(
-    "select count(*) as unread from messages where agent_id = ? and created_at > ? and ((sender = 'agent' and interim = 0) or (sender = 'simon' and status = 'failed'))",
+    "select count(*) as unread from messages where agent_id = ? and created_at > ? and ((sender = 'agent' and interim = 0) or (sender = 'sidebots' and status = 'failed'))",
   );
   const agentById = (id: string): Agent | undefined => {
     const row = db.prepare("select * from agents where id = ?").get(id) as AgentRow | undefined;
@@ -406,7 +406,7 @@ export function openStore(home: string) {
         Number(interim),
         message.created_at,
       );
-      if ((sender === "agent" && !interim) || (sender === "simon" && status === "failed")) {
+      if ((sender === "agent" && !interim) || (sender === "sidebots" && status === "failed")) {
         db.prepare("update agents set hidden = 0 where id = ? and muted = 0").run(agentId);
       }
       changed(message);
@@ -476,7 +476,7 @@ export function openStore(home: string) {
     /** The last few things the person and the agent said before a message, oldest first. */
     messagesBefore(messageId: string, limit: number): Message[] {
       return many(
-        `select * from messages where sender != 'simon'
+        `select * from messages where sender != 'sidebots'
            and agent_id = (select agent_id from messages where id = ?) and rowid < (select rowid from messages where id = ?)
          order by rowid desc limit ?`,
         messageId,
@@ -492,7 +492,7 @@ export function openStore(home: string) {
         .prepare(
           `select messages.id, messages.agent_id, agents.name as agent, messages.sender, messages.body, messages.created_at
            from messages join agents on agents.id = messages.agent_id
-           where agents.person_id = ? and messages.sender != 'simon' and messages.body like ? escape '\\'
+           where agents.person_id = ? and messages.sender != 'sidebots' and messages.body like ? escape '\\'
            order by messages.rowid desc limit ?`,
         )
         .all(personId, pattern, SEARCH_LIMIT) as Found[];

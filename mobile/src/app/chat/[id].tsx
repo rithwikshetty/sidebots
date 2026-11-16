@@ -295,7 +295,7 @@ function Bubble({
   onReply: () => void;
   onResend: () => void;
 }) {
-  if (message.sender === "simon") return <Text style={[styles.note, { color: theme.ink2 }]}>{message.body}</Text>;
+  if (message.sender === "sidebots") return <Text style={[styles.note, { color: theme.ink2 }]}>{message.body}</Text>;
   const mine = message.sender === "person";
   const shown = message.attachments.map((path) => ({ uri: attachmentUrl(message.agent_id, path), name: fileName(path) }));
   return (

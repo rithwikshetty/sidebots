@@ -1,10 +1,10 @@
-# Simon
+# Sidebots
 
-Simon is an iPhone messaging app for your own Claude agents. Each chat is an agent. You send it a message, it does the work on a machine you own, and the finished reply arrives like a text from a person, with a notification.
+Sidebots is an iPhone messaging app for your own Claude agents. Each chat is an agent. You send it a message, it does the work on a machine you own, and the finished reply arrives like a text from a person, with a notification.
 
-You run Simon yourself. There is no hosted service: a small server runs on your machine, drives Claude Code there, and keeps every message in a folder on that machine. You build your own copy of the app and point it at your server.
+You run Sidebots yourself. There is no hosted service: a small server runs on your machine, drives Claude Code there, and keeps every message in a folder on that machine. You build your own copy of the app and point it at your server.
 
-The full design is in [docs/specs/2026-11-15-simon.md](docs/specs/2026-11-15-simon.md).
+The full design is in [docs/specs/2026-11-15-sidebots.md](docs/specs/2026-11-15-sidebots.md).
 
 ## Read this before you run it
 
@@ -50,7 +50,7 @@ With an Anthropic API key, the agents sign in with the key and nobody signs in t
 pnpm api-key robin@example.com ~/robin-key.txt
 ```
 
-Simon copies the key into `~/.simon/api-keys.json`, which only your account can read, so delete your file afterwards. The person's agents run on the key from their next turn, even if their folder is also signed in to a subscription. Saving another key replaces it. Simon never puts the key in a log, a reply or a failure notice, but an agent's own commands can read the key it runs on, as they can any of your account's files.
+Sidebots copies the key into `~/.sidebots/api-keys.json`, which only your account can read, so delete your file afterwards. The person's agents run on the key from their next turn, even if their folder is also signed in to a subscription. Saving another key replaces it. Sidebots never puts the key in a log, a reply or a failure notice, but an agent's own commands can read the key it runs on, as they can any of your account's files.
 
 Start the server, then publish it to your tailnet:
 
@@ -59,9 +59,9 @@ pnpm start
 tailscale serve --bg --https=443 http://127.0.0.1:4317
 ```
 
-The server listens on `127.0.0.1:4317` only. The app's server address is the machine's Tailscale name, such as `macbook.your-tailnet.ts.net`. If something else on the machine already uses port 443, publish Simon on another one, such as `--https=8443`, and add it to the address: `macbook.your-tailnet.ts.net:8443`.
+The server listens on `127.0.0.1:4317` only. The app's server address is the machine's Tailscale name, such as `macbook.your-tailnet.ts.net`. If something else on the machine already uses port 443, publish Sidebots on another one, such as `--https=8443`, and add it to the address: `macbook.your-tailnet.ts.net:8443`.
 
-Two settings change where things live: `PORT` for the port, and `SIMON_HOME` for the data folder, which is `~/.simon` unless you set it. That folder holds the database, each agent's home folder with its instructions, memory and attachments, the avatars, the API keys and the push key. If you set `SIMON_HOME` for the server, set it for `add-person`, `api-key` and `push-key` too.
+Two settings change where things live: `PORT` for the port, and `SIDEBOTS_HOME` for the data folder, which is `~/.sidebots` unless you set it. That folder holds the database, each agent's home folder with its instructions, memory and attachments, the avatars, the API keys and the push key. If you set `SIDEBOTS_HOME` for the server, set it for `add-person`, `api-key` and `push-key` too.
 
 To keep the server running on a Mac, use a launchd agent with `RunAtLoad` and `KeepAlive` set, `server/` as its working directory, and the full path to `node` running `src/main.ts`. Keep the code outside `~/Downloads`, `~/Documents` and `~/Desktop`, which macOS doesn't let a background service read.
 
@@ -77,7 +77,7 @@ Until then notifications are off and everything else works.
 
 ### New avatars
 
-Agents can draw new avatars with the skill in `skills/make-avatar`. Copy that folder into the `skills` folder of each person's Claude Code config folder. The skill saves avatars in `~/.simon/avatars`, so it needs the data folder left where it is.
+Agents can draw new avatars with the skill in `skills/make-avatar`. Copy that folder into the `skills` folder of each person's Claude Code config folder. The skill saves avatars in `~/.sidebots/avatars`, so it needs the data folder left where it is.
 
 ## Build the app
 
@@ -93,18 +93,18 @@ Fill in `.env.local` with a bundle identifier of your own and your Apple team ID
 npx expo run:ios --device --configuration Release
 ```
 
-The app asks for the server's address the first time it opens. For other people's phones, open `mobile/ios/Simon.xcworkspace` in Xcode, archive the app and upload it to TestFlight.
+The app asks for the server's address the first time it opens. For other people's phones, open `mobile/ios/Sidebots.xcworkspace` in Xcode, archive the app and upload it to TestFlight.
 
 ## Who pays for the model
 
 Each person pays for their own agents, in one of two ways:
 
-- **A Claude subscription.** The agents run through the person's own Claude Code sign-in and use that subscription's limits. Simon never reads, stores or passes on a sign-in.
-- **An Anthropic API key.** Anthropic bills the key's account for what the agents use. The key is from the [Claude Console](https://platform.claude.com), and Simon keeps it in `~/.simon` on your machine.
+- **A Claude subscription.** The agents run through the person's own Claude Code sign-in and use that subscription's limits. Sidebots never reads, stores or passes on a sign-in.
+- **An Anthropic API key.** Anthropic bills the key's account for what the agents use. The key is from the [Claude Console](https://platform.claude.com), and Sidebots keeps it in `~/.sidebots` on your machine.
 
-Anthropic's terms decide which you may use. A subscription is for the subscriber's own use. For a product built on the Agent SDK, as Simon is, Anthropic [asks for API keys](https://code.claude.com/docs/en/agent-sdk/overview) and doesn't allow Claude sign-ins to be offered to its users without its approval. So read the terms before you set Simon up for anyone but yourself, and when in doubt give each person an API key.
+Anthropic's terms decide which you may use. A subscription is for the subscriber's own use. For a product built on the Agent SDK, as Sidebots is, Anthropic [asks for API keys](https://code.claude.com/docs/en/agent-sdk/overview) and doesn't allow Claude sign-ins to be offered to its users without its approval. So read the terms before you set Sidebots up for anyone but yourself, and when in doubt give each person an API key.
 
-## Working on Simon
+## Working on Sidebots
 
 ```sh
 (cd server && pnpm test && pnpm typecheck)
@@ -115,4 +115,4 @@ The server's tests run through its HTTP routes with the model swapped for a fake
 
 ## Licence
 
-[MIT](LICENSE). The avatars, the app icon and the notification sound were made for Simon and are under the same licence.
+[MIT](LICENSE). The avatars, the app icon and the notification sound were made for Sidebots and are under the same licence.

@@ -30,7 +30,7 @@ export default function Setup() {
   return (
     <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : undefined} style={[styles.screen, { backgroundColor: theme.bg }]}>
       <View style={styles.top}>
-        <Text style={[styles.title, { color: theme.ink }]}>Simon</Text>
+        <Text style={[styles.title, { color: theme.ink }]}>Sidebots</Text>
         <Text style={[styles.tag, { color: theme.ink2 }]}>Your agents, on your own machine.</Text>
       </View>
       <View style={styles.form}>
@@ -48,7 +48,7 @@ export default function Setup() {
           style={[styles.field, { color: theme.ink, backgroundColor: theme.field, borderColor: theme.line }]}
         />
         <FadingText style={[styles.help, { color: error ? theme.danger : theme.ink2 }]}>
-          {error ?? "The Tailscale name of the machine that runs Simon."}
+          {error ?? "The Tailscale name of the machine that runs Sidebots."}
         </FadingText>
         <Pressable
           onPress={onConnect}
