@@ -7,6 +7,7 @@ import { join } from "node:path";
 import { openStore } from "../src/store.ts";
 import { createQueue, type Turn, type TurnResult } from "../src/runner.ts";
 import { createApi } from "../src/api.ts";
+import { CONTRACT_VERSION } from "../src/contract.ts";
 import { startPush, type Notice, type Sealed } from "../src/push.ts";
 
 /** A turn's reply, as a fake Claude Code gives it. No reply means the fake gave its replies itself. */
@@ -100,6 +101,29 @@ test("a phone pairs once with a code, and only a paired phone is let in", async 
   const late = store.addPairing(alex.id);
   t.mock.timers.tick(10 * 60_000);
   assert.equal((await pairWith(late)).status, 401);
+});
+
+test("every answer says which version of the contract the server speaks", async () => {
+  const { store, app, phoneOf } = setup(async () => reply("ok"));
+  const pairWith = (code: string) =>
+    app.request("/pair", { method: "POST", headers: { Authorization: `Pairing ${code}`, "Content-Type": "application/json" }, body: JSON.stringify({ name: "Alex's iPhone" }) });
+  const phone = phoneOf(ME);
+  const events = await app.request("/events", { headers: phone });
+  const answers = [
+    await pairWith(store.addPairing(store.personByName(ME)!.id)),
+    await pairWith("made-up"),
+    await app.request("/agents"),
+    await app.request("/agents", { headers: phone }),
+    await app.request("/agents/none/messages", { headers: phone }),
+    await app.request("/nowhere", { headers: phone }),
+    events,
+  ];
+  await events.body?.cancel();
+  assert.deepEqual(
+    answers.map((answer) => answer.status),
+    [201, 401, 401, 200, 404, 404, 200],
+  );
+  for (const answer of answers) assert.equal(answer.headers.get("Sidebots-Contract"), String(CONTRACT_VERSION));
 });
 
 test("a message gets the agent's reply, run in the agent's folder under its owner's login", async () => {

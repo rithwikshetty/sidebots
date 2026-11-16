@@ -33,17 +33,17 @@ The agents, the messages and the Claude sign-in stay on the person's Mac, as the
 
 **Setting up the Mac.** The person downloads Sidebots from `sidebots.app` and opens it. A window asks one thing: how the agents should sign in to Claude. If Claude Code is already signed in on the Mac, that is the first choice and needs one click. Otherwise the person picks "Sign in to Claude", which opens Anthropic's sign-in in their browser, or pastes an API key. The window then shows a QR code. Sidebots stays in the menu bar and starts whenever the Mac does.
 
-**Pairing a phone.** The person opens the phone app, which opens on the camera, laid out as the chat's camera, with one line of instruction, and points it at the QR code. The app says "Paired with Rithwik's MacBook Pro" and opens on the agents. A QR code works once and for ten minutes. A link button above the camera takes the same code as text.
+**Pairing a phone.** The person opens the phone app, which opens on a welcome screen that says what Sidebots is and how to pair. Its button opens the camera, laid out as the chat's camera, with one line of instruction, and the phone asks for the camera then. The person points it at the QR code. The app says "Paired with Rithwik's MacBook Pro" and opens on the agents. A QR code works once and for ten minutes. A link button above the camera takes the same code as text.
 
 **The menu.** The menu bar icon shows whether Sidebots is running and reachable. Its menu has the paired phones, each with a Remove command, "Pair a phone…", how Claude is signed in with a way to change it, "Open at login", and Quit.
 
-**Removing a phone.** Remove takes effect at once. The phone's next request is refused, and the app goes back to the camera with a line saying the Mac removed it. Its saved chats are cleared.
+**Removing a phone.** Remove takes effect at once. The phone's next request is refused, and the app goes back to the welcome screen with a line saying the Mac removed it. Its saved chats are cleared.
 
 **When the Mac can't be reached.** As today: the app shows the saved chats with every avatar greyed out, and what the person types waits on the phone. A Mac that is asleep or off can't be reached, and its agents and jobs pause until it wakes.
 
 **Notifications.** As today for the person: the agent's name over what it said, with the Sidebots sound and the count on the app's icon. If the phone can't decrypt one, it shows "New message" under the name Sidebots.
 
-**When the versions don't match.** If the Mac app is older than the phone app needs, the phone says "Update Sidebots on your Mac" in place of the agents. If the phone app is older, it says "Update Sidebots from the App Store". The Mac app updates itself: it checks `sidebots.app` daily and installs a new version when no agent is working.
+**When the versions don't match.** If the Mac app is older than the phone app needs, the phone says "Update Sidebots on your Mac" in place of the agents. If the phone app is older, it says "Update Sidebots from the App Store". Pairing across versions fails with the same words. The Mac app updates itself: it checks `sidebots.app` daily and installs a new version when no agent is working.
 
 **Files the agents can reach.** Agents run as the person, inside the Sidebots app. The first time an agent reaches into Documents, Downloads or Desktop, macOS asks whether Sidebots may, as it does for any app.
 
@@ -166,13 +166,13 @@ When the relay answers `gone`, the server clears that device's push token, as it
 
 ### Phone app
 
-The pairing screen is the chat's camera with `expo-camera`'s scanner turned on, and a link button that asks for the code as its link. The app handles the `sidebots://pair` link, so a link opened anywhere on the phone pairs it.
+An unpaired app opens on a welcome screen, whose button opens the pairing screen. The pairing screen is the chat's camera with `expo-camera`'s scanner turned on, and a link button that asks for the code as its link. The app handles the `sidebots://pair` link, so a link opened anywhere on the phone pairs it.
 
 `lib/api` keeps the host in the app's store and the two keys in the Keychain, and puts the device key on every request: calls, the event stream, uploads, and the image loads for avatars and attachments, which pass it to `expo-image` as a header. A 401 clears the pairing and the saved chats and shows the pairing screen.
 
 ### Contract version
 
-`contract.ts` gains `CONTRACT_VERSION`, a whole number raised when a change means an older app or server can't work with a newer one. The server sends it on every response as `Sidebots-Contract`, and the app compares it with its own.
+`contract.ts` gains `CONTRACT_VERSION`, a whole number raised when a change means an older app or server can't work with a newer one. The server sends it on every response as `Sidebots-Contract`, refusals included, and the app compares it with its own. A server that sends none counts as older. The app uses nothing a server on another version says.
 
 ### Uploads
 

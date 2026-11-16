@@ -93,14 +93,14 @@ For other people's phones, open `mobile/ios/Sidebots.xcworkspace` in Xcode, arch
 
 ### Pair each phone
 
-The app opens on a camera until its phone has paired with a server. On the server, make a pairing code for the person, with the address their phone reaches the server at:
+Until its phone has paired with a server, the app opens on a welcome screen whose button opens a camera. On the server, make a pairing code for the person, with the address their phone reaches the server at:
 
 ```sh
 cd server
 pnpm pair Alex --host macbook.your-tailnet.ts.net
 ```
 
-It prints a QR code, and the same code as a link. The person scans the code in the app, or taps the link button above the camera and pastes the link. A code pairs one phone, once, within ten minutes. The phone gets a key of its own, which it keeps in the Keychain and sends with every request, and the server keeps only a hash of it. It also gets the key its notifications are encrypted with, so neither the relay nor Apple can read them.
+It prints a QR code, and the same code as a link. The person scans the code in the app, or taps the link button above the camera and pastes the link. The app and the server must speak the same version of their contract, `CONTRACT_VERSION` in `server/src/contract.ts`. When they don't, the app says which one to update. A code pairs one phone, once, within ten minutes. The phone gets a key of its own, which it keeps in the Keychain and sends with every request, and the server keeps only a hash of it. It also gets the key its notifications are encrypted with, so neither the relay nor Apple can read them.
 
 ## Who pays for the model
 

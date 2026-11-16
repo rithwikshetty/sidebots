@@ -5,7 +5,7 @@ import { extname } from "node:path";
 import { Hono } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import { streamSSE } from "hono/streaming";
-import { EFFORTS, MODELS } from "./contract.ts";
+import { CONTRACT_HEADER, CONTRACT_VERSION, EFFORTS, MODELS } from "./contract.ts";
 import type { Effort, MessageEvent, Model, Paired, PushToken } from "./contract.ts";
 import type { AgentChanges, Device, Person, Store } from "./store.ts";
 import type { Queue } from "./runner.ts";
@@ -33,6 +33,12 @@ function credential(header: string | undefined, scheme: string): string | undefi
 /** `machine` is the name of the machine the server runs on, which a phone shows once it has paired. */
 export function createApi(store: Store, queue: Queue, machine: string) {
   const app = new Hono<{ Variables: { person: Person; device: Device } }>();
+
+  /** Every answer says which version of the contract the server speaks, so the app can tell which side to update. */
+  app.use(async (c, next) => {
+    c.header(CONTRACT_HEADER, String(CONTRACT_VERSION));
+    await next();
+  });
 
   /** Pairs a phone that brings a code made by `pair`. It is the one route a phone can call without a key. */
   app.post("/pair", async (c) => {

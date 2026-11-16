@@ -71,6 +71,6 @@ const styles = StyleSheet.create({
   title: { fontSize: 17, fontWeight: "600", textAlign: "center" },
   name: { fontSize: 26, fontWeight: "700", textAlign: "center", paddingVertical: 8, borderBottomWidth: StyleSheet.hairlineWidth },
   hint: { fontSize: 15, textAlign: "center" },
-  button: { height: 50, borderRadius: 14, alignItems: "center", justifyContent: "center" },
+  button: { minHeight: 50, borderRadius: 14, alignItems: "center", justifyContent: "center", paddingVertical: 12 },
   buttonText: { fontSize: 17, fontWeight: "600" },
 });

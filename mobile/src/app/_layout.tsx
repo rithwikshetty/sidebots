@@ -26,8 +26,8 @@ export default function Layout() {
         <ThemeProvider value={navigation}>
           <StatusBar style="auto" />
           <Stack screenOptions={{ headerShown: false }}>
-            {/* A phone that hasn't paired with a Mac has the pairing screen and nothing else. Once paired, it has everything but that. */}
-            <Stack.Protected guard={paired}>
+            {/* A phone that hasn't paired with a Mac has the welcome and pairing screens and nothing else, and opens on welcome. Once paired, it has everything but those. */}
+            <Stack.Protected guard={paired} redirectTo="/welcome">
               <Stack.Screen name="index" />
               <Stack.Screen name="chat/[id]" />
               <Stack.Screen name="new-agent" options={{ presentation: "formSheet", sheetAllowedDetents: [0.62], sheetGrabberVisible: true }} />
@@ -36,12 +36,12 @@ export default function Layout() {
               <Stack.Screen name="note" options={{ presentation: "modal" }} />
               <Stack.Screen
                 name="camera"
-                // Full screen and a quick fade, so the camera is up the moment it's chosen.
-                options={{ presentation: "fullScreenModal", animation: "fade", animationDuration: 150, contentStyle: { backgroundColor: theme.viewer } }}
+                // Full screen and a quick fade, so the camera is up the moment it's chosen. The status bar is light on its black.
+                options={{ presentation: "fullScreenModal", animation: "fade", animationDuration: 150, contentStyle: { backgroundColor: theme.viewer }, statusBarStyle: "light" }}
               />
             </Stack.Protected>
             <Stack.Protected guard={!paired}>
-              <Stack.Screen name="pair" options={{ animation: "fade" }} />
+              <Stack.Screen name="(unpaired)" options={{ animation: "fade" }} />
             </Stack.Protected>
           </Stack>
         </ThemeProvider>
