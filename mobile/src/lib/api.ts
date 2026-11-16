@@ -7,6 +7,8 @@ import Storage from "expo-sqlite/kv-store";
 import { CONTRACT_HEADER, CONTRACT_VERSION, type Paired } from "@server/contract";
 
 const HOST_KEY = "host";
+// Set while the phone waits to pair again after its Mac removed it.
+const REMOVED_KEY = "removed";
 const DEVICE_KEY = "device-key";
 // The notification extension reads this one by its name, from the Keychain group it shares with the app.
 const NOTIFICATION_KEY = "notification-key";
@@ -57,7 +59,7 @@ function kept(): { host: string; key: string } | null {
 }
 
 let pairing = kept();
-let removed = false;
+let removed = Storage.getItemSync(REMOVED_KEY) !== null;
 const listeners = new Set<() => void>();
 
 /** Calls `listener` when the phone pairs with a Mac or loses its pairing. Returns a function that stops it. */
@@ -74,7 +76,7 @@ export function usePaired(): boolean {
   return useSyncExternalStore(onPairing, isPaired);
 }
 
-/** Whether the phone lost its pairing because the Mac no longer knows it. */
+/** Whether the phone lost its pairing because the Mac no longer knows it. It stays so, through relaunches, until the phone pairs again. */
 export function wasRemoved(): boolean {
   return removed;
 }
@@ -99,6 +101,7 @@ export function keepPairing({ host, key, notificationKey }: Pairing): void {
   Storage.setItemSync(HOST_KEY, host);
   SecureStore.setItem(DEVICE_KEY, key, KEYCHAIN);
   SecureStore.setItem(NOTIFICATION_KEY, notificationKey, KEYCHAIN);
+  Storage.removeItemSync(REMOVED_KEY);
   pairing = { host, key };
   removed = false;
   listeners.forEach((listener) => listener());
@@ -110,6 +113,7 @@ export function unpair(): void {
   Storage.removeItemSync(HOST_KEY);
   void SecureStore.deleteItemAsync(DEVICE_KEY);
   void SecureStore.deleteItemAsync(NOTIFICATION_KEY);
+  Storage.setItemSync(REMOVED_KEY, "yes");
   pairing = null;
   removed = true;
   listeners.forEach((listener) => listener());
@@ -145,12 +149,14 @@ async function send<T>(url: string, authorization: string, init: { method?: stri
   const form = init.body instanceof FormData ? init.body : null;
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), form ? UPLOAD_TIMEOUT_MS : TIMEOUT_MS);
+  // The app says which version of the contract it speaks, which the Mac checks before it pairs the phone.
+  const headers = { Authorization: authorization, [CONTRACT_HEADER]: String(CONTRACT_VERSION) };
   let response: Response;
   try {
     response = await fetch(url, {
       method: init.method ?? "GET",
       // A form names its own content type, with the boundary between its parts.
-      headers: form ? { Authorization: authorization } : { Authorization: authorization, "Content-Type": "application/json" },
+      headers: form ? headers : { ...headers, "Content-Type": "application/json" },
       body: form ?? (init.body === undefined ? undefined : JSON.stringify(init.body)),
       signal: controller.signal,
     });

@@ -2,8 +2,8 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } fro
 import { FlatList, Pressable, StyleSheet, Text, View } from "react-native";
 import { Stack, useFocusEffect, useLocalSearchParams, useRouter } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { KeyboardChatScrollView, KeyboardStickyView } from "react-native-keyboard-controller";
-import Animated from "react-native-reanimated";
+import { KeyboardChatScrollView, KeyboardController, KeyboardEvents, KeyboardStickyView } from "react-native-keyboard-controller";
+import Animated, { useSharedValue } from "react-native-reanimated";
 import { Reply, X } from "lucide-react-native";
 import type { AgentWithLatest, Message } from "@server/contract";
 import { AvatarView } from "@/components/AvatarView";
@@ -77,6 +77,11 @@ function ChatWith({ agent }: { agent: AgentWithLatest }) {
   // Whether the newest message is on screen, and the room the keyboard takes at the list's end.
   const [atEnd, setAtEnd] = useState(true);
   const keyboardInset = useRef(0);
+  // A picker covers the chat, and the keyboard goes while it is up and comes
+  // back after. Left to follow the keyboard through that, the list can miss
+  // its way back up and leave the newest message behind the message field,
+  // so it holds its place until the keyboard is back.
+  const covered = useSharedValue(false);
 
   // Scrolling up to the oldest message the app has fetches the page before it, until the chat's beginning.
   const older = useRef<"more" | "loading" | "none">("more");
@@ -113,6 +118,13 @@ function ChatWith({ agent }: { agent: AgentWithLatest }) {
   }
 
   async function onAttach(source: PickSource) {
+    if (KeyboardController.isVisible()) {
+      covered.value = true;
+      const back = KeyboardEvents.addListener("keyboardDidShow", () => {
+        back.remove();
+        covered.value = false;
+      });
+    }
     try {
       const added = await pick(source, MAX_FILES - picked.length);
       setPicked((current) => [...current, ...added].slice(0, MAX_FILES));
@@ -141,6 +153,7 @@ function ChatWith({ agent }: { agent: AgentWithLatest }) {
             {...props}
             inverted
             keyboardLiftBehavior="always"
+            freeze={covered}
             offset={keyboardOffset}
             onEndVisible={setAtEnd}
             onContentInsetChange={(inset) => {
@@ -162,6 +175,12 @@ function ChatWith({ agent }: { agent: AgentWithLatest }) {
         ListHeaderComponent={
           <View>
             <View style={styles.foot}>
+              {/* A new agent's chat says what to do first. Its instructions have it ask what it's for. */}
+              {!agent.latest && messages.length === 0 && !outgoing ? (
+                <Animated.View entering={SHOW} exiting={HIDE}>
+                  <Text style={[styles.hint, { color: theme.ink2 }]}>{agent.name} is new. Tell it what it's for.</Text>
+                </Animated.View>
+              ) : null}
               {/* The faded copy goes once the server's copy is in the chat, which may come over the event stream first. */}
               {outgoing && outgoing.after === newestMine ? (
                 <Animated.View entering={RISE} style={[styles.mine, styles.pending]}>
@@ -427,6 +446,7 @@ const styles = StyleSheet.create({
   replyingTitle: { fontSize: 13, fontWeight: "600" },
   replyingQuote: { fontSize: 13, lineHeight: 18 },
   note: { alignSelf: "center", textAlign: "center", fontSize: 13, lineHeight: 18, marginTop: 10, paddingHorizontal: 24 },
+  hint: { textAlign: "center", fontSize: 15, lineHeight: 20, paddingHorizontal: 24 },
   receipt: { fontSize: 11, lineHeight: 15, marginTop: 2, marginRight: 4 },
   resend: { fontSize: 13, fontWeight: "600", marginTop: 4, marginRight: 4 },
   workingRow: { flexDirection: "row", alignItems: "center", gap: 10, marginTop: 10, paddingLeft: 2 },
