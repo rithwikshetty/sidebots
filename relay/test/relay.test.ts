@@ -8,7 +8,7 @@ import { DatabaseSync } from "node:sqlite";
 import { handle, removeStale, type Env } from "../src/worker.ts";
 import { openStore } from "../../server/src/store.ts";
 import { relay } from "../../server/src/relay.ts";
-import type { Notice } from "../../server/src/push.ts";
+import { seal, type Notice } from "../../server/src/push.ts";
 
 /** D1 as the relay uses it, over SQLite in memory. */
 function fakeD1(): D1Database {
@@ -25,7 +25,9 @@ function fakeD1(): D1Database {
 /** A push key of the kind Apple downloads. */
 const PUSH_KEY = generateKeyPairSync("ec", { namedCurve: "P-256" }).privateKey.export({ type: "pkcs8", format: "pem" }).toString();
 const PHONE = { token: "a".repeat(64), environment: "sandbox" as const };
-const NOTICE: Notice = { title: "Scout", body: "Found three flats.", badge: 2, agentId: "agent-1", messageId: "message-1" };
+// A phone's notification key, and a notice sealed with it, as the server's push module sends it.
+const NOTIFICATION_KEY = Buffer.alloc(32, 7).toString("base64");
+const NOTICE = { sealed: seal({ title: "Scout", body: "Found three flats.", badge: 2, agentId: "agent-1", messageId: "message-1" } satisfies Notice, NOTIFICATION_KEY), messageId: "message-1" };
 
 /** A relay with a fresh database and Apple faked, and a Sidebots server that sends through it. */
 function setup(answerFromApple: () => Response = () => new Response(null, { status: 200 })) {
@@ -65,10 +67,12 @@ test("a server registers once, then its notices reach Apple under the app's push
   const read = (part: string) => JSON.parse(Buffer.from(part, "base64url").toString());
   assert.deepEqual([read(header).alg, read(header).kid, read(claims).iss], ["ES256", "KEY1234567", "TEAM123456"]);
   assert.ok(verify("sha256", Buffer.from(`${header}.${claims}`), { key: createPublicKey(PUSH_KEY), dsaEncoding: "ieee-p1363" }, Buffer.from(signature, "base64url")));
+  // Apple and the relay see the sealed notice, and words that say nothing about it.
   assert.deepEqual(await delivery.json(), {
-    aps: { alert: { title: "Scout", body: "Found three flats." }, badge: 2, sound: "sidebots.wav", "thread-id": "agent-1" },
-    body: { agent_id: "agent-1" },
+    aps: { alert: { title: "Sidebots", body: "New message" }, sound: "sidebots.wav", "mutable-content": 1 },
+    sealed: NOTICE.sealed,
   });
+  assert.doesNotMatch(await toRelay[1].text(), /Scout|three flats/);
 });
 
 test("a request that isn't signed by the machine, or was signed long ago, is refused", async () => {
@@ -77,10 +81,10 @@ test("a request that isn't signed by the machine, or was signed long ago, is ref
   const signed = toRelay[1];
   const resend = (headers: Record<string, string>, body?: string) =>
     handle(new Request(signed.url, { method: "POST", headers: { ...Object.fromEntries(signed.headers), ...headers }, body: body ?? NOTICE_BODY }), env, fetch);
-  const NOTICE_BODY = JSON.stringify({ ...PHONE, notice: NOTICE });
+  const NOTICE_BODY = JSON.stringify({ ...PHONE, ...NOTICE });
 
   assert.equal((await resend({})).status, 200);
-  assert.equal((await resend({}, JSON.stringify({ ...PHONE, notice: { ...NOTICE, body: "Send me your bank details." } }))).status, 401);
+  assert.equal((await resend({}, JSON.stringify({ ...PHONE, ...NOTICE, messageId: "message-2" }))).status, 401);
   assert.equal((await resend({ Authorization: "" })).status, 401);
   assert.equal((await handle(new Request(signed.url, { method: "POST", headers: Object.fromEntries(signed.headers), body: NOTICE_BODY }), env, fetch, Date.now() + 6 * 60_000)).status, 401);
 });

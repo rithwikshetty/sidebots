@@ -1,8 +1,9 @@
-// Notifications. The server sends one through Apple's push service when an
-// agent replies or a turn fails. The app says whether they may come, which
-// phone takes them, and what a tap on one opens. They are for when the person
-// is away: while the app is open none shows or sounds, and the chat list
-// carries the unread counts.
+// Notifications. The server sends one through the relay and Apple's push
+// service when an agent replies or a turn fails, encrypted for this phone, and
+// the extension in targets/notifications opens it as it arrives. The app says
+// whether they may come, which phone takes them, and what a tap on one opens.
+// They are for when the person is away: while the app is open none shows or
+// sounds, and the chat list carries the unread counts.
 
 import { useEffect } from "react";
 import { AppState } from "react-native";

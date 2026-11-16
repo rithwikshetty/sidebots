@@ -38,9 +38,9 @@ export function createApi(store: Store, queue: Queue, machine: string) {
   app.post("/pair", async (c) => {
     const code = credential(c.req.header("Authorization"), "Pairing");
     const { name } = await c.req.json<{ name?: string }>();
-    const key = code && store.pair(code, name?.trim() || "iPhone");
-    if (!key) return c.json({ error: "That code has been used or has run out. Make a new one on the Mac." }, 401);
-    const paired: Paired = { key, machine };
+    const keys = code && store.pair(code, name?.trim() || "iPhone");
+    if (!keys) return c.json({ error: "That code has been used or has run out. Make a new one on the Mac." }, 401);
+    const paired: Paired = { ...keys, machine };
     return c.json(paired, 201);
   });
 

@@ -12,6 +12,8 @@ import type { About, Agent, AgentWithLatest, Avatar, Found, Job, Memory, Message
 export type Person = { id: string; name: string; claude_config_dir: string };
 /** A phone that has paired with this server, and the person whose agents it reaches. */
 export type Device = { id: string; person_id: string; name: string; paired_at: number };
+/** Where Apple delivers a phone's notifications, and the key, in base64, that only that phone can read them with. */
+export type PushTarget = PushToken & { notificationKey: string };
 /** A file as it arrives with a message. */
 export type Upload = { name: string; bytes: Uint8Array };
 /** What a message can carry besides its text: files, the message it answers, and the job that sent it. */
@@ -66,6 +68,7 @@ create table if not exists devices (
   person_id   text not null references people(id),
   name        text not null,
   key_hash    text not null unique,
+  notification_key text not null,
   push_token  text,
   environment text check (environment in ('sandbox', 'production')),
   paired_at   integer not null
@@ -512,17 +515,27 @@ export function openStore(home: string) {
 
     /**
      * Pairs a phone that brings a pairing code, and uses the code up. Returns
-     * the key the phone sends with every request from then on, or nothing when
-     * the code is unknown, used or too old.
+     * the key the phone sends with every request from then on and the key its
+     * notifications are encrypted with, or nothing when the code is unknown,
+     * used or too old.
      */
-    pair(code: string, name: string): string | undefined {
+    pair(code: string, name: string): { key: string; notificationKey: string } | undefined {
       const pairing = db.prepare("delete from pairings where code_hash = ? returning person_id, expires_at").get(hashOf(code)) as
         | { person_id: string; expires_at: number }
         | undefined;
       if (!pairing || pairing.expires_at <= Date.now()) return undefined;
       const key = secret();
-      db.prepare("insert into devices (id, person_id, name, key_hash, paired_at) values (?, ?, ?, ?, ?)").run(randomUUID(), pairing.person_id, name, hashOf(key), Date.now());
-      return key;
+      // The server encrypts with this one, so it keeps the key itself. The phone reads it in base64.
+      const notificationKey = randomBytes(32).toString("base64");
+      db.prepare("insert into devices (id, person_id, name, key_hash, notification_key, paired_at) values (?, ?, ?, ?, ?, ?)").run(
+        randomUUID(),
+        pairing.person_id,
+        name,
+        hashOf(key),
+        notificationKey,
+        Date.now(),
+      );
+      return { key, notificationKey };
     },
 
     /** The paired phone that holds this key. */
@@ -536,9 +549,11 @@ export function openStore(home: string) {
       db.prepare("update devices set push_token = ?, environment = ? where id = ?").run(push.token, push.environment, deviceId);
     },
 
-    /** Where Apple delivers the notifications of the person's phones, for the phones that allow them. */
-    pushTokensFor(personId: string): PushToken[] {
-      return db.prepare("select push_token as token, environment from devices where person_id = ? and push_token is not null").all(personId) as PushToken[];
+    /** Where Apple delivers the notifications of the person's phones, for the phones that allow them, with each phone's notification key. */
+    pushTargetsFor(personId: string): PushTarget[] {
+      return db
+        .prepare("select push_token as token, environment, notification_key as notificationKey from devices where person_id = ? and push_token is not null")
+        .all(personId) as PushTarget[];
     },
 
     /** Forgets a token Apple no longer delivers to. The phone stays paired. */

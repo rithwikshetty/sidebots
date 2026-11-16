@@ -100,7 +100,7 @@ cd server
 pnpm pair Alex --host macbook.your-tailnet.ts.net
 ```
 
-It prints a QR code, and the same code as a link. The person scans the code in the app, or taps the link button above the camera and pastes the link. A code pairs one phone, once, within ten minutes. The phone gets a key of its own, which it keeps in the Keychain and sends with every request, and the server keeps only a hash of it.
+It prints a QR code, and the same code as a link. The person scans the code in the app, or taps the link button above the camera and pastes the link. A code pairs one phone, once, within ten minutes. The phone gets a key of its own, which it keeps in the Keychain and sends with every request, and the server keeps only a hash of it. It also gets the key its notifications are encrypted with, so neither the relay nor Apple can read them.
 
 ## Who pays for the model
 

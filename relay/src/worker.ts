@@ -1,7 +1,8 @@
 // The relay passes Sidebots servers' notifications to Apple, under the push key
-// of the developer account that publishes the app. It knows each server as a
-// machine: a public key the server registered, and an id. It keeps nothing
-// about people, agents or messages.
+// of the developer account that publishes the app. Each notification comes
+// encrypted for the phone it goes to, so the relay can't read it. It knows each
+// server as a machine: a public key the server registered, and an id. It keeps
+// nothing about people, agents or messages.
 //
 // Every request is signed with the machine's private key, in the header
 //
@@ -11,7 +12,7 @@
 // it registers, `time` is milliseconds since 1970, and the Ed25519 signature
 // covers `<method> <path>\n<time>\n<sha256 of the body, in hex>`.
 
-import { notify, type Notice, type PushKey } from "./apple.ts";
+import { notify, type PushKey } from "./apple.ts";
 
 export type Env = {
   DB: D1Database;
@@ -34,6 +35,9 @@ const ID_LETTERS = "abcdefghijklmnopqrstuvwxyz0123456789";
 const PUBLIC_KEY = /^[\w-]{43}$/;
 // An Apple device token as the iPhone reports it: hex, 32 bytes today, with room for Apple to lengthen it.
 const DEVICE_TOKEN = /^[0-9a-f]{64,200}$/;
+// An encrypted notice, in base64, small enough that Apple takes the notification it rides in, which is at most 4096 bytes.
+const SEALED = /^[A-Za-z0-9+/]{1,3800}={0,2}$/;
+const MESSAGE_ID = /^[\w-]{1,64}$/;
 
 const fromBase64 = (text: string) => Uint8Array.from(atob(text.replaceAll("-", "+").replaceAll("_", "/")), (char) => char.charCodeAt(0));
 const answer = (body: object, status = 200) => Response.json(body, { status });
@@ -83,9 +87,17 @@ export async function handle(request: Request<unknown, unknown>, env: Env, apple
   if (!known) return answer({ error: "No such machine." }, 404);
   if (!(await signedBy(known.public_key, request, pathname, time, signature, body))) return answer({ error: "The signature isn't the machine's." }, 401);
 
-  const { token, environment, notice } = JSON.parse(new TextDecoder().decode(body)) as { token?: string; environment?: string; notice?: Notice };
-  if (!token || !DEVICE_TOKEN.test(token) || (environment !== "sandbox" && environment !== "production") || !notice) {
-    return answer({ error: "A notice comes with the phone's token and its push service." }, 400);
+  const { token, environment, sealed, messageId } = JSON.parse(new TextDecoder().decode(body)) as Record<string, unknown>;
+  if (
+    typeof token !== "string" ||
+    !DEVICE_TOKEN.test(token) ||
+    (environment !== "sandbox" && environment !== "production") ||
+    typeof sealed !== "string" ||
+    !SEALED.test(sealed) ||
+    typeof messageId !== "string" ||
+    !MESSAGE_ID.test(messageId)
+  ) {
+    return answer({ error: "A notice comes encrypted, with the phone's token, its push service and the message it is about." }, 400);
   }
   const day = Math.floor(now / DAY_MS);
   const { sent } = (await env.DB.prepare(
@@ -96,7 +108,7 @@ export async function handle(request: Request<unknown, unknown>, env: Env, apple
   if (sent > Number(env.NOTICES_PER_DAY)) return answer({ error: "This machine has sent all the notifications it may today." }, 429);
 
   const push: PushKey = { key: env.APNS_KEY, keyId: env.APNS_KEY_ID, teamId: env.APNS_TEAM_ID };
-  return answer({ result: await notify(push, env.APNS_TOPIC, { token, environment }, notice, apple, now) });
+  return answer({ result: await notify(push, env.APNS_TOPIC, { token, environment }, { sealed, messageId }, apple, now) });
 }
 
 /** Removes the machines that have sent nothing for 60 days. */
