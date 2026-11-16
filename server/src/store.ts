@@ -22,8 +22,8 @@ export type Extras = { files?: Upload[]; replyTo?: string; jobId?: string; inter
 export type AgentChanges = Partial<Pick<Agent, "name" | "avatar_id" | "model" | "effort" | "muted" | "hidden">>;
 /** What the store tells its listeners about: a message that was added or changed status, or an agent that was added or deleted. */
 export type Change = { message: Message } | { agent: Agent; deleted: boolean };
-/** How this server is known to the relay: its signing key, and the id the relay gave it once it has registered. */
-export type Machine = { privateKey: string; id?: string };
+/** How this server is known to the relay: its signing key, and the id and the address phones reach it at, which the relay gives it once it has registered. */
+export type Machine = { privateKey: string; id?: string; address?: string };
 
 const SCHEMA = `
 create table if not exists people (
@@ -126,7 +126,8 @@ You don't know what you're for yet. If this is a new chat, ask what ${personName
 
 export function openStore(home: string) {
   mkdirSync(join(home, "agents"), { recursive: true });
-  const db = new DatabaseSync(join(home, "sidebots.sqlite"));
+  // The server and its commands open the database at once, as the Mac app runs them, so each waits its turn for a lock.
+  const db = new DatabaseSync(join(home, "sidebots.sqlite"), { timeout: 5000 });
   db.exec("pragma journal_mode = wal; pragma foreign_keys = on;");
   db.exec(SCHEMA);
 
@@ -201,6 +202,11 @@ export function openStore(home: string) {
       return person;
     },
 
+    /** Everyone on this server, in the order they were added. */
+    people(): Person[] {
+      return db.prepare("select * from people order by rowid").all() as Person[];
+    },
+
     personByName(name: string): Person | undefined {
       return db.prepare("select * from people where name = ?").get(name) as Person | undefined;
     },
@@ -210,13 +216,17 @@ export function openStore(home: string) {
     },
 
     /**
-     * Has the person's agents run on this Anthropic API key, from their next
-     * turn. The file is swapped in whole, since the server reads it for a turn
-     * that may start while a key is being saved.
+     * Has the person's agents run on this Anthropic API key from their next
+     * turn, or with no key, on the Claude login in their config folder. The
+     * file is swapped in whole, since the server reads it for a turn that may
+     * start while a key is being saved.
      */
-    setApiKey(personId: string, key: string): void {
+    setApiKey(personId: string, key: string | null): void {
+      const keys = apiKeys();
+      if (key === null) delete keys[personId];
+      else keys[personId] = key;
       const written = `${apiKeysPath}.new`;
-      writeFileSync(written, JSON.stringify({ ...apiKeys(), [personId]: key }), { mode: 0o600 });
+      writeFileSync(written, JSON.stringify(keys), { mode: 0o600 });
       renameSync(written, apiKeysPath);
     },
 
@@ -508,13 +518,14 @@ export function openStore(home: string) {
       return rows.map((row) => row.agent_id);
     },
 
-    /** Makes a code that pairs one phone as the person, once, within ten minutes. */
-    addPairing(personId: string): string {
+    /** Makes a code that pairs one phone as the person, once, within ten minutes. Returns the code and when it expires. */
+    addPairing(personId: string): { code: string; expiresAt: number } {
       const now = Date.now();
       db.prepare("delete from pairings where expires_at <= ?").run(now);
       const code = secret();
-      db.prepare("insert into pairings (code_hash, person_id, expires_at) values (?, ?, ?)").run(hashOf(code), personId, now + PAIRING_MS);
-      return code;
+      const expiresAt = now + PAIRING_MS;
+      db.prepare("insert into pairings (code_hash, person_id, expires_at) values (?, ?, ?)").run(hashOf(code), personId, expiresAt);
+      return { code, expiresAt };
     },
 
     /**
@@ -540,6 +551,16 @@ export function openStore(home: string) {
         Date.now(),
       );
       return { key, notificationKey };
+    },
+
+    /** Every paired phone, the first to pair first. */
+    devices(): Device[] {
+      return db.prepare("select id, person_id, name, paired_at from devices order by rowid").all() as Device[];
+    },
+
+    /** Unpairs a phone, which is refused from its next request. Returns the phone, or nothing when no phone has the id. */
+    removeDevice(id: string): Device | undefined {
+      return db.prepare("delete from devices where id = ? returning id, person_id, name, paired_at").get(id) as Device | undefined;
     },
 
     /** The paired phone that holds this key. */
