@@ -111,6 +111,10 @@ Each person pays for their own agents, in one of two ways:
 
 Anthropic's terms decide which you may use. A subscription is for the subscriber's own use. For a product built on the Agent SDK, as Sidebots is, Anthropic [asks for API keys](https://code.claude.com/docs/en/agent-sdk/overview) and doesn't allow Claude sign-ins to be offered to its users without its approval. So read the terms before you set Sidebots up for anyone but yourself, and when in doubt give each person an API key.
 
+## The website
+
+`site/` is the page at [sidebots.app](https://sidebots.app), with the privacy policy the App Store asks for. It is static files in `site/public`, served by Cloudflare. Publish it with `npx wrangler deploy` from `site/`, with Wrangler signed in to the account that holds the domain.
+
 ## Working on Sidebots
 
 ```sh

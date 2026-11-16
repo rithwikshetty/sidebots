@@ -1,0 +1,10 @@
+// The page at sidebots.app: static files in public/, served by Cloudflare.
+{
+  "name": "sidebots-site",
+  "compatibility_date": "2026-11-01",
+  "assets": { "directory": "./public", "html_handling": "drop-trailing-slash" },
+  "routes": [
+    { "pattern": "sidebots.app", "custom_domain": true },
+    { "pattern": "www.sidebots.app", "custom_domain": true }
+  ]
+}

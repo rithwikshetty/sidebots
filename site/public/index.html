@@ -1,0 +1,87 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sidebots</title>
+<meta name="description" content="Claude agents that run on your own Mac and text you on your iPhone when the work is done.">
+<link rel="icon" href="/icon.png">
+<link rel="apple-touch-icon" href="/icon.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Schibsted+Grotesk:wght@400;500;700;800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/site.css">
+</head>
+<body>
+<main>
+  <section class="hero">
+    <div class="pitch">
+      <h1>Claude agents that text you.</h1>
+      <p class="lede">Sidebots runs your own agents on your Mac, with your own Claude Code. Give one a job from your iPhone, put the phone away, and it texts you when the work is done.</p>
+      <div class="actions">
+        <a class="download" href="https://github.com/rithwikshetty/sidebots/releases/latest">Download for Mac</a>
+        <p class="soon">The iPhone app is coming to the App Store.</p>
+      </div>
+    </div>
+
+    <div class="thread" aria-label="An example chat with an agent called Scout">
+      <div class="head">
+        <span class="avatar big resting" style="--sheet: url(/avatars/moss.png)" aria-hidden="true"></span>
+        <span class="name">Scout</span>
+      </div>
+      <p class="bubble mine">Find me a flat in Brunswick under $650 a week. A garden would be nice.</p>
+      <p class="receipt">Read 9:02</p>
+      <div class="reply">
+        <span class="avatar replied" style="--sheet: url(/avatars/moss.png)" aria-hidden="true"></span>
+        <p class="bubble theirs">Found three. The one on Albert St has a garden and a second bedroom for $620. Want me to book an inspection for Saturday?</p>
+      </div>
+    </div>
+  </section>
+
+  <section class="setup">
+    <h2>Set it up once</h2>
+    <ol>
+      <li>
+        <h3>Download Sidebots for Mac and open it.</h3>
+        <p>It sits in your menu bar and starts with your Mac. Your agents, their chats and their memory stay on your Mac.</p>
+      </li>
+      <li>
+        <h3>Choose how your agents sign in to Claude.</h3>
+        <p>Use the Claude Code already signed in on your Mac, or paste an Anthropic API key.</p>
+      </li>
+      <li>
+        <h3>Scan the code with your iPhone.</h3>
+        <p>Open Sidebots on your phone and point it at the code your Mac shows. Your phone reaches your Mac from anywhere, on Wi-Fi or mobile data.</p>
+      </li>
+    </ol>
+  </section>
+
+  <section class="agents">
+    <div class="cast" aria-hidden="true">
+      <span class="avatar big resting" style="--sheet: url(/avatars/moss.png)"></span>
+      <span class="avatar big working" style="--sheet: url(/avatars/mochi.png)"></span>
+      <span class="avatar big resting" style="--sheet: url(/avatars/cog.png)"></span>
+    </div>
+    <h2>One chat per agent</h2>
+    <p>Each agent is a chat with its own job, its own memory and its own little character. Send it text, photos or files. It works through your skills and connections in Claude Code, keeps scheduled jobs, and sends one reply when it's done, not a stream of steps.</p>
+  </section>
+
+  <section class="know">
+    <h2>Before you start</h2>
+    <ul>
+      <li><strong>Agents act without asking.</strong> They run as you on your Mac, so they can read and change your files and run commands. Claude Code's own safety check decides what is safe to run.</li>
+      <li><strong>Your Mac does the work.</strong> While it is asleep or off, your agents wait, and anything you send reaches them when it wakes.</li>
+      <li><strong>You pay for the model.</strong> Agents use your Claude subscription or your API key. Sidebots itself is free.</li>
+      <li><strong>What you need.</strong> A Mac with Apple silicon on macOS 14 or later, and an iPhone.</li>
+      <li><strong>Your messages stay on your Mac.</strong> Notifications are encrypted so that only your phone can read them. <a href="/privacy">Read the privacy policy</a>.</li>
+    </ul>
+  </section>
+</main>
+
+<footer>
+  <img src="/icon.png" alt="" width="28" height="28">
+  <p>Sidebots is open source. <a href="https://github.com/rithwikshetty/sidebots">See the code on GitHub</a>.</p>
+  <a href="/privacy">Privacy</a>
+</footer>
+</body>
+</html>

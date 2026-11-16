@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sidebots privacy policy</title>
+<meta name="description" content="What Sidebots keeps, where, and who can read it.">
+<link rel="icon" href="/icon.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Schibsted+Grotesk:wght@400;500;700;800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/site.css">
+</head>
+<body>
+<main>
+  <article class="policy">
+    <a class="home" href="/">Sidebots</a>
+    <h1>Privacy policy</h1>
+    <p class="updated">16 November 2026</p>
+
+    <p>Sidebots has no accounts, no analytics and no ads. Your agents and everything you send them live on your own Mac. This page lists everything that leaves it.</p>
+
+    <h2>On your Mac</h2>
+    <p>Sidebots for Mac keeps your agents, their chats, their memory and the files you send them in a folder on your Mac. Nobody else has a copy, including us.</p>
+    <p>To answer you, an agent sends your messages and whatever it works on to Anthropic, through Claude Code, under your own Claude login or API key. Anthropic's <a href="https://www.anthropic.com/legal/privacy">privacy policy</a> covers that.</p>
+
+    <h2>On your iPhone</h2>
+    <p>The app keeps a copy of your chats on the phone, so they open at once and can be read offline. It keeps the keys that pair it with your Mac in the iPhone's Keychain. It uses the camera to scan your Mac's code and take photos you send, your photos and files only when you pick them, and the microphone for dictation, which your phone turns into text itself.</p>
+
+    <h2>Between your phone and your Mac</h2>
+    <p>Your phone reaches your Mac through Cloudflare's network, at an address made for your Mac. The connection is encrypted on the way. Cloudflare handles the traffic as it does for any site it serves, and Sidebots runs no code that reads or keeps it.</p>
+
+    <h2>Notifications</h2>
+    <p>Only the developer of an app can send its notifications, so your Mac sends each one through a small service we run on Cloudflare, called the relay, which passes it to Apple. Your Mac encrypts every notification with a key only your phone holds. The relay and Apple pass it along without being able to read it. Each one comes with the address Apple gave your phone for notifications, which the relay hands to Apple and doesn't keep.</p>
+    <p>The relay keeps, for each Mac: a random id, the public half of a key your Mac made, its address, and how many notifications it sent today. It keeps nothing about you, your agents or your messages. It forgets a Mac that has been quiet for 60 days.</p>
+
+    <h2>Questions</h2>
+    <p>Sidebots is open source, so you can read exactly what it does. Ask anything in the <a href="https://github.com/rithwikshetty/sidebots/issues">project's issues on GitHub</a>.</p>
+  </article>
+</main>
+</body>
+</html>

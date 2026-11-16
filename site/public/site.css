@@ -1,0 +1,185 @@
+/* The app's own colors: its plum tint, iOS's message greys, and plain white or black. */
+:root {
+  --paper: #fbfafc;
+  --ink: #1d1520;
+  --ink-2: #6b6170;
+  --line: #e7e1ea;
+  --panel: #f2ecf3;
+  --plum: #66023c;
+  --on-plum: #ffffff;
+  --link: #66023c;
+  --bubble: #e9e9eb;
+  color-scheme: light dark;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --paper: #000000;
+    --ink: #ffffff;
+    --ink-2: #98989f;
+    --line: #2c2c2e;
+    --panel: #161417;
+    --plum: #8a1f56;
+    --link: #e596bf;
+    --bubble: #262629;
+  }
+}
+
+* { box-sizing: border-box; }
+html { -webkit-text-size-adjust: 100%; }
+body {
+  margin: 0;
+  background: var(--paper);
+  color: var(--ink);
+  font: 400 18px/1.55 "Schibsted Grotesk", -apple-system, system-ui, sans-serif;
+}
+main { max-width: 1080px; margin: 0 auto; padding: 0 24px; }
+a { color: var(--link); text-underline-offset: 3px; }
+a:focus-visible { outline: 3px solid var(--link); outline-offset: 3px; border-radius: 4px; }
+h1, h2, h3 { margin: 0; text-wrap: balance; }
+p { margin: 0; }
+
+/* The hero: the pitch beside a real-looking chat with an agent. */
+.hero {
+  display: grid;
+  grid-template-columns: 1.15fr 1fr;
+  gap: 64px;
+  align-items: center;
+  padding: 96px 0 104px;
+}
+h1 {
+  font-size: clamp(46px, 7vw, 80px);
+  font-weight: 800;
+  line-height: 0.98;
+  letter-spacing: -0.035em;
+}
+.lede { margin-top: 24px; max-width: 32em; font-size: 20px; color: var(--ink-2); }
+.actions { margin-top: 36px; display: flex; flex-wrap: wrap; align-items: center; gap: 12px 20px; }
+.download {
+  display: inline-block;
+  padding: 15px 26px;
+  border-radius: 999px;
+  background: var(--plum);
+  color: var(--on-plum);
+  font-weight: 700;
+  text-decoration: none;
+}
+.download:hover { filter: brightness(1.12); }
+.soon { font-size: 16px; color: var(--ink-2); }
+
+.thread {
+  background: var(--panel);
+  border-radius: 36px;
+  padding: 28px 22px 32px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.head { display: flex; flex-direction: column; align-items: center; gap: 4px; margin-bottom: 18px; }
+.name { font-weight: 700; font-size: 17px; }
+.bubble { padding: 10px 15px; border-radius: 20px; font-size: 17px; line-height: 1.4; max-width: 82%; }
+.mine { align-self: flex-end; background: var(--plum); color: var(--on-plum); border-bottom-right-radius: 6px; }
+.theirs { background: var(--bubble); border-bottom-left-radius: 6px; }
+.receipt { align-self: flex-end; font-size: 13px; color: var(--ink-2); margin: -4px 4px 8px; }
+.reply { display: flex; align-items: flex-end; gap: 8px; }
+
+/*
+ * An agent's avatar, cut from its spritesheet as the app does: 8 cells across,
+ * 192 by 208 each, with the 144-pixel drawing 24 in and 48 down, and one row
+ * per state. A small avatar shows the sheet at a third of its size, so each
+ * drawing pixel is 3 screen pixels; a big one at two thirds.
+ */
+.avatar {
+  --scale: 0.3333;
+  --frames: 6;
+  --row: 0;
+  --frame-ms: 450ms;
+  display: inline-block;
+  flex: none;
+  width: calc(144px * var(--scale));
+  height: calc(153px * var(--scale));
+  background-image: var(--sheet);
+  background-size: calc(1536px * var(--scale)) calc(832px * var(--scale));
+  background-position-y: calc(-1 * (var(--row) * 208px + 39px) * var(--scale));
+  image-rendering: pixelated;
+  animation: frames calc(var(--frames) * var(--frame-ms)) steps(var(--frames)) infinite;
+}
+.avatar.big { --scale: 0.6667; }
+.avatar.working { --row: 1; --frame-ms: 150ms; }
+.avatar.replied { --row: 2; --frame-ms: 300ms; }
+@keyframes frames {
+  from { background-position-x: calc(-24px * var(--scale)); }
+  to { background-position-x: calc(-1 * (var(--frames) * 192px + 24px) * var(--scale)); }
+}
+
+/* The one moment on load: the chat plays out, as it would on the phone. */
+@media (prefers-reduced-motion: no-preference) {
+  .mine, .receipt, .reply { opacity: 0; animation: arrive 360ms ease-out forwards; }
+  .mine { animation-delay: 400ms; }
+  .receipt { animation-delay: 1100ms; }
+  .reply { animation-delay: 2200ms; }
+  @keyframes arrive { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
+}
+@media (prefers-reduced-motion: reduce) {
+  .avatar { animation: none; background-position-x: calc(-24px * var(--scale)); }
+}
+
+section + section { border-top: 1px solid var(--line); }
+section:not(.hero) { padding: 72px 0; }
+h2 { font-size: 34px; font-weight: 800; letter-spacing: -0.02em; line-height: 1.1; }
+h3 { font-size: 20px; font-weight: 700; line-height: 1.3; }
+
+.setup ol { list-style: none; counter-reset: step; margin: 36px 0 0; padding: 0; display: grid; grid-template-columns: repeat(3, 1fr); gap: 40px; }
+.setup li { counter-increment: step; }
+.setup li::before {
+  content: counter(step);
+  display: block;
+  font-size: 56px;
+  font-weight: 800;
+  line-height: 1;
+  color: var(--link);
+  margin-bottom: 14px;
+}
+.setup p { margin-top: 8px; color: var(--ink-2); }
+
+.agents > * { max-width: 40rem; }
+.cast { display: flex; gap: 18px; margin-bottom: 24px; }
+.agents p { margin-top: 14px; color: var(--ink-2); font-size: 19px; }
+
+.know ul { margin: 28px 0 0; padding: 0; list-style: none; max-width: 44em; display: grid; gap: 18px; }
+.know li { color: var(--ink-2); }
+.know strong { color: var(--ink); font-weight: 700; }
+
+/* As wide as the sections above it, so its line meets theirs. */
+footer {
+  width: min(1032px, calc(100% - 48px));
+  margin: 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 32px 0 48px;
+  border-top: 1px solid var(--line);
+  font-size: 15px;
+  color: var(--ink-2);
+}
+footer img { border-radius: 7px; }
+footer p { flex: 1; }
+
+@media (max-width: 820px) {
+  .hero { grid-template-columns: 1fr; gap: 48px; padding: 56px 0 64px; }
+  .setup ol { grid-template-columns: 1fr; gap: 32px; }
+  section:not(.hero) { padding: 56px 0; }
+  .lede { font-size: 18px; }
+}
+@media (max-width: 480px) {
+  main { padding: 0 16px; }
+  footer { width: calc(100% - 32px); padding: 28px 0 40px; flex-wrap: wrap; }
+}
+
+/* The privacy policy: one readable column. */
+.policy { max-width: 40em; padding: 72px 0 80px; }
+.policy h1 { font-size: clamp(38px, 6vw, 56px); }
+.policy h2 { font-size: 24px; margin-top: 40px; }
+.policy p, .policy li { margin-top: 12px; color: var(--ink-2); }
+.policy .updated { margin-top: 12px; }
+.policy ul { padding-left: 20px; }
+.home { display: inline-block; margin-bottom: 40px; font-weight: 700; }
