@@ -4,7 +4,7 @@ import { useLocalSearchParams, useRouter } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import Animated, { LayoutAnimationConfig } from "react-native-reanimated";
 import { ChevronRight, Trash2 } from "lucide-react-native";
-import { EFFORTS, MODELS, scheduleWords, type AgentWithLatest, type Job } from "@server/contract";
+import { PROVIDERS, scheduleWords, type AgentWithLatest, type Job } from "@server/contract";
 import { AvatarPicker } from "@/components/AvatarPicker";
 import { AvatarView } from "@/components/AvatarView";
 import { Choices } from "@/components/Choices";
@@ -142,18 +142,23 @@ function AgentAbout({ agent }: { agent: AgentWithLatest }) {
 
 /** The line under the agent's name: its model and effort, and whether it is muted or hidden. */
 function caption(agent: AgentWithLatest): string {
-  return [`${MODELS[agent.model]} · ${EFFORTS[agent.effort]} effort`, agent.muted ? "Muted" : null, agent.hidden ? "Hidden" : null].filter(Boolean).join(" · ");
+  const { models, efforts } = PROVIDERS[agent.provider];
+  return [`${models[agent.model]} · ${efforts[agent.effort]} effort`, agent.muted ? "Muted" : null, agent.hidden ? "Hidden" : null].filter(Boolean).join(" · ");
 }
 
 function SettingsTab({ agent, change }: { agent: AgentWithLatest; change: (changes: AgentChanges) => void }) {
   const theme = useTheme();
   const router = useRouter();
+  const provider = PROVIDERS[agent.provider];
   return (
     <>
-      <Section title="Model" note="What it answers with, and how hard it thinks first. Fable and High are the most capable, the slowest, and use the most of your Claude subscription or API credit.">
-        <Choices options={MODELS} value={agent.model} onChange={(model) => change({ model })} />
+      <Section
+        title="Model"
+        note={`What it answers with on ${provider.name}, and how hard it thinks first. A more capable model and more effort are slower, and use more of your plan or API credit.`}
+      >
+        <Choices options={provider.models} value={agent.model} onChange={(model) => change({ model })} />
         <Rule />
-        <Choices options={EFFORTS} value={agent.effort} onChange={(effort) => change({ effort })} />
+        <Choices options={provider.efforts} value={agent.effort} onChange={(effort) => change({ effort })} />
       </Section>
 
       <Section>

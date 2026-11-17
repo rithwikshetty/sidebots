@@ -23,7 +23,7 @@ struct SetupView: View {
 
   /// The Claude Code config folder the agents use: the person's own, or for someone new, the one Claude Code uses on this Mac.
   private var configDir: String {
-    server.person?.configDir ?? ProcessInfo.processInfo.environment["CLAUDE_CONFIG_DIR"]
+    server.account?.configDir ?? ProcessInfo.processInfo.environment["CLAUDE_CONFIG_DIR"]
       ?? FileManager.default.homeDirectoryForCurrentUser.appending(path: ".claude").path
   }
 
@@ -58,15 +58,15 @@ struct SetupView: View {
 
   /// How the agents sign in now, when the person is changing it.
   private var now: String {
-    guard changing, let person = server.person else { return "" }
-    return person.signIn == "api-key" ? "They use an API key now. " : "They use your Claude plan now. "
+    guard changing, let account = server.account else { return "" }
+    return account.signIn == "api-key" ? "They use an API key now. " : "They use your Claude plan now. "
   }
 
   private var header: some View {
     VStack(spacing: 8) {
       Image(nsImage: NSApp.applicationIconImage).resizable().frame(width: 72, height: 72)
       Text(changing ? "How your agents sign in" : "Set up Sidebots").font(.title2.bold())
-      Text("Your agents run on this Mac and use Claude. \(now)Choose how they sign in to Claude.")
+      Text("Your agents run on this Mac, on Claude Code. \(now)Choose how they sign in to Claude.")
       .multilineTextAlignment(.center)
       .foregroundStyle(.secondary)
       .fixedSize(horizontal: false, vertical: true)
@@ -75,14 +75,14 @@ struct SetupView: View {
 
   private func choices(_ account: ClaudeAccount?) -> some View {
     VStack(spacing: 10) {
-      let current = server.person?.signIn
+      let current = server.account?.signIn
       if account?.loggedIn == true {
         let who = account?.email.map { "Signed in as \($0). " } ?? ""
         Choice(
           symbol: "checkmark.seal",
-          title: current == "claude" ? "Keep using Claude Code on this Mac" : "Use Claude Code on this Mac",
+          title: current == "login" ? "Keep using Claude Code on this Mac" : "Use Claude Code on this Mac",
           detail: "\(who)Your agents use the same Claude plan."
-        ) { save(.claude) }
+        ) { save(.login) }
       } else {
         Choice(symbol: "person.crop.circle", title: "Sign in to Claude", detail: "For a Claude Pro or Max plan. Opens Claude in your browser.") {
           signIn()
@@ -158,7 +158,7 @@ struct SetupView: View {
         await check()
         if !failed.isEmpty { problem = failed }
       } else {
-        save(.claude)
+        save(.login)
       }
     }
   }

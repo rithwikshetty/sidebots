@@ -1,7 +1,8 @@
-// Starts the Sidebots server. `add-person` adds a person, `api-key` has a person's agents run on an
-// Anthropic API key, `pair` makes the code a phone pairs with, `devices` lists the paired phones,
+// Starts the Sidebots server. `add-person` adds a person, `api-key` has a person's agents on a provider
+// run on an API key, `pair` makes the code a phone pairs with, `devices` lists the paired phones,
 // `remove-device` unpairs one, and `status` says whether the server is running and how each person's
-// agents sign in to Claude. With `--json`, `pair`, `devices` and `status` print what the Mac app reads.
+// agents sign in to their providers. With `--json`, `pair`, `devices` and `status` print what the Mac
+// app reads.
 
 import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
@@ -12,8 +13,9 @@ import { parseArgs } from "node:util";
 import { serve } from "@hono/node-server";
 import qrcode from "qrcode-terminal";
 import { openStore, type Person } from "./store.ts";
-import { CONTRACT_HEADER } from "./contract.ts";
-import { claudeTurn, createQueue } from "./runner.ts";
+import { CONTRACT_HEADER, PROVIDERS, type Provider } from "./contract.ts";
+import { createQueue } from "./runner.ts";
+import { claude } from "./claude.ts";
 import { createApi } from "./api.ts";
 import { startPush } from "./push.ts";
 import { relay } from "./relay.ts";
@@ -38,31 +40,48 @@ function personNamed(name: string): Person {
   return person;
 }
 
-if (process.argv[2] === "add-person") {
-  const [name, configDir] = positionals;
-  if (!name || !configDir) {
-    console.error("usage: node src/main.ts add-person <name> <claude-config-dir>");
+/** The provider a command names. The command ends when Sidebots has no provider by that id. */
+function providerNamed(id: string | undefined): Provider {
+  if (!id || !Object.hasOwn(PROVIDERS, id)) {
+    console.error(`Sidebots runs agents on ${Object.keys(PROVIDERS).join(", ")}. Name one of them.`);
     process.exit(1);
   }
+  return id as Provider;
+}
+
+if (process.argv[2] === "add-person") {
+  const [name, providerId, configDir] = positionals;
+  if (!name || !configDir) {
+    console.error("usage: node src/main.ts add-person <name> <provider> <config-dir>");
+    process.exit(1);
+  }
+  const provider = providerNamed(providerId);
   if (store.personByName(name)) {
     console.error(`Somebody on this server is already called ${name}.`);
     process.exit(1);
   }
-  console.log(`Added ${store.addPerson({ name, configDir }).name}.`);
+  console.log(`Added ${store.addPerson({ name, provider, configDir }).name}, whose agents run on ${PROVIDERS[provider].name}.`);
   process.exit(0);
 }
 
 if (process.argv[2] === "api-key") {
-  const [name, path] = positionals;
+  const [name, providerId, path] = positionals;
   // The key comes in a file, so it is never typed into a command the shell remembers.
   const key = path && readFileSync(path, "utf8").trim();
   if (!name || (!key && !options.remove)) {
-    console.error("usage: node src/main.ts api-key <person> <file-holding-the-key>, or api-key <person> --remove");
+    console.error("usage: node src/main.ts api-key <person> <provider> <file-holding-the-key>, or api-key <person> <provider> --remove");
     process.exit(1);
   }
   const person = personNamed(name);
-  store.setApiKey(person.id, options.remove ? null : key);
-  console.log(options.remove ? `${person.name}'s agents now run on the Claude login in ${person.claude_config_dir}.` : `${person.name}'s agents now run on that API key.`);
+  const provider = providerNamed(providerId);
+  const account = store.account(person.id, provider);
+  if (!account) {
+    console.error(`${person.name} hasn't set up ${PROVIDERS[provider].name}.`);
+    process.exit(1);
+  }
+  store.setApiKey(person.id, provider, options.remove ? null : key);
+  const on = PROVIDERS[provider].name;
+  console.log(options.remove ? `${person.name}'s agents on ${on} now run on the login in ${account.config_dir}.` : `${person.name}'s agents on ${on} now run on that API key.`);
   process.exit(0);
 }
 
@@ -123,10 +142,15 @@ if (process.argv[2] === "status") {
     reachable: address ? await answers(`https://${address}`) : null,
     // Whether any agent has a turn queued or running, which an update waits for before it restarts the server.
     working: store.people().some((person) => store.agentsFor(person.id).some((agent) => agent.working)),
+    // How each person's agents sign in to each provider: with the login in their config folder for it, or an API key.
     people: store.people().map((person) => ({
       name: person.name,
-      config_dir: person.claude_config_dir,
-      sign_in: store.apiKey(person.id) ? "api-key" : "claude",
+      accounts: store.accounts(person.id).map((account) => ({
+        provider: account.provider,
+        name: PROVIDERS[account.provider].name,
+        config_dir: account.config_dir,
+        sign_in: store.apiKey(person.id, account.provider) ? "api-key" : "login",
+      })),
     })),
   };
   if (options.json) {
@@ -136,13 +160,16 @@ if (process.argv[2] === "status") {
   console.log(status.running ? `Sidebots is running on port ${port}.` : `Sidebots isn't running on port ${port}.`);
   if (address) console.log(status.reachable ? `Phones reach it at ${address}.` : `Phones can't reach it at ${address}.`);
   for (const person of status.people) {
-    console.log(person.sign_in === "api-key" ? `${person.name}'s agents run on an API key.` : `${person.name}'s agents run on the Claude login in ${person.config_dir}.`);
+    for (const account of person.accounts) {
+      const on = `${person.name}'s agents on ${account.name} run on`;
+      console.log(account.sign_in === "api-key" ? `${on} an API key.` : `${on} the login in ${account.config_dir}.`);
+    }
   }
   process.exit(0);
 }
 
 store.installStarterAvatars(join(dirname(fileURLToPath(import.meta.url)), "..", "..", "avatars"));
-const queue = createQueue(store, claudeTurn);
+const queue = createQueue(store, { claude });
 for (const agentId of store.requeueInterrupted()) void queue.kick(agentId);
 queue.startClock();
 

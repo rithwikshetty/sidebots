@@ -5,8 +5,17 @@ import Observation
 struct ServerStatus: Decodable {
   struct Person: Decodable {
     let name: String
+    let accounts: [Account]
+  }
+
+  /// How a person's agents sign in to a provider.
+  struct Account: Decodable {
+    /// The provider's id, such as `claude`.
+    let provider: String
+    /// The provider's name, such as Claude Code.
+    let name: String
     let configDir: String
-    /// `claude` for the Claude login in the person's config folder, or `api-key`.
+    /// `login` for the login in the person's config folder, or `api-key`.
     let signIn: String
   }
 
@@ -38,10 +47,10 @@ struct Failed: LocalizedError {
   let errorDescription: String?
 }
 
-/// How the person's agents sign in to Claude.
+/// How the person's agents sign in to Claude Code.
 enum SignIn {
   /// The Claude login in the person's Claude Code config folder.
-  case claude
+  case login
   case apiKey(String)
 }
 
@@ -52,7 +61,7 @@ enum SignIn {
   private(set) var status: ServerStatus?
   private(set) var phones: [Phone] = []
   /// Whether the Claude login the person's agents run on is signed in. Nil until known, and for agents on an API key.
-  private(set) var claudeSignedIn: Bool?
+  private(set) var signedIn: Bool?
 
   @ObservationIgnored private var process: Process?
   /// Set once the app is quitting: called when the server has stopped.
@@ -70,8 +79,14 @@ enum SignIn {
   /// The person the app sets up, named as the Mac knows its user.
   static let personName = NSFullUserName().isEmpty ? NSUserName() : NSFullUserName()
 
+  /// The provider the app sets the person's agents up on: Claude Code, which the app carries.
+  static let provider = "claude"
+
   /// The one person the app looks after: the first on the server.
   var person: ServerStatus.Person? { status?.people.first }
+
+  /// How the person's agents sign in to Claude Code.
+  var account: ServerStatus.Account? { person?.accounts.first { $0.provider == Self.provider } }
 
   /// What the server, its commands and Claude Code run with: the app's own
   /// environment, so that `SIDEBOTS_HOME`, `PORT` and `SIDEBOTS_RELAY` pass
@@ -134,18 +149,18 @@ enum SignIn {
   }
 
   /// Looks at whether the Claude login the person's agents run on is signed in.
-  func checkClaude() async {
-    if let person, person.signIn == "claude" {
-      claudeSignedIn = await Self.claudeAccount(configDir: person.configDir)?.loggedIn
+  func checkSignIn() async {
+    if let account, account.signIn == "login" {
+      signedIn = await Self.claudeAccount(configDir: account.configDir)?.loggedIn
     } else {
-      claudeSignedIn = nil
+      signedIn = nil
     }
   }
 
   /// Sets up the person the app looks after, or changes how their agents sign in.
   func setUp(_ signIn: SignIn, configDir: String) async throws {
     let person = self.person
-    if person == nil { try await command(["add-person", Self.personName, configDir]) }
+    if person == nil { try await command(["add-person", Self.personName, Self.provider, configDir]) }
     let name = person?.name ?? Self.personName
     switch signIn {
     case .apiKey(let key):
@@ -155,12 +170,12 @@ enum SignIn {
         throw Failed(errorDescription: "Sidebots couldn't save the key.")
       }
       defer { try? FileManager.default.removeItem(at: file) }
-      try await command(["api-key", name, file.path])
-    case .claude:
-      if person?.signIn == "api-key" { try await command(["api-key", name, "--remove"]) }
+      try await command(["api-key", name, Self.provider, file.path])
+    case .login:
+      if account?.signIn == "api-key" { try await command(["api-key", name, Self.provider, "--remove"]) }
     }
     await refresh()
-    await checkClaude()
+    await checkSignIn()
   }
 
   /// Makes a code that pairs one phone with the person the app looks after.

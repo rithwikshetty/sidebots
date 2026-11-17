@@ -26,7 +26,7 @@ export default function Welcome() {
       <ScrollView contentContainerStyle={styles.page}>
         <Image source={require("../../../assets/icon.png")} style={styles.icon} accessibilityIgnoresInvertColors />
         <Text style={[styles.title, { color: theme.ink }]}>Sidebots</Text>
-        <Text style={[styles.lead, { color: theme.ink2 }]}>Text your own Claude agents. They run on your Mac and reply when they're done.</Text>
+        <Text style={[styles.lead, { color: theme.ink2 }]}>Text your own AI agents. They run on your Mac and reply when they're done.</Text>
         <View style={[styles.card, { backgroundColor: theme.field }]}>
           <Step number={1}>
             Get Sidebots for Mac from <Text style={[styles.strong, { color: theme.ink }]}>sidebots.app</Text>, and open it.

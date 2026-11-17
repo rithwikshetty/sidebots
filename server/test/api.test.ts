@@ -6,16 +6,18 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { openStore } from "../src/store.ts";
 import { createQueue, type Turn, type TurnResult } from "../src/runner.ts";
+import { claude } from "../src/claude.ts";
 import { createApi } from "../src/api.ts";
 import { CONTRACT_VERSION } from "../src/contract.ts";
 import { startPush, type Notice, type Sealed } from "../src/push.ts";
 
-/** A turn's reply, as a fake Claude Code gives it. No reply means the fake gave its replies itself. */
+/** A turn's reply, as a fake provider gives it. No reply means the fake gave its replies itself. */
 type Answer = TurnResult & { reply?: string };
 
 /**
- * A Sidebots whose turns `answer` runs instead of Claude Code. The fake reads
- * the turn's first message, then replies to it.
+ * A Sidebots whose turns `answer` runs instead of Claude Code, which still
+ * words the failures and forgets the sessions. The fake reads the turn's
+ * first message, then replies to it.
  */
 function setup(answer: (turn: Turn) => Promise<Answer>, now: () => number = Date.now) {
   const runTurn = async (turn: Turn): Promise<TurnResult> => {
@@ -26,9 +28,9 @@ function setup(answer: (turn: Turn) => Promise<Answer>, now: () => number = Date
   };
   const home = mkdtempSync(join(tmpdir(), "sidebots-test-"));
   const store = openStore(home);
-  store.addPerson({ name: "Alex", configDir: "/config/alex" });
-  store.addPerson({ name: "Robin", configDir: "/config/robin" });
-  const queue = createQueue(store, runTurn, now);
+  store.addPerson({ name: "Alex", provider: "claude", configDir: "/config/alex" });
+  store.addPerson({ name: "Robin", provider: "claude", configDir: "/config/robin" });
+  const queue = createQueue(store, { claude: { ...claude, runTurn } }, now);
   const app = createApi(store, queue, "Test Mac");
   const notificationKeys = new Map<string, string>();
   /** Pairs another phone as the person, and returns what it sends with each request. */
@@ -277,7 +279,7 @@ test("a person with an API key has every turn, job and fresh start run on it, an
     if (turn.prompt.text.endsWith("buy it")) throw new Error(`Anthropic refused ${KEY}.`);
     return reply("ok");
   }, () => time);
-  store.setApiKey(store.personByName(HER)!.id, KEY);
+  store.setApiKey(store.personByName(HER)!.id, "claude", KEY);
   assert.equal(statSync(join(home, "api-keys.json")).mode & 0o777, 0o600);
   const notices: Notice[] = [];
   startPush(store, async (_device, notice) => {
@@ -307,7 +309,7 @@ test("a person with an API key has every turn, job and fresh start run on it, an
     ],
   );
 
-  // Alex has no key, so his turns run on the Claude login in his config folder.
+  // Alex has no key, so his turns run on the login in his config folder.
   const mine = (await call(ME, "POST", "/agents", { name: "Gym", avatarId: "hop" })).json;
   await say(ME, mine.id, "hello");
   await queue.kick(mine.id);
@@ -319,8 +321,8 @@ test("a person with an API key has every turn, job and fresh start run on it, an
   const sent = [messages, (await call(HER, "GET", "/agents")).json, notices];
   assert.equal(JSON.stringify(sent).includes(KEY), false);
 
-  // Without her key, her turns run on the Claude login in her config folder.
-  store.setApiKey(store.personByName(HER)!.id, null);
+  // Without her key, her turns run on the login in her config folder.
+  store.setApiKey(store.personByName(HER)!.id, "claude", null);
   await say(HER, hers.id, "hello again");
   await queue.kick(hers.id);
   assert.deepEqual([turns.at(-1)!.apiKey, turns.at(-1)!.configDir], [undefined, "/config/robin"]);
@@ -597,7 +599,7 @@ test("deleting an agent removes its messages, its jobs, its folder and its Claud
     return reply("ok");
   });
   const configDir = join(home, "claude");
-  store.addPerson({ name: "Sam", configDir });
+  store.addPerson({ name: "Sam", provider: "claude", configDir });
   const agent = (await call("Sam", "POST", "/agents", { name: "Scout", avatarId: "moss" })).json;
   const folder = store.agentHome(agent.id);
   const sessions = join(configDir, "projects", folder.replace(/[^a-zA-Z0-9]/g, "-"));

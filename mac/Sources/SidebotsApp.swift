@@ -34,11 +34,11 @@ import SwiftUI
       await server.refresh()
       if server.person == nil { showSetup() }
       // Every two seconds until the server answers, then every fifteen. Claude Code's sign-in is looked at once a minute.
-      var lookedAtClaude = ContinuousClock.now - .seconds(60)
+      var lookedAtSignIn = ContinuousClock.now - .seconds(60)
       while true {
-        if ContinuousClock.now - lookedAtClaude >= .seconds(60) {
-          await server.checkClaude()
-          lookedAtClaude = .now
+        if ContinuousClock.now - lookedAtSignIn >= .seconds(60) {
+          await server.checkSignIn()
+          lookedAtSignIn = .now
         }
         try? await Task.sleep(for: server.status?.running == true ? .seconds(15) : .seconds(2))
         await server.refresh()
@@ -132,7 +132,7 @@ import SwiftUI
 /**
  * The panel under the menu bar icon, laid out as the system's own menu bar
  * panels are: whether phones can reach this Mac at the top, then the paired
- * phones with a way to pair another, then how the agents sign in to Claude,
+ * phones with a way to pair another, then how the agents sign in to Claude Code,
  * and Open at login, Check for updates and Quit at the foot. Rows light up under the pointer.
  */
 struct MenuContent: View {
@@ -142,7 +142,7 @@ struct MenuContent: View {
   var body: some View {
     VStack(alignment: .leading, spacing: 0) {
       header
-      if let person = server.person {
+      if server.person != nil {
         Divider().padding(.vertical, 6)
         heading("Phones")
         if server.phones.isEmpty {
@@ -155,9 +155,11 @@ struct MenuContent: View {
         }
         PanelRow(symbol: "qrcode", title: "Pair a phone…", action: app.showPairing)
         Divider().padding(.vertical, 6)
-        heading("Claude")
-        PanelRow(symbol: person.signIn == "api-key" ? "key.fill" : "person.crop.circle.fill", title: signIn(person), detail: signInDetail(person), warning: signedOut(person)) {
-          Button(signedOut(person) ? "Sign in" : "Change") { app.showSetup() }.controlSize(.small)
+        if let account = server.account {
+          heading(account.name)
+          PanelRow(symbol: account.signIn == "api-key" ? "key.fill" : "person.crop.circle.fill", title: signIn(account), detail: signInDetail(account), warning: signedOut(account)) {
+            Button(signedOut(account) ? "Sign in" : "Change") { app.showSetup() }.controlSize(.small)
+          }
         }
       } else {
         Divider().padding(.vertical, 6)
@@ -212,18 +214,18 @@ struct MenuContent: View {
     }
   }
 
-  private func signedOut(_ person: ServerStatus.Person) -> Bool {
-    person.signIn == "claude" && server.claudeSignedIn == false
+  private func signedOut(_ account: ServerStatus.Account) -> Bool {
+    account.signIn == "login" && server.signedIn == false
   }
 
-  private func signIn(_ person: ServerStatus.Person) -> String {
-    if person.signIn == "api-key" { return "API key" }
-    return signedOut(person) ? "Signed out of Claude" : "Your Claude plan"
+  private func signIn(_ account: ServerStatus.Account) -> String {
+    if account.signIn == "api-key" { return "API key" }
+    return signedOut(account) ? "Signed out of Claude" : "Your Claude plan"
   }
 
-  private func signInDetail(_ person: ServerStatus.Person) -> String {
-    if person.signIn == "api-key" { return "Agents bill your Anthropic API key" }
-    return signedOut(person) ? "Agents can't answer until you sign in" : "Agents use your Claude subscription"
+  private func signInDetail(_ account: ServerStatus.Account) -> String {
+    if account.signIn == "api-key" { return "Agents bill your Anthropic API key" }
+    return signedOut(account) ? "Agents can't answer until you sign in" : "Agents use your Claude subscription"
   }
 }
 
