@@ -22,8 +22,8 @@ export type Env = {
   APNS_KEY: string;
   APNS_KEY_ID: string;
   APNS_TEAM_ID: string;
-  /** The identifier of the app the relay notifies. */
-  APNS_TOPIC: string;
+  /** The bundle identifiers of the apps the relay notifies, between spaces. The first is the published app, for a notice that names none. */
+  APNS_TOPICS: string;
   /** How many notifications one machine may send in a day. */
   NOTICES_PER_DAY: string;
   /** The zone machines' addresses are under, such as `sidebots.app`, and its id. */
@@ -136,8 +136,10 @@ export async function handle(request: Request<unknown, unknown>, env: Env, send:
     return new Response(null, { status: 204 });
   }
 
-  const { token, environment, sealed, messageId } = JSON.parse(new TextDecoder().decode(body)) as Record<string, unknown>;
+  const { token, environment, app, sealed, messageId } = JSON.parse(new TextDecoder().decode(body)) as Record<string, unknown>;
+  const topics = env.APNS_TOPICS.split(" ");
   if (
+    (app !== undefined && !topics.includes(app as string)) ||
     typeof token !== "string" ||
     !DEVICE_TOKEN.test(token) ||
     (environment !== "sandbox" && environment !== "production") ||
@@ -146,7 +148,7 @@ export async function handle(request: Request<unknown, unknown>, env: Env, send:
     typeof messageId !== "string" ||
     !MESSAGE_ID.test(messageId)
   ) {
-    return answer({ error: "A notice comes encrypted, with the phone's token, its push service and the message it is about." }, 400);
+    return answer({ error: "A notice comes encrypted, with the phone's token, its push service, the message it is about, and one of the relay's apps if it names one." }, 400);
   }
   const day = Math.floor(now / DAY_MS);
   const { sent } = (await env.DB.prepare(
@@ -157,7 +159,7 @@ export async function handle(request: Request<unknown, unknown>, env: Env, send:
   if (sent > Number(env.NOTICES_PER_DAY)) return answer({ error: "This machine has sent all the notifications it may today." }, 429);
 
   const push: PushKey = { key: env.APNS_KEY, keyId: env.APNS_KEY_ID, teamId: env.APNS_TEAM_ID };
-  return answer({ result: await notify(push, env.APNS_TOPIC, { token, environment }, { sealed, messageId }, send, now) });
+  return answer({ result: await notify(push, (app as string | undefined) ?? topics[0], { token, environment }, { sealed, messageId }, send, now) });
 }
 
 /** Removes the machines that have been quiet for 60 days, with their tunnels and addresses. One that Cloudflare fails to remove stays for the next day's run. */

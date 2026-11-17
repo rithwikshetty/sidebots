@@ -15,6 +15,8 @@ const KEEPALIVE_MS = 25_000;
 const MESSAGE_BYTES = 95 * 1024 * 1024;
 // An Apple device token as the iPhone reports it: hex, 32 bytes today, with room for Apple to lengthen it.
 const DEVICE_TOKEN = /^[0-9a-f]{64,200}$/;
+// An app's bundle identifier, as Apple allows it.
+const BUNDLE_ID = /^[A-Za-z0-9.-]{1,155}$/;
 const CONTENT_TYPES: Record<string, string> = {
   ".jpg": "image/jpeg",
   ".jpeg": "image/jpeg",
@@ -184,11 +186,11 @@ export function createApi(store: Store, queue: Queue, machine: string) {
 
   /** The phone says where Apple delivers its notifications, once it allows them. */
   app.put("/push-token", async (c) => {
-    const { token, environment } = await c.req.json<Partial<PushToken>>();
-    if (!token || !DEVICE_TOKEN.test(token) || (environment !== "sandbox" && environment !== "production")) {
-      return c.json({ error: "A push token comes with its push service." }, 400);
+    const { token, environment, app } = await c.req.json<Partial<PushToken>>();
+    if (!token || !DEVICE_TOKEN.test(token) || (environment !== "sandbox" && environment !== "production") || (app !== undefined && !BUNDLE_ID.test(app))) {
+      return c.json({ error: "A push token comes with its push service, and the app it is for when the app says." }, 400);
     }
-    const push: PushToken = { token, environment };
+    const push: PushToken = app === undefined ? { token, environment } : { token, environment, app };
     store.setPushToken(c.var.device.id, push);
     return c.json(push);
   });

@@ -94,13 +94,14 @@ pnpm install
 cp .env.example .env.local
 ```
 
-Fill in `.env.local` with a bundle identifier of your own and your Apple team ID. Then build a Release build onto a phone connected to the Mac:
+Fill in `.env.local` with a bundle identifier of your own and your Apple team ID. Then build the development app onto a phone connected to the Mac:
 
 ```sh
-npx expo run:ios --device --configuration Release
+APP_VARIANT=development npx expo prebuild --platform ios
+APP_VARIANT=development npx expo run:ios --device --configuration Release
 ```
 
-For other people's phones, open `mobile/ios/Sidebots.xcworkspace` in Xcode, archive the app and upload it to TestFlight.
+`APP_VARIANT=development` makes Sidebots Dev: an app of its own, with `.dev` after the bundle identifier and a "DEV" tag on its icon, so it sits beside the published Sidebots on the same phone and pairs on its own. Without it, the build is the published app. For TestFlight, prebuild without it, then archive `mobile/ios/Sidebots.xcworkspace` and upload it, from Xcode or with `xcodebuild -exportArchive`.
 
 ### Pair each phone
 

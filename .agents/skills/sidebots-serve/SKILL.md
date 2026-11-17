@@ -28,19 +28,20 @@ Only one Sidebots server runs at a time. The phone reaches port 4317 through `ta
 
 Install this checkout's app when the user wants to try the app or the phone. Install it also when this checkout's `mobile/` differs from main: `git diff --quiet main -- mobile` fails, or `git status --porcelain mobile` lists anything.
 
-7. A worktree without `mobile/.env.local` takes the main checkout's copy, which is the first path in `git worktree list`. Copy it with `umask 077` and `cp -n`. It holds the app's bundle identifier and Apple team. Without it the build gets `com.example.sidebots`, a different app from the one on the phone.
+7. A worktree without `mobile/.env.local` takes the main checkout's copy, which is the first path in `git worktree list`. Copy it with `umask 077` and `cp -n`. It holds the app's bundle identifier and Apple team. Without it the build gets `com.example.sidebots.dev`, a different app from the Sidebots Dev on the phone.
 8. Find the phone with `xcrun devicectl list devices`: the row whose Reality is `physical` and whose State is `available`. When it isn't listed or isn't available, ask the user to unlock it and connect it to the Mac by cable, then stop.
-9. From `mobile/`, build and install a Release build in the background, and keep the task ID:
+9. From `mobile/`, build and install the development app as a Release build in the background, and keep the task ID. `APP_VARIANT=development` makes it "Sidebots Dev", an app of its own with a "DEV" tag on its icon, beside the published Sidebots from TestFlight or the App Store. Prebuild first, because the native project keeps whichever app it was last made for:
 
    ```sh
-   CI=1 npx expo run:ios --device <phone identifier> --configuration Release --no-bundler
+   APP_VARIANT=development LANG=en_US.UTF-8 npx expo prebuild --platform ios
+   APP_VARIANT=development CI=1 npx expo run:ios --device <phone identifier> --configuration Release --no-bundler
    ```
 
    It is done at `Build Succeeded` and `Complete 100%`, after a few minutes. Build Release, never Debug. The app has no dev client, so a Debug build loads its code from Metro on the Mac when it opens. When the phone can't reach the Mac's network, it fails with "No script URL provided". A Release build carries its code, so it needs no Metro and works anywhere the phone has Tailscale.
 
    - `RequestDenied` at launch means the phone was locked. The app is installed, so ask the user to open it.
    - A signing error means Xcode isn't signed in with an Apple ID on the team in `mobile/.env.local`.
-   - A phone that has paired stays paired when the app is installed over itself. A phone that hasn't opens on a camera. The user can't see your terminal, so give them the command that prints its pairing code, to run in `server/`: `pnpm pair <their name> --host <address from step 6>`. The names are in the `people` table.
+   - Sidebots Dev pairs apart from the published app. Once it has paired, it stays paired when it is installed over itself. One that hasn't opens on a camera. The user can't see your terminal, so give them the command that prints its pairing code, to run in `server/`: `pnpm pair <their name> --host <address from step 6>`. The names are in the `people` table.
 
 ## Handing over
 

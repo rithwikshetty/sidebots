@@ -41,7 +41,9 @@ async function register(): Promise<void> {
   if (!isPaired() || (await Notifications.getPermissionsAsync()).status !== "granted") return;
   const token = (await Notifications.getDevicePushTokenAsync()).data;
   if (typeof token !== "string") return;
-  const push: PushToken = { token, environment: await environment() };
+  // A development build is an app of its own, which Apple delivers to under its own identifier.
+  const app = Application.applicationId ?? undefined;
+  const push: PushToken = { token, environment: await environment(), ...(app ? { app } : {}) };
   await request("/push-token", { method: "PUT", body: push });
 }
 

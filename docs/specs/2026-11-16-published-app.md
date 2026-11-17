@@ -27,7 +27,7 @@ The agents, the messages and the Claude sign-in stay on the person's Mac, as the
 - **The published app offers the Claude login.** Anthropic's Agent SDK documentation asks products built on it to use API keys unless Anthropic has approved offering Claude logins. Rithwik has decided to ship with the login, as other tools built on the SDK do, with the API key beside it. The person signs in to Claude Code on their own Mac through Anthropic's own sign-in, and Sidebots never reads, stores or passes on a login.
 - **A phone pairs with one Mac.** Pairing with another replaces the first.
 - **The app and the server say which version of the contract they speak.** They ship separately now, the app through the App Store and the server inside the Mac app, so each tells the person which one to update when they don't match.
-- **Earlier data is not carried over.** Sidebots is still in development, so the database starts from its schema with no list of table changes.
+- **A person's data carries over every update.** The server's database records which table changes it has had, and the server makes the rest when it starts.
 
 ## Behavior
 
@@ -100,6 +100,7 @@ create table devices (
   notification_key text not null,     -- encrypts this phone's notifications
   push_token       text,              -- the phone's Apple device token, once it allows notifications
   environment      text check (environment in ('sandbox', 'production')),
+  app              text,              -- the bundle identifier of the app the token is for, when it isn't the published app's
   paired_at        integer not null
 );
 
@@ -150,13 +151,13 @@ create table machines (
 
 A machine's id is random and one label deep, so Cloudflare's certificate for `*.sidebots.app` covers every machine. A daily scheduled run removes machines not seen for 60 days, with their tunnels and DNS records. New machines are limited to three a minute per network address, through the Workers rate limiting binding, which counts by the minute at most.
 
-The Worker's secrets are the push key with its key id and team id, and a Cloudflare API token that can edit tunnels on the account and DNS records on the zone. `APNS_TOPIC`, `ZONE`, `ZONE_ID`, `CLOUDFLARE_ACCOUNT_ID` and the limits are plain settings, so another person's relay is the same code with their own values.
+The Worker's secrets are the push key with its key id and team id, and a Cloudflare API token that can edit tunnels on the account and DNS records on the zone. `APNS_TOPICS`, `ZONE`, `ZONE_ID`, `CLOUDFLARE_ACCOUNT_ID` and the limits are plain settings, so another person's relay is the same code with their own values.
 
 A custom rule on the zone blocks any request whose host is a machine's address and which has no `Authorization` header. `relay/zone-rule.ts` sets it through Cloudflare's API, with a token that can also edit the zone's WAF rules.
 
 ### Notifications
 
-The notice the server builds is today's: title, body, badge, agent id and message id. The server encrypts it as JSON with AES-256-GCM under the phone's notification key and sends the relay the device token, the environment, the ciphertext and the message id.
+The notice the server builds is today's: title, body, badge, agent id and message id. The server encrypts it as JSON with AES-256-GCM under the phone's notification key and sends the relay the device token, the environment, the app the token is for when it isn't the published app, the ciphertext and the message id.
 
 The relay sends Apple an alert with the title "Sidebots", the body "New message", `mutable-content` set, the message id as the collapse id and the ciphertext beside them. It keeps nothing.
 
@@ -213,7 +214,6 @@ One manual check per slice, on a real phone: pair by scanning, reach the Mac on 
 
 ## Rollout
 
-- The server's schema is replaced, not migrated. A development home is deleted and made again.
 - The relay and the zone rule go live before any server depends on them.
 - The phone app reaches TestFlight once pairing, the relay and the tunnel work, and the App Store once the Mac app can be downloaded. App Review gets a pairing link to a machine kept running for it, made with a longer life than ten minutes by `pair --days <n>`.
 - The README is rewritten in two parts as the slices land: using Sidebots, and building it yourself.

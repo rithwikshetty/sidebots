@@ -86,7 +86,7 @@ function setup(answerFromApple: () => Response = () => new Response(null, { stat
     APNS_KEY: PUSH_KEY,
     APNS_KEY_ID: "KEY1234567",
     APNS_TEAM_ID: "TEAM123456",
-    APNS_TOPIC: "app.sidebots",
+    APNS_TOPICS: "app.sidebots app.sidebots.dev",
     NOTICES_PER_DAY: "3",
     ZONE: "sidebots.app",
     ZONE_ID: "0123456789abcdef0123456789abcdef",
@@ -122,6 +122,15 @@ function signed(method: string, path: string, machine: string, privateKey: KeyOb
   const signature = sign(null, Buffer.from(`${method} ${path}\n${time}\n${hash}`), privateKey).toString("base64url");
   return new Request(`https://relay.example${path}`, { method, headers: { Authorization: `Signature ${machine}:${time}:${signature}`, "CF-Connecting-IP": from } });
 }
+
+test("a notice for the development build reaches Apple under its app, and one for an app the relay doesn't serve goes nowhere", async () => {
+  const { send, toApple } = setup();
+
+  assert.equal(await send({ ...PHONE, app: "app.sidebots.dev" }, NOTICE), "sent");
+  assert.equal(toApple.at(-1)!.headers.get("apns-topic"), "app.sidebots.dev");
+  assert.equal(await send({ ...PHONE, app: "com.example.other" }, NOTICE), "failed");
+  assert.equal(toApple.length, 1);
+});
 
 test("a server registers once, then its notices reach Apple under the app's push key", async () => {
   const { store, send, toApple, toRelay } = setup();
