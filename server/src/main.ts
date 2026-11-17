@@ -149,7 +149,14 @@ const relayOrigin = process.env.SIDEBOTS_RELAY ?? "https://relay.sidebots.app";
 if (relayOrigin !== "off") {
   const toRelay = relay(store, relayOrigin, port);
   startPush(store, toRelay.notify);
-  startTunnel(store, toRelay.register, process.env.SIDEBOTS_CLOUDFLARED ?? "cloudflared");
+  const stopTunnel = startTunnel(store, toRelay.register, process.env.SIDEBOTS_CLOUDFLARED ?? "cloudflared");
+  // `cloudflared` runs apart from the server, so it would outlive a server that is stopped. The server stops it first.
+  for (const signal of ["SIGTERM", "SIGINT"] as const) {
+    process.once(signal, () => {
+      stopTunnel();
+      process.exit(0);
+    });
+  }
 } else console.log("The tunnel and notifications are off, as SIDEBOTS_RELAY is off.");
 
 // The machine's name as its owner knows it. macOS keeps one apart from the network's name for the machine.

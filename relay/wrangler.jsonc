@@ -12,7 +12,7 @@
     "APNS_TOPIC": "app.sidebots",
     "NOTICES_PER_DAY": "1000",
     "ZONE": "sidebots.app",
-    "ZONE_ID": "ZONE_ID_PENDING",
+    "ZONE_ID": "0e24ff7044b5dbca761e89793eaf1402",
     "CLOUDFLARE_ACCOUNT_ID": "a3214a4eaf739e455f2179a537fdf54b"
   },
   // New machines one network address may register in a minute.
