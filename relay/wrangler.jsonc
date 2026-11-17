@@ -9,7 +9,7 @@
   // Removes the machines that have gone quiet, once a day.
   "triggers": { "crons": ["17 3 * * *"] },
   "vars": {
-    "APNS_TOPIC": "app.sidebots",
+    "APNS_TOPICS": "app.sidebots app.sidebots.dev",
     "NOTICES_PER_DAY": "1000",
     "ZONE": "sidebots.app",
     "ZONE_ID": "0e24ff7044b5dbca761e89793eaf1402",

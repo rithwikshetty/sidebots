@@ -134,8 +134,13 @@ export type StreamEvent = { message: Message | null; agent: AgentWithLatest } | 
  * name of the machine it paired with.
  */
 export type Paired = { key: string; notificationKey: string; machine: string };
-/** Where Apple delivers a phone's notifications: its Apple device token, and which of Apple's push services issued it. */
-export type PushToken = { token: string; environment: "sandbox" | "production" };
+/**
+ * Where Apple delivers a phone's notifications: its Apple device token, which
+ * of Apple's push services issued it, and the bundle identifier of the app it
+ * is for, which a development build has apart from the published app. A phone
+ * that doesn't name its app is the published app.
+ */
+export type PushToken = { token: string; environment: "sandbox" | "production"; app?: string };
 export type Avatar = { id: string; displayName: string; description: string; spritesheetPath: string };
 
 /**

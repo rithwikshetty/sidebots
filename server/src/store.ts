@@ -25,6 +25,13 @@ export type Change = { message: Message } | { agent: Agent; deleted: boolean };
 /** How this server is known to the relay: its signing key, and the id, the address phones reach it at and the token its tunnel runs with, which the relay gives it once it has registered. */
 export type Machine = { privateKey: string; id?: string; address?: string; tunnelToken?: string };
 
+/**
+ * The changes made to the tables since the first published version, in order.
+ * A database records how many it has had in \`user_version\`. One made from
+ * SCHEMA, which has every change in it, starts with all of them.
+ */
+const TABLE_CHANGES = ["alter table devices add column app text"];
+
 const SCHEMA = `
 create table if not exists people (
   id                text primary key,
@@ -73,6 +80,7 @@ create table if not exists devices (
   notification_key text not null,
   push_token  text,
   environment text check (environment in ('sandbox', 'production')),
+  app         text,
   paired_at   integer not null
 );
 create table if not exists pairings (
@@ -129,7 +137,13 @@ export function openStore(home: string) {
   // The server and its commands open the database at once, as the Mac app runs them, so each waits its turn for a lock.
   const db = new DatabaseSync(join(home, "sidebots.sqlite"), { timeout: 5000 });
   db.exec("pragma journal_mode = wal; pragma foreign_keys = on;");
+  const made = db.prepare("select 1 from sqlite_master where type = 'table' and name = 'people'").get() !== undefined;
   db.exec(SCHEMA);
+  const version = made ? (db.prepare("pragma user_version").get() as { user_version: number }).user_version : TABLE_CHANGES.length;
+  db.exec("begin");
+  for (const change of TABLE_CHANGES.slice(version)) db.exec(change);
+  db.exec(`pragma user_version = ${TABLE_CHANGES.length}`);
+  db.exec("commit");
 
   const agentHome = (agentId: string) => join(home, "agents", agentId);
   const avatarsHome = join(home, "avatars");
@@ -155,7 +169,7 @@ export function openStore(home: string) {
     const row = db.prepare("select * from agents where id = ?").get(id) as AgentRow | undefined;
     return row && toAgent(row);
   };
-  const clearPushToken = db.prepare("update devices set push_token = null, environment = null where push_token = ?");
+  const clearPushToken = db.prepare("update devices set push_token = null, environment = null, app = null where push_token = ?");
   const jobsFor = (agentId: string): Job[] => (db.prepare("select * from jobs where agent_id = ? order by next_at").all(agentId) as JobRow[]).map(toJob);
   const withLatest = (agent: Agent): AgentWithLatest => ({
     ...agent,
@@ -571,14 +585,15 @@ export function openStore(home: string) {
     /** Remembers where Apple delivers a phone's notifications. A token another paired phone held becomes this one's. */
     setPushToken(deviceId: string, push: PushToken): void {
       clearPushToken.run(push.token);
-      db.prepare("update devices set push_token = ?, environment = ? where id = ?").run(push.token, push.environment, deviceId);
+      db.prepare("update devices set push_token = ?, environment = ?, app = ? where id = ?").run(push.token, push.environment, push.app ?? null, deviceId);
     },
 
     /** Where Apple delivers the notifications of the person's phones, for the phones that allow them, with each phone's notification key. */
     pushTargetsFor(personId: string): PushTarget[] {
       return db
-        .prepare("select push_token as token, environment, notification_key as notificationKey from devices where person_id = ? and push_token is not null")
-        .all(personId) as PushTarget[];
+        .prepare("select push_token as token, environment, app, notification_key as notificationKey from devices where person_id = ? and push_token is not null")
+        .all(personId)
+        .map(({ app, ...target }) => (app === null ? target : { ...target, app })) as PushTarget[];
     },
 
     /** Forgets a token Apple no longer delivers to. The phone stays paired. */

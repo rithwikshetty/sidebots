@@ -16,7 +16,7 @@ You need your own relay when you build your own copy of the app, since Apple del
 
 1. Create a push key (an APNs auth key) in your Apple Developer account.
 2. Create a Cloudflare API token with Account Cloudflare Tunnel Edit, Zone DNS Edit and Zone WAF Edit on your zone. Save it in a file with nothing else in it, readable only by you.
-3. In `wrangler.jsonc`, set the `routes` pattern to the relay's own address on your zone, `ZONE` to the zone, `ZONE_ID` to its id, `CLOUDFLARE_ACCOUNT_ID` to your account's id, and `APNS_TOPIC` to your app's bundle identifier.
+3. In `wrangler.jsonc`, set the `routes` pattern to the relay's own address on your zone, `ZONE` to the zone, `ZONE_ID` to its id, `CLOUDFLARE_ACCOUNT_ID` to your account's id, and `APNS_TOPICS` to your app's bundle identifier, then the development build's, between spaces.
 4. Sign in and make the database, then put its id in `wrangler.jsonc`:
 
    ```sh

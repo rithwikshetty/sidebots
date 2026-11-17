@@ -523,6 +523,7 @@ test("a reply or a failed turn notifies the person's phones, and a phone Apple h
     assert.equal((await call(phone, "PUT", "/push-token", { token, environment: "production" })).status, 200);
   }
   assert.equal((await call(ME, "PUT", "/push-token", { token: "nope", environment: "production" })).status, 400);
+  assert.equal((await call(ME, "PUT", "/push-token", { token: PHONE, environment: "sandbox", app: "not an app" })).status, 400);
   const agent = (await call(ME, "POST", "/agents", { name: "Wedding", avatarId: "mochi" })).json;
   // A reply counts as unread when it is newer than the chat was read, which begins at the agent's creation.
   await new Promise((resolve) => setTimeout(resolve, 1));

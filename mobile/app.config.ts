@@ -1,16 +1,20 @@
 import type { ExpoConfig } from "expo/config";
 
 // The Apple team and app identifier are personal, so they come from .env.local.
-const identifier = process.env.SIDEBOTS_BUNDLE_ID ?? "com.example.sidebots";
+// A development build, with APP_VARIANT=development, is an app of its own
+// beside the published one: its identifier ends in .dev, and it has its own
+// name and icon, with a "DEV" tag.
+const development = process.env.APP_VARIANT === "development";
+const identifier = `${process.env.SIDEBOTS_BUNDLE_ID ?? "com.example.sidebots"}${development ? ".dev" : ""}`;
 const MICROPHONE_PERMISSION = "Sidebots listens while you dictate a message, and turns what you say into text on your phone.";
 
 const config: ExpoConfig = {
-  name: "Sidebots",
+  name: development ? "Sidebots Dev" : "Sidebots",
   slug: "sidebots",
   version: "1.0.0",
-  scheme: "sidebots",
+  scheme: development ? "sidebots-dev" : "sidebots",
   orientation: "portrait",
-  icon: "./assets/icon.png",
+  icon: development ? "./assets/icon-dev.png" : "./assets/icon.png",
   userInterfaceStyle: "automatic",
   ios: {
     supportsTablet: false,
