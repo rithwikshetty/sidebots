@@ -9,12 +9,12 @@ An avatar is a 16 by 16 pixel character. You draw it once as a grid of letters. 
 
 ## Steps
 
-1. Pick a short name and a one-sentence description. If the person sent a drawing or photo, look at it and take the shape, colours and one or two signature details from it. A drawing is the person's own design, so keep its silhouette and colours as close as 16 by 16 pixels allow.
+1. Pick a short name and a one-sentence description. If the person sent a drawing or photo, look at it and take the shape, colours and one or two signature details from it. A drawing is the person's own design, so keep its silhouette and colours as close as 16 by 16 pixels allow. Pick the chat colour too: the drawing's most telling colour, which may be the body's or a detail's, like a red cap.
 2. Make a folder `~/.sidebots/avatars/<id>/`, where `<id>` is the name in lowercase with hyphens.
 3. Write `design.json` in that folder, following the format below.
 4. Run `node <this skill's folder>/render.ts ~/.sidebots/avatars/<id>`. Fix any error it prints and run it again.
 5. Open `spritesheet.png` and look at it. Check that the avatar reads as one clear character, that the eyes sit on the face in every row, and that nothing is cut off at the top. Redraw and render again until it does.
-6. Reply that the avatar is ready, using its name.
+6. Reply that the avatar is ready, using its name, and the chat colour it suggests.
 
 ## design.json
 
@@ -50,6 +50,7 @@ An avatar is a 16 by 16 pixel character. You draw it once as a grid of letters. 
 - Every other letter is a colour from `palette`. The usual set is `o` outline, `d` shade, `b` body, `l` highlight, `c` cheeks and `a` an accent, but any letters work. `e` (near-black ink) and `w` (white) are always available.
 - `eyes` places two 2 by 2 eyes: the grid row of their top edge, the left column of each, and the palette letter of the skin around them. The renderer draws the eyes itself in every frame, so open, blinking, happy and crossed eyes all come from this.
 - Leave the top four rows clear on the right-hand side. The renderer puts a heart or a sweat drop there.
+- `color`, if you give it, is the colour the app suggests for the chats of agents that wear the avatar: the person's messages and the send button. Without it, the body colour `b` is used. Either way the server darkens it until white text reads on it, so give the colour as it looks in the drawing. In your reply, say which colour you picked.
 
 ## Making it look good
 

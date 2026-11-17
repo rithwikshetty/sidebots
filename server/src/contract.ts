@@ -59,7 +59,8 @@ export const DEFAULT_EFFORT: Effort = "medium";
 /**
  * `read_at` is the time up to which the person has read the chat. A `muted`
  * agent sends no notifications. A `hidden` one is kept off the home screen
- * until it next has something to say.
+ * until it next has something to say. `color` fills the person's messages in
+ * the agent's chat, as `#RRGGBB`; null takes the colour of its avatar.
  */
 export type Agent = {
   id: string;
@@ -70,6 +71,7 @@ export type Agent = {
   effort: Effort;
   muted: boolean;
   hidden: boolean;
+  color: string | null;
   session_id: string | null;
   read_at: number;
   created_at: number;
@@ -141,7 +143,38 @@ export type Paired = { key: string; notificationKey: string; machine: string };
  * that doesn't name its app is the published app.
  */
 export type PushToken = { token: string; environment: "sandbox" | "production"; app?: string };
-export type Avatar = { id: string; displayName: string; description: string; spritesheetPath: string };
+/**
+ * An avatar, as its avatar.json describes it. `color` is the colour it gives
+ * the chats of agents that wear it, which takes white text at 4.5:1.
+ */
+export type Avatar = { id: string; displayName: string; description: string; spritesheetPath: string; color: string };
+
+/** A colour as `#RRGGBB`. */
+export const COLOR = /^#[0-9A-Fa-f]{6}$/;
+
+/**
+ * `color`, made dark enough to take white text at 4.5:1, the contrast WCAG
+ * asks of text, with its hue kept. A colour that already does comes back as
+ * it is, in capitals.
+ */
+export function readableColor(color: string): string {
+  const channel = (value: number) => (value <= 0.03928 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4);
+  const contrast = ([r, g, b]: number[]) => 1.05 / (0.2126 * channel(r) + 0.7152 * channel(g) + 0.0722 * channel(b) + 0.05);
+  let [r, g, b] = [1, 3, 5].map((at) => parseInt(color.slice(at, at + 2), 16) / 255);
+  // The colour's hue, saturation and lightness, so it can darken without changing hue.
+  const max = Math.max(r, g, b), min = Math.min(r, g, b);
+  let lightness = (max + min) / 2;
+  const saturation = max === min ? 0 : (max - min) / (1 - Math.abs(2 * lightness - 1));
+  const hue = max === min ? 0 : max === r ? ((g - b) / (max - min) + 6) % 6 : max === g ? (b - r) / (max - min) + 2 : (r - g) / (max - min) + 4;
+  while (contrast([r, g, b]) < 4.5) {
+    lightness -= 0.01;
+    const chroma = (1 - Math.abs(2 * lightness - 1)) * saturation;
+    const x = chroma * (1 - Math.abs((hue % 2) - 1));
+    const [r1, g1, b1] = hue < 1 ? [chroma, x, 0] : hue < 2 ? [x, chroma, 0] : hue < 3 ? [0, chroma, x] : hue < 4 ? [0, x, chroma] : hue < 5 ? [x, 0, chroma] : [chroma, 0, x];
+    [r, g, b] = [r1, g1, b1].map((value) => Math.min(1, Math.max(0, value + lightness - chroma / 2)));
+  }
+  return `#${[r, g, b].map((value) => Math.round(value * 255).toString(16).padStart(2, "0")).join("").toUpperCase()}`;
+}
 
 /**
  * An avatar's spritesheet. One row per state, in this order, with how many

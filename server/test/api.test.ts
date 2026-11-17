@@ -575,6 +575,22 @@ test("an agent's name, avatar, model and effort can be changed, and its turns ru
   assert.equal((await call(HER, "PATCH", `/agents/${agent.id}`, { name: "Mine" })).status, 404);
 });
 
+test("an agent's chat takes its avatar's colour until the person picks one, and goes back to it on null", async () => {
+  const { store, call } = setup(async () => reply("ok"));
+  store.installStarterAvatars(join(import.meta.dirname, "..", "..", "avatars"));
+  // Each avatar's colour is its body colour, dark enough to read white text on.
+  const colors = Object.fromEntries((await call(ME, "GET", "/avatars")).json.map((avatar: { id: string; color: string }) => [avatar.id, avatar.color]));
+  assert.equal(colors.mochi, "#E31775");
+  assert.equal(colors.skye, "#286BF5");
+
+  const agent = (await call(ME, "POST", "/agents", { name: "Scout", avatarId: "mochi" })).json;
+  assert.equal(agent.color, null);
+  assert.equal((await call(ME, "PATCH", `/agents/${agent.id}`, { color: "#0b7a6a" })).json.color, "#0B7A6A");
+  assert.equal((await call(ME, "GET", "/agents")).json[0].color, "#0B7A6A");
+  assert.equal((await call(ME, "PATCH", `/agents/${agent.id}`, { color: null })).json.color, null);
+  for (const color of ["teal", "#0B7A6", 7]) assert.equal((await call(ME, "PATCH", `/agents/${agent.id}`, { color })).status, 400);
+});
+
 test("deleting an agent removes its messages, its jobs, its folder and its Claude Code sessions", async () => {
   const { home, store, queue, call, say } = setup(async (turn) => {
     turn.scheduleJob({ what: "check", every_minutes: 5 });

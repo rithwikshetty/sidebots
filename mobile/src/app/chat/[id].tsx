@@ -23,14 +23,20 @@ import { useWorkingLine } from "@/lib/lines";
 import { preview } from "@/lib/messages";
 import { HIDE, MOVE, SHOW, arrive } from "@/lib/motion";
 import { askForPush, showChatOnScreen } from "@/lib/push";
-import { avatarStateOf, freshStart, loadMessages, loadOlder, markRead, send, useAgent, useMessages, useOnline } from "@/lib/state";
-import { type Theme, useTheme } from "@/lib/theme";
+import { avatarStateOf, freshStart, loadMessages, loadOlder, markRead, send, useAgent, useChatColor, useMessages, useOnline } from "@/lib/state";
+import { ChatColor, type Theme, useTheme } from "@/lib/theme";
 import { dayLabel, listTime, sameDay } from "@/lib/time";
 
 export default function Chat() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const agent = useAgent(id);
-  return agent ? <ChatWith agent={agent} /> : null;
+  // The chat takes the agent's colour, for the person's messages and the send button.
+  const color = useChatColor(agent);
+  return agent ? (
+    <ChatColor value={color}>
+      <ChatWith agent={agent} />
+    </ChatColor>
+  ) : null;
 }
 
 function ChatWith({ agent }: { agent: AgentWithLatest }) {

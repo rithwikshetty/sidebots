@@ -6,7 +6,7 @@ import { basename, join } from "node:path";
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
 
-import { DEFAULT_EFFORT, DEFAULT_MODEL } from "./contract.ts";
+import { COLOR, DEFAULT_EFFORT, DEFAULT_MODEL, readableColor } from "./contract.ts";
 import type { About, Agent, AgentWithLatest, Avatar, Found, Job, Memory, Message, PushToken, Schedule, Sender, Status } from "./contract.ts";
 
 export type Person = { id: string; name: string; claude_config_dir: string };
@@ -19,7 +19,7 @@ export type Upload = { name: string; bytes: Uint8Array };
 /** What a message can carry besides its text: files, the message it answers, and the job that sent it. */
 export type Extras = { files?: Upload[]; replyTo?: string; jobId?: string; interim?: boolean };
 /** What the person can change about an agent. */
-export type AgentChanges = Partial<Pick<Agent, "name" | "avatar_id" | "model" | "effort" | "muted" | "hidden">>;
+export type AgentChanges = Partial<Pick<Agent, "name" | "avatar_id" | "model" | "effort" | "muted" | "hidden" | "color">>;
 /** What the store tells its listeners about: a message that was added or changed status, or an agent that was added or deleted. */
 export type Change = { message: Message } | { agent: Agent; deleted: boolean };
 /** How this server is known to the relay: its signing key, and the id, the address phones reach it at and the token its tunnel runs with, which the relay gives it once it has registered. */
@@ -30,7 +30,10 @@ export type Machine = { privateKey: string; id?: string; address?: string; tunne
  * A database records how many it has had in \`user_version\`. One made from
  * SCHEMA, which has every change in it, starts with all of them.
  */
-const TABLE_CHANGES = ["alter table devices add column app text"];
+// The app's blue, for an avatar with no colour of its own and no design to take one from.
+const DEFAULT_COLOR = "#1F5FD6";
+
+const TABLE_CHANGES = ["alter table devices add column app text", "alter table agents add column color text"];
 
 const SCHEMA = `
 create table if not exists people (
@@ -47,6 +50,7 @@ create table if not exists agents (
   effort      text not null default 'medium',
   muted       integer not null default 0,
   hidden      integer not null default 0,
+  color       text,
   session_id  text,
   read_at     integer not null default 0,
   created_at  integer not null
@@ -194,11 +198,22 @@ export function openStore(home: string) {
       }
     },
 
+    /**
+     * The avatars, each with the colour it gives its agents' chats: the one its
+     * avatar.json names, or its body colour, `b` in its design.json, made dark
+     * enough to read white text on.
+     */
     avatars(): Avatar[] {
       if (!existsSync(avatarsHome)) return [];
       return readdirSync(avatarsHome)
         .filter((id) => AVATAR_ID.test(id) && existsSync(join(avatarsHome, id, "avatar.json")))
-        .map((id) => JSON.parse(readFileSync(join(avatarsHome, id, "avatar.json"), "utf8")) as Avatar);
+        .map((id) => {
+          const avatar = JSON.parse(readFileSync(join(avatarsHome, id, "avatar.json"), "utf8")) as Omit<Avatar, "color"> & { color?: string };
+          const design = join(avatarsHome, id, "design.json");
+          const body = existsSync(design) ? (JSON.parse(readFileSync(design, "utf8")) as { palette?: Record<string, string> }).palette?.b : undefined;
+          const color = [avatar.color, body].find((each) => each !== undefined && COLOR.test(each));
+          return { ...avatar, color: readableColor(color ?? DEFAULT_COLOR) };
+        });
     },
 
     /** The path of an avatar's spritesheet, if the avatar exists. */
@@ -260,6 +275,7 @@ export function openStore(home: string) {
         effort: DEFAULT_EFFORT,
         muted: false,
         hidden: false,
+        color: null,
         session_id: null,
         read_at: now,
         created_at: now,

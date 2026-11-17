@@ -6,9 +6,9 @@ import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { openStore } from "../src/store.ts";
 
-test("a database made before a table change gets the change and keeps what it holds", () => {
+test("a database made before the table changes gets them and keeps what it holds", () => {
   const home = mkdtempSync(join(tmpdir(), "sidebots-store-test-"));
-  // The people and devices tables as the first published version made them, with a phone that allows notifications.
+  // The tables the changes touch, as the first published version made them, with an agent and a phone that allows notifications.
   const old = new DatabaseSync(join(home, "sidebots.sqlite"));
   old.exec(`
     create table people (id text primary key, name text not null unique, claude_config_dir text not null);
@@ -16,12 +16,19 @@ test("a database made before a table change gets the change and keeps what it ho
       id text primary key, person_id text not null references people(id), name text not null, key_hash text not null unique,
       notification_key text not null, push_token text, environment text check (environment in ('sandbox', 'production')), paired_at integer not null
     );
+    create table agents (
+      id text primary key, person_id text not null references people(id), name text not null, avatar_id text not null,
+      model text not null default 'opus', effort text not null default 'medium', muted integer not null default 0,
+      hidden integer not null default 0, session_id text, read_at integer not null default 0, created_at integer not null
+    );
     insert into people values ('me', 'Rithwik', '/tmp/claude');
+    insert into agents (id, person_id, name, avatar_id, created_at) values ('scout', 'me', 'Scout', 'mochi', 1);
     insert into devices values ('phone', 'me', 'iPhone', 'hash', 'key', '${"a".repeat(64)}', 'production', 1);
   `);
   old.close();
 
   const store = openStore(home);
+  assert.deepEqual(store.agentsFor("me").map((agent) => [agent.name, agent.color]), [["Scout", null]]);
   assert.deepEqual(store.pushTargetsFor("me"), [{ token: "a".repeat(64), environment: "production", notificationKey: "key" }]);
   store.setPushToken("phone", { token: "b".repeat(64), environment: "sandbox", app: "app.sidebots.dev" });
   assert.deepEqual(store.pushTargetsFor("me"), [{ token: "b".repeat(64), environment: "sandbox", app: "app.sidebots.dev", notificationKey: "key" }]);
