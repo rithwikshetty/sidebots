@@ -44,8 +44,10 @@ import SwiftUI
     }
   }
 
-  func applicationWillTerminate(_ notification: Notification) {
-    server.stop()
+  /// Quits once the server has stopped, so that it doesn't outlive the app.
+  func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+    server.stop { sender.reply(toApplicationShouldTerminate: true) }
+    return .terminateLater
   }
 
   /// Opens the window that asks how the agents sign in. On first run it goes on to the QR code.

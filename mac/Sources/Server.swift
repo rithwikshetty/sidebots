@@ -53,7 +53,8 @@ enum SignIn {
   private(set) var claudeSignedIn: Bool?
 
   @ObservationIgnored private var process: Process?
-  @ObservationIgnored private var quitting = false
+  /// Set once the app is quitting: called when the server has stopped.
+  @ObservationIgnored private var quitting: (() -> Void)?
   @ObservationIgnored private var restartDelay = Duration.seconds(1)
 
   nonisolated private static let resources = Bundle.main.resourceURL!
@@ -109,19 +110,19 @@ enum SignIn {
   /// Starts the server again after it stops. One that keeps stopping straight away waits longer each time, up to a minute.
   private func stopped(after uptime: Duration) {
     process = nil
-    guard !quitting else { return }
+    if let quitting { return quitting() }
     restartDelay = uptime > .seconds(30) ? .seconds(1) : min(restartDelay * 2, .seconds(60))
     Task {
       try? await Task.sleep(for: restartDelay)
-      if !quitting { start() }
+      if quitting == nil { start() }
     }
   }
 
-  /// Stops the server as the app quits.
-  func stop() {
-    quitting = true
-    process?.terminate()
-    process?.waitUntilExit()
+  /// Stops the server as the app quits, and calls `done` once it has stopped.
+  func stop(then done: @escaping () -> Void) {
+    quitting = done
+    guard let process else { return done() }
+    process.terminate()
   }
 
   /// Reads the server's state and the paired phones.
