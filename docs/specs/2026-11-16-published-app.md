@@ -37,7 +37,7 @@ The agents, the messages and the Claude sign-in stay on the person's computer, a
 
 **The panel.** The menu bar icon shows whether Sidebots is running and reachable. A click opens a panel laid out like the system's own menu bar panels. A header says whether phones can reach the computer, with a green, orange or red dot. Then come the paired phones, each with a button to remove it, "Pair a phone…", how Claude is signed in with Change (or Sign in when signed out), an "Open at login" switch, and Quit.
 
-**Removing a phone.** Remove takes effect at once. The phone's next request is refused, and the app goes back to the welcome screen with a line saying the computer removed it. Its saved chats are cleared.
+**Removing a phone.** Remove takes effect at once. The phone's next request is refused, and the app goes back to the welcome screen with a line saying the computer removed it. Its saved chats are cleared. A person can also leave from the phone, with Disconnect in the app's side menu, which is how a phone moves to a different computer.
 
 **When the computer can't be reached.** As today: the app shows the saved chats with every avatar greyed out, and what the person types waits on the phone. A computer that is asleep or off can't be reached, and its agents and jobs pause until it wakes.
 
@@ -236,7 +236,6 @@ One manual check per slice, on a real phone: pair by scanning, reach the compute
 
 ## Open questions
 
-- **Where does "pair with a different computer" live in the phone app?** A person who replaces their computer can't be removed by the old one. Rithwik decides where the command goes.
 - **Does Sidebots ask Anthropic for approval to offer the Claude login?** It ships either way. Rithwik decides whether to ask.
 
 ## Work breakdown

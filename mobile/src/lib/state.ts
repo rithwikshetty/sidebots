@@ -6,9 +6,10 @@ import { useSyncExternalStore } from "react";
 import { AppState } from "react-native";
 import { fetch as streamingFetch } from "expo/fetch";
 import { File } from "expo-file-system";
+import { Image } from "expo-image";
 import Storage from "expo-sqlite/kv-store";
 import type { About, Agent, AgentWithLatest, Avatar, AvatarState, Effort, Found, Message, Model, StreamEvent } from "@server/contract";
-import { ApiError, behind, isPaired, onPairing, remote, request, unpair, type Behind } from "./api";
+import { ApiError, avatarSheet, behind, isPaired, onPairing, remote, request, unpair, type Behind } from "./api";
 import type { Picked } from "./files";
 
 type State = {
@@ -170,9 +171,21 @@ async function refresh(): Promise<void> {
   const ofKept = <T>(record: Record<string, T>) => Object.fromEntries(Object.entries(record).filter(([agentId]) => kept.has(agentId)));
   set({ pending: ofKept(state.pending), messages: ofKept(state.messages), about: ofKept(state.about) });
   set({ agents: agents.map(withPending), avatars });
+  keepSheets(avatars);
   // Changes made while the server was out of reach go now.
   for (const agentId of Object.keys(state.pending)) void sendChanges(agentId).catch(() => undefined);
   await Promise.all(Object.keys(state.messages).map(loadMessages));
+}
+
+/**
+ * Saves every avatar's spritesheet on the phone, so an avatar the phone
+ * hasn't drawn yet, as in the avatar picker, shows without a wait for the
+ * computer. A sheet the phone already has isn't fetched again.
+ */
+function keepSheets(avatars: Avatar[]): void {
+  const sheets = avatars.map((avatar) => avatarSheet(avatar.id));
+  if (sheets.length === 0) return;
+  void Image.prefetch(sheets.map((sheet) => sheet.uri), { cachePolicy: "disk", headers: sheets[0].headers }).catch(() => undefined);
 }
 
 /**

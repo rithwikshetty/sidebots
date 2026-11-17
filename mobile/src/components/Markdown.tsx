@@ -1,7 +1,7 @@
 import { useMemo } from "react";
-import { Linking, StyleSheet } from "react-native";
+import { StyleSheet } from "react-native";
 import { EnrichedMarkdownText, type MarkdownStyle } from "react-native-enriched-markdown";
-import * as WebBrowser from "expo-web-browser";
+import { openLink } from "@/lib/links";
 import { type Theme, useTheme } from "@/lib/theme";
 
 const FONT_SIZE = 17;
@@ -28,14 +28,6 @@ export function Markdown({ text, on = "bubble" }: { text: string; on?: Backdrop 
       onLinkPress={({ url }) => void openLink(url, theme)}
     />
   );
-}
-
-async function openLink(url: string, theme: Theme): Promise<void> {
-  if (/^https?:\/\//i.test(url)) {
-    await WebBrowser.openBrowserAsync(url, { controlsColor: theme.tintInk, presentationStyle: WebBrowser.WebBrowserPresentationStyle.PAGE_SHEET }).catch(() => undefined);
-  } else {
-    await Linking.openURL(url).catch(() => undefined);
-  }
 }
 
 type Backdrop = "bubble" | "page";

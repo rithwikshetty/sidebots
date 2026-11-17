@@ -4,13 +4,13 @@ import Animated, { LayoutAnimationConfig, useAnimatedStyle, withTiming } from "r
 import Swipeable, { type SwipeableMethods } from "react-native-gesture-handler/ReanimatedSwipeable";
 import { useRouter } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { KeyboardStickyView } from "react-native-keyboard-controller";
-import { Bell, BellOff, ChevronRight, Eye, EyeOff, Plus, Search, Trash2 } from "lucide-react-native";
+import { Bell, BellOff, ChevronRight, Eye, EyeOff, Menu, Plus, Search, Trash2, X } from "lucide-react-native";
 import type { AgentWithLatest, Found } from "@server/contract";
 import { Glass } from "@/components/Glass";
 import { AvatarView } from "@/components/AvatarView";
 import { EdgeFade } from "@/components/EdgeFade";
 import { FadingText } from "@/components/FadingText";
+import { useSideMenu } from "@/components/SideMenu";
 import { confirmDelete, problem } from "@/lib/alerts";
 import { UPDATE, type Behind } from "@/lib/api";
 import { useWorkingLine } from "@/lib/lines";
@@ -20,13 +20,12 @@ import { avatarStateOf, changeAgent, findMessages, useAgents, useAvatars, useBeh
 import { usePush } from "@/lib/push";
 import { useTheme } from "@/lib/theme";
 import { listTime } from "@/lib/time";
+import { ScrollWaitsForMenuSwipe } from "../../modules/side-menu-swipe/src";
 
-const ADD_BUTTON = 44;
-const SEARCH_HEIGHT = 44;
+// The height of the bar that floats at the top, which is the size of each round button in it.
+const BAR = 44;
 // The search field and an unread count keep their size, and their text fits it up to this text size.
 const FIXED_MAX_SCALE = 1.3;
-// The room between the search field and the home indicator, or the keyboard once it is up.
-const SEARCH_GAP = 8;
 // How long the person rests from typing before the server is asked.
 const SEARCH_DELAY_MS = 200;
 // How much of a found message shows before the words that matched.
@@ -45,15 +44,17 @@ type Row = { agent: AgentWithLatest; found?: Found };
 
 /**
  * The home screen. It has no title bar and no heading: the person's agents,
- * with a glass button for a new agent floating at the top right and a glass
- * search field floating at the bottom, where a thumb reaches it. The field
- * rises with the keyboard. A swipe left on an agent shows what can be done
- * to it: mute, hide and delete. Hidden agents wait under a line at the
- * list's end, which a tap opens. A person with no agents yet is pointed at
- * the + button. When the computer and the app speak different versions of the
- * contract, a line saying which to update takes the agents' place. While the search field holds text, the list
- * is the agents whose name matches and then the messages that contain it,
- * from every chat. Rows slide to their new places as agents move up the
+ * with glass buttons floating over them at the top, one for the side menu on
+ * the left and, on the right, one for search and one for a new agent. Search
+ * puts a glass field in the buttons' place, with the keyboard up and a
+ * button to close it. A swipe right opens the side menu, and a swipe left on
+ * an agent shows what can be done to it: mute, hide and delete. Hidden
+ * agents wait under a line at the list's end, which a tap opens. A person
+ * with no agents yet is pointed at the + button. When the computer and the
+ * app speak different versions of the contract, a line saying which to
+ * update takes the agents' place. While the search field holds text, the
+ * list is the agents whose name matches and then the messages that contain
+ * it, from every chat. Rows slide to their new places as agents move up the
  * list, and fade in and out as they come and go.
  */
 export default function Home() {
@@ -66,6 +67,8 @@ export default function Home() {
   // The avatars come with the computer's first answer, so until then the phone can't tell whether there are no agents.
   const loaded = useAvatars().length > 0;
   const empty = loaded && agents.length === 0;
+  const menu = useSideMenu();
+  const [searching, setSearching] = useState(false);
   const [typed, setTyped] = useState("");
   const search = typed.trim();
   const found = useFound(search);
@@ -103,10 +106,11 @@ export default function Home() {
           keyExtractor={(row) => row.found?.id ?? row.agent.id}
           itemLayoutAnimation={MOVE}
           contentInsetAdjustmentBehavior="never"
-          contentContainerStyle={{ flexGrow: 1, paddingTop: insets.top + ADD_BUTTON + 12, paddingBottom: insets.bottom + SEARCH_GAP + SEARCH_HEIGHT + 16 }}
+          contentContainerStyle={{ flexGrow: 1, paddingTop: insets.top + BAR + 12, paddingBottom: insets.bottom + 16 }}
           // A drag lowers the keyboard, and a tap on a row opens it with the keyboard still up.
           keyboardDismissMode="on-drag"
           keyboardShouldPersistTaps="handled"
+          ListHeaderComponent={<ScrollWaitsForMenuSwipe />}
           ListEmptyComponent={
             behind ? (
               <Notice title={UPDATE[behind]} note={BEHIND_NOTE[behind]} />
@@ -142,42 +146,56 @@ export default function Home() {
           }
         />
       </LayoutAnimationConfig>
-      <EdgeFade edge="top" height={insets.top + ADD_BUTTON + 16} solid={insets.top} />
-      {behind ? null : (
-        <Pressable
-          onPress={() => router.push("/new-agent")}
-          accessibilityRole="button"
-          accessibilityLabel="New agent"
-          style={[styles.add, { top: insets.top }]}>
-          <Glass interactive style={styles.addGlass}>
-            <Plus size={24} strokeWidth={2.25} color={theme.tintInk} />
-          </Glass>
-        </Pressable>
-      )}
-      {/* The keyboard covers the home indicator, so the field rises by the keyboard's height less that inset. */}
-      {behind || empty ? null : (
-        <KeyboardStickyView offset={{ closed: 0, opened: insets.bottom }} style={styles.sticky}>
-          <EdgeFade edge="bottom" height={insets.bottom + SEARCH_GAP + SEARCH_HEIGHT + 16} solid={insets.bottom} />
-          <View style={[styles.search, { paddingBottom: insets.bottom + SEARCH_GAP }]}>
-            <Glass style={styles.searchGlass}>
-              <Search size={18} strokeWidth={2.25} color={theme.ink2} />
-              <TextInput
-                value={typed}
-                onChangeText={setTyped}
-                placeholder="Search"
-                placeholderTextColor={theme.ink2}
-                selectionColor={theme.tintInk}
-                autoCorrect={false}
-                returnKeyType="search"
-                clearButtonMode="while-editing"
+      <EdgeFade edge="top" height={insets.top + BAR + 16} solid={insets.top} />
+      {searching ? (
+        <Animated.View key="search" entering={SHOW} exiting={HIDE} style={[styles.bar, { top: insets.top }]}>
+          <Glass style={styles.searchGlass}>
+            <Search size={18} strokeWidth={2.25} color={theme.ink2} />
+            <TextInput
+              autoFocus
+              value={typed}
+              onChangeText={setTyped}
+              placeholder="Search"
+              placeholderTextColor={theme.ink2}
+              selectionColor={theme.tintInk}
+              autoCorrect={false}
+              returnKeyType="search"
+              clearButtonMode="while-editing"
               maxFontSizeMultiplier={FIXED_MAX_SCALE}
-                style={[styles.searchText, { color: theme.ink }]}
-              />
-            </Glass>
+              style={[styles.searchText, { color: theme.ink }]}
+            />
+          </Glass>
+          <BarButton
+            icon={X}
+            label="Close search"
+            onPress={() => {
+              setTyped("");
+              setSearching(false);
+            }}
+          />
+        </Animated.View>
+      ) : (
+        <Animated.View key="buttons" entering={SHOW} exiting={HIDE} pointerEvents="box-none" style={[styles.bar, { top: insets.top }]}>
+          <BarButton icon={Menu} label="Menu" onPress={menu.open} />
+          <View style={styles.barEnd}>
+            {behind || empty ? null : <BarButton icon={Search} label="Search" onPress={() => setSearching(true)} />}
+            {behind ? null : <BarButton icon={Plus} label="New agent" onPress={() => router.push("/new-agent")} />}
           </View>
-        </KeyboardStickyView>
+        </Animated.View>
       )}
     </View>
+  );
+}
+
+/** A round glass button of the bar that floats at the top. */
+function BarButton({ icon: Icon, label, onPress }: { icon: ComponentType<{ size?: number; color?: string; strokeWidth?: number }>; label: string; onPress: () => void }) {
+  const theme = useTheme();
+  return (
+    <Pressable onPress={onPress} accessibilityRole="button" accessibilityLabel={label}>
+      <Glass interactive style={styles.barButton}>
+        <Icon size={24} strokeWidth={2.25} color={theme.tintInk} />
+      </Glass>
+    </Pressable>
   );
 }
 
@@ -216,6 +234,15 @@ function useFound(text: string): Found[] | null {
 function AgentActions({ agent, opened, children }: { agent: AgentWithLatest; opened: RefObject<SwipeableMethods | null>; children: ReactNode }) {
   const theme = useTheme();
   const row = useRef<SwipeableMethods>(null);
+  const { holdSwipe } = useSideMenu();
+  // Whether this row's actions are showing. A row that leaves the list with them showing, as when a search no longer finds it, hands the swipe back.
+  const showing = useRef(false);
+  useEffect(
+    () => () => {
+      if (showing.current) holdSwipe(false);
+    },
+    [holdSwipe],
+  );
   const change = (changes: AgentChanges) => void changeAgent(agent.id, changes).catch((failure) => problem("Couldn't change that", failure));
   const act = (action: () => void) => () => {
     row.current?.close();
@@ -230,6 +257,15 @@ function AgentActions({ agent, opened, children }: { agent: AgentWithLatest; ope
       onSwipeableWillOpen={() => {
         if (opened.current !== row.current) opened.current?.close();
         opened.current = row.current;
+        showing.current = true;
+        holdSwipe(true);
+      }}
+      // The row another one's opening closed has already handed the swipe on.
+      onSwipeableWillClose={() => {
+        showing.current = false;
+        if (opened.current !== row.current) return;
+        opened.current = null;
+        holdSwipe(false);
       }}
       renderRightActions={() => (
         <View style={styles.actions}>
@@ -320,16 +356,15 @@ function foundLine(found: Found, search: string): string {
 
 const styles = StyleSheet.create({
   screen: { flex: 1 },
-  sticky: { position: "absolute", left: 0, right: 0, bottom: 0 },
-  search: { paddingHorizontal: 16 },
-  searchGlass: { height: SEARCH_HEIGHT, borderRadius: SEARCH_HEIGHT / 2, flexDirection: "row", alignItems: "center", gap: 8, paddingLeft: 14, paddingRight: 8, overflow: "hidden" },
-  searchText: { flex: 1, height: SEARCH_HEIGHT, fontSize: 17, padding: 0 },
+  bar: { position: "absolute", left: 16, right: 16, zIndex: 2, flexDirection: "row", justifyContent: "space-between", gap: 8 },
+  barEnd: { flexDirection: "row", gap: 8 },
+  barButton: { width: BAR, height: BAR, borderRadius: BAR / 2, alignItems: "center", justifyContent: "center", overflow: "hidden" },
+  searchGlass: { flex: 1, height: BAR, borderRadius: BAR / 2, flexDirection: "row", alignItems: "center", gap: 8, paddingLeft: 14, paddingRight: 8, overflow: "hidden" },
+  searchText: { flex: 1, height: BAR, fontSize: 17, padding: 0 },
   empty: { textAlign: "center", fontSize: 15, marginTop: 32 },
-  notice: { flex: 1, justifyContent: "center", gap: 6, paddingHorizontal: 32, paddingBottom: ADD_BUTTON },
+  notice: { flex: 1, justifyContent: "center", gap: 6, paddingHorizontal: 32, paddingBottom: BAR },
   noticeTitle: { fontSize: 20, fontWeight: "600", textAlign: "center" },
   noticeNote: { fontSize: 15, lineHeight: 20, textAlign: "center" },
-  add: { position: "absolute", right: 16, zIndex: 2 },
-  addGlass: { width: ADD_BUTTON, height: ADD_BUTTON, borderRadius: ADD_BUTTON / 2, alignItems: "center", justifyContent: "center", overflow: "hidden" },
   row: { flexDirection: "row", alignItems: "center", gap: 12, paddingLeft: 16 },
   body: { flex: 1, minHeight: 76, justifyContent: "center", paddingRight: 16, paddingVertical: 10, borderBottomWidth: StyleSheet.hairlineWidth },
   top: { flexDirection: "row", justifyContent: "space-between", alignItems: "baseline", gap: 8 },
