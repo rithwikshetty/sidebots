@@ -17,6 +17,7 @@ import SwiftUI
 /// Starts the server with the app, stops it as the app quits, and opens the app's windows.
 @MainActor @Observable final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
   let server = Server()
+  @ObservationIgnored private(set) lazy var updater = Updater(server: server)
   private(set) var openAtLogin = SMAppService.mainApp.status == .enabled
   @ObservationIgnored private var windows: [String: NSWindow] = [:]
   @ObservationIgnored private var terminating: DispatchSourceSignal?
@@ -28,6 +29,7 @@ import SwiftUI
     terminating?.setEventHandler { NSApp.terminate(nil) }
     terminating?.resume()
     server.start()
+    _ = updater
     Task {
       await server.refresh()
       if server.person == nil { showSetup() }
@@ -40,6 +42,7 @@ import SwiftUI
         }
         try? await Task.sleep(for: server.status?.running == true ? .seconds(15) : .seconds(2))
         await server.refresh()
+        updater.installIfIdle()
       }
     }
   }
@@ -130,7 +133,7 @@ import SwiftUI
  * The panel under the menu bar icon, laid out as the system's own menu bar
  * panels are: whether phones can reach this Mac at the top, then the paired
  * phones with a way to pair another, then how the agents sign in to Claude,
- * and Open at login and Quit at the foot. Rows light up under the pointer.
+ * and Open at login, Check for updates and Quit at the foot. Rows light up under the pointer.
  */
 struct MenuContent: View {
   let app: AppDelegate
@@ -168,6 +171,7 @@ struct MenuContent: View {
       .controlSize(.mini)
       .padding(.horizontal, 10)
       .padding(.vertical, 5)
+      PanelRow(symbol: nil, title: "Check for updates…", action: app.updater.check)
       PanelRow(symbol: nil, title: "Quit Sidebots", shortcut: "⌘Q") { NSApp.terminate(nil) }
         .keyboardShortcut("q")
     }
