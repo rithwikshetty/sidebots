@@ -20,7 +20,7 @@ struct ServerStatus: Decodable {
   }
 
   let running: Bool
-  /// The address phones reach this Mac at, once the relay has given it one.
+  /// The address phones reach this computer at, once the relay has given it one.
   let address: String?
   /// Whether phones reach the server at its address. Nil until it has one.
   let reachable: Bool?
@@ -76,7 +76,7 @@ enum SignIn {
   /// The server's output, where Console shows it.
   private static let log = FileManager.default.homeDirectoryForCurrentUser.appending(path: "Library/Logs/Sidebots/server.log")
 
-  /// The person the app sets up, named as the Mac knows its user.
+  /// The person the app sets up, named as the computer knows its user.
   static let personName = NSFullUserName().isEmpty ? NSUserName() : NSFullUserName()
 
   /// The provider the app sets the person's agents up on: Claude Code, which the app carries.

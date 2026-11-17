@@ -23,7 +23,7 @@ test("a database made before the table changes gets them and keeps what it holds
     );
     insert into people values ('me', 'Rithwik', '/tmp/claude');
     insert into agents (id, person_id, name, avatar_id, created_at) values ('scout', 'me', 'Scout', 'mochi', 1);
-    insert into devices values ('phone', 'me', 'iPhone', 'hash', 'key', '${"a".repeat(64)}', 'production', 1);
+    insert into devices values ('phone', 'me', 'phone', 'hash', 'key', '${"a".repeat(64)}', 'production', 1);
   `);
   old.close();
   writeFileSync(join(home, "api-keys.json"), JSON.stringify({ me: "sk-ant-key" }));

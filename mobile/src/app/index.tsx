@@ -34,10 +34,10 @@ const SNIPPET_LEAD = 24;
 // The width of each action a swipe on a row shows.
 const ACTION = 76;
 
-/** What the home screen says in place of the agents when the Mac or the app is behind. */
+/** What the home screen says in place of the agents when the computer or the app is behind. */
 const BEHIND_NOTE: Record<Behind, string> = {
-  mac: "It's older than this app. Your agents show here again once it's updated.",
-  app: "Sidebots on your Mac is newer than this app. Your agents show here again once it's updated.",
+  computer: "It's older than this app. Your agents show here again once it's updated.",
+  app: "Sidebots on your computer is newer than this app. Your agents show here again once it's updated.",
 };
 
 /** A row of the list: an agent, or a message a search found in that agent's chat. */
@@ -50,7 +50,7 @@ type Row = { agent: AgentWithLatest; found?: Found };
  * rises with the keyboard. A swipe left on an agent shows what can be done
  * to it: mute, hide and delete. Hidden agents wait under a line at the
  * list's end, which a tap opens. A person with no agents yet is pointed at
- * the + button. When the Mac and the app speak different versions of the
+ * the + button. When the computer and the app speak different versions of the
  * contract, a line saying which to update takes the agents' place. While the search field holds text, the list
  * is the agents whose name matches and then the messages that contain it,
  * from every chat. Rows slide to their new places as agents move up the
@@ -63,7 +63,7 @@ export default function Home() {
   const agents = useAgents();
   const online = useOnline();
   const behind = useBehind();
-  // The avatars come with the Mac's first answer, so until then the phone can't tell whether there are no agents.
+  // The avatars come with the computer's first answer, so until then the phone can't tell whether there are no agents.
   const loaded = useAvatars().length > 0;
   const empty = loaded && agents.length === 0;
   const [typed, setTyped] = useState("");

@@ -1,4 +1,4 @@
-// Talks to the Sidebots server on the Mac this phone has paired with.
+// Talks to the Sidebots server on the computer this phone has paired with.
 
 import { useSyncExternalStore } from "react";
 import { deviceName } from "expo-device";
@@ -7,7 +7,7 @@ import Storage from "expo-sqlite/kv-store";
 import { CONTRACT_HEADER, CONTRACT_VERSION, type Paired } from "@server/contract";
 
 const HOST_KEY = "host";
-// Set while the phone waits to pair again after its Mac removed it.
+// Set while the phone waits to pair again after its computer removed it.
 const REMOVED_KEY = "removed";
 const DEVICE_KEY = "device-key";
 // The notification extension reads this one by its name, from the Keychain group it shares with the app.
@@ -17,7 +17,7 @@ const KEYCHAIN = { keychainAccessible: SecureStore.AFTER_FIRST_UNLOCK };
 const TIMEOUT_MS = 10_000;
 // A message carrying photos, over a phone's connection.
 const UPLOAD_TIMEOUT_MS = 120_000;
-// What Cloudflare or `tailscale serve` answers in Sidebots' place when the Mac or its server can't be reached. 530 is Cloudflare's answer when the Mac's tunnel is down.
+// What Cloudflare or `tailscale serve` answers in Sidebots' place when the computer or its server can't be reached. 530 is Cloudflare's answer when the computer's tunnel is down.
 const NOT_RUNNING = new Set([502, 503, 504, 530]);
 
 /** A failed call. `status` is the server's answer, or 0 when Sidebots couldn't be reached. */
@@ -29,13 +29,13 @@ export class ApiError extends Error {
   }
 }
 
-/** Which of the two to update when the Mac and this app speak different versions of the contract. */
-export type Behind = "mac" | "app";
-export const UPDATE: Record<Behind, string> = { mac: "Update Sidebots on your Mac", app: "Update Sidebots from the App Store" };
+/** Which of the two to update when the computer and this app speak different versions of the contract. */
+export type Behind = "computer" | "app";
+export const UPDATE: Record<Behind, string> = { computer: "Update Sidebots on your computer", app: "Update Sidebots on this phone" };
 
 /**
- * Which side to update, from the contract version the Mac sent with its
- * answer, or null when the two match. A Mac too old to send a version is
+ * Which side to update, from the contract version the computer sent with its
+ * answer, or null when the two match. A computer too old to send a version is
  * behind. What Cloudflare or `tailscale serve` answers in Sidebots' place
  * carries no version and says nothing about it.
  */
@@ -43,12 +43,12 @@ export function behind(response: Pick<Response, "status" | "headers">): Behind |
   if (NOT_RUNNING.has(response.status)) return null;
   const version = Number(response.headers.get(CONTRACT_HEADER)) || 0;
   if (version === CONTRACT_VERSION) return null;
-  return version < CONTRACT_VERSION ? "mac" : "app";
+  return version < CONTRACT_VERSION ? "computer" : "app";
 }
 
-/** A Mac that has paired this phone: its address, the key that proves this phone to it, the key that opens its notifications, and its name. */
+/** A computer that has paired this phone: its address, the key that proves this phone to it, the key that opens its notifications, and its name. */
 export type Pairing = { host: string; key: string; notificationKey: string; machine: string };
-/** A file on the Mac: its address, and the header that lets this phone fetch it. */
+/** A file on the computer: its address, and the header that lets this phone fetch it. */
 export type Remote = { uri: string; headers: Record<string, string> };
 
 // The address is in the app's store and the key in the Keychain, so a phone has paired when it holds both.
@@ -62,7 +62,7 @@ let pairing = kept();
 let removed = Storage.getItemSync(REMOVED_KEY) !== null;
 const listeners = new Set<() => void>();
 
-/** Calls `listener` when the phone pairs with a Mac or loses its pairing. Returns a function that stops it. */
+/** Calls `listener` when the phone pairs with a computer or loses its pairing. Returns a function that stops it. */
 export function onPairing(listener: () => void): () => void {
   listeners.add(listener);
   return () => listeners.delete(listener);
@@ -76,12 +76,12 @@ export function usePaired(): boolean {
   return useSyncExternalStore(onPairing, isPaired);
 }
 
-/** Whether the phone lost its pairing because the Mac no longer knows it. It stays so, through relaunches, until the phone pairs again. */
+/** Whether the phone lost its pairing because the computer no longer knows it. It stays so, through relaunches, until the phone pairs again. */
 export function wasRemoved(): boolean {
   return removed;
 }
 
-/** The host and code in a pairing link, which is what the Mac's QR code holds. */
+/** The host and code in a pairing link, which is what the computer's QR code holds. */
 export function readPairingLink(link: string): { host: string; code: string } | null {
   const [, query] = /^sidebots:\/\/pair\/?\?(.+)$/.exec(link.trim()) ?? [];
   const params = new URLSearchParams(query ?? "");
@@ -90,13 +90,13 @@ export function readPairingLink(link: string): { host: string; code: string } | 
   return host && code ? { host, code } : null;
 }
 
-/** Asks the Mac at `host` to pair this phone, with a code the Mac made. The code works once. */
+/** Asks the computer at `host` to pair this phone, with a code the computer made. The code works once. */
 export async function requestPairing({ host, code }: { host: string; code: string }): Promise<Pairing> {
-  const paired = await send<Paired>(`https://${host}/pair`, `Pairing ${code}`, { method: "POST", body: { name: deviceName ?? "iPhone" } });
+  const paired = await send<Paired>(`https://${host}/pair`, `Pairing ${code}`, { method: "POST", body: { name: deviceName ?? "Phone" } });
   return { host, ...paired };
 }
 
-/** Keeps a pairing, from which point every call goes to that Mac. */
+/** Keeps a pairing, from which point every call goes to that computer. */
 export function keepPairing({ host, key, notificationKey }: Pairing): void {
   Storage.setItemSync(HOST_KEY, host);
   SecureStore.setItem(DEVICE_KEY, key, KEYCHAIN);
@@ -107,7 +107,7 @@ export function keepPairing({ host, key, notificationKey }: Pairing): void {
   listeners.forEach((listener) => listener());
 }
 
-/** Forgets the Mac, once it has answered that it doesn't know this phone. */
+/** Forgets the computer, once it has answered that it doesn't know this phone. */
 export function unpair(): void {
   if (!pairing) return;
   Storage.removeItemSync(HOST_KEY);
@@ -119,7 +119,7 @@ export function unpair(): void {
   listeners.forEach((listener) => listener());
 }
 
-/** Where a path on the Mac is, with the header that lets this phone fetch it. */
+/** Where a path on the computer is, with the header that lets this phone fetch it. */
 export function remote(path: string): Remote {
   return { uri: `https://${pairing?.host}${path}`, headers: { Authorization: `Bearer ${pairing?.key}` } };
 }
@@ -133,9 +133,9 @@ export function attachment(agentId: string, path: string): Remote {
   return remote(`/agents/${agentId}/${path}`);
 }
 
-/** Calls the Mac this phone has paired with. A `body` is sent as JSON, or as it is when it is a form. */
+/** Calls the computer this phone has paired with. A `body` is sent as JSON, or as it is when it is a form. */
 export async function request<T>(path: string, init: { method?: string; body?: unknown } = {}): Promise<T> {
-  if (!pairing) throw new ApiError("This phone isn't paired with a Mac.", 0);
+  if (!pairing) throw new ApiError("This phone isn't paired with a computer.", 0);
   const { uri, headers } = remote(path);
   try {
     return await send<T>(uri, headers.Authorization, init);
@@ -149,7 +149,7 @@ async function send<T>(url: string, authorization: string, init: { method?: stri
   const form = init.body instanceof FormData ? init.body : null;
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), form ? UPLOAD_TIMEOUT_MS : TIMEOUT_MS);
-  // The app says which version of the contract it speaks, which the Mac checks before it pairs the phone.
+  // The app says which version of the contract it speaks, which the computer checks before it pairs the phone.
   const headers = { Authorization: authorization, [CONTRACT_HEADER]: String(CONTRACT_VERSION) };
   let response: Response;
   try {
@@ -165,8 +165,8 @@ async function send<T>(url: string, authorization: string, init: { method?: stri
   } finally {
     clearTimeout(timer);
   }
-  if (NOT_RUNNING.has(response.status)) throw new ApiError("Can't reach Sidebots. The Mac is asleep or off, or Sidebots isn't running on it.", 0);
-  // Nothing a Mac on another version says is used, so it can't be read wrongly. Until one side is updated it is as good as out of reach.
+  if (NOT_RUNNING.has(response.status)) throw new ApiError("Can't reach Sidebots. The computer is asleep or off, or Sidebots isn't running on it.", 0);
+  // Nothing a computer on another version says is used, so it can't be read wrongly. Until one side is updated it is as good as out of reach.
   const side = behind(response);
   if (side) throw new ApiError(`${UPDATE[side]}.`, 0);
   const data = await response.json().catch(() => null);

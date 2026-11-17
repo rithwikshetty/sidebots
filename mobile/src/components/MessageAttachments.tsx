@@ -23,7 +23,7 @@ import { FILE_ICONS, fileKind, fileKindWord, formatFileSize } from "@/lib/files"
 import { haptics } from "@/lib/haptics";
 import { useTheme } from "@/lib/theme";
 
-/** A photo or file a message carries: its address, the header the Mac asks for before it sends one of its own, and its own name. */
+/** A photo or file a message carries: its address, the header the computer asks for before it sends one of its own, and its own name. */
 export type Shown = { uri: string; headers?: Record<string, string>; name: string; size?: number | null };
 
 // A message's one photo fits this box; several are a row of square tiles.

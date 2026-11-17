@@ -1,6 +1,6 @@
 # Sidebots
 
-Sidebots is an iPhone messaging app for your own AI agents. Each chat is an agent. You send it a message, it does the work on a machine you own, and the finished reply arrives like a text from a person, with a notification.
+Sidebots is a messaging app for your agents. Each chat is an agent. You send it a message, it does the work on a machine you own, and the finished reply arrives like a text from a person, with a notification.
 
 You run Sidebots yourself. There is no hosted service: a small server runs on your machine, drives the program each agent runs on, and keeps every message in a folder on that machine. Sidebots calls those programs providers, and today it has one, Claude Code. [Providers](#providers) says how another is added. You build your own copy of the app and pair it with your server.
 
@@ -19,7 +19,7 @@ Sidebots for Mac is the server as a menu bar app. It runs on a Mac with Apple si
 
 1. Open `Sidebots.dmg`, drag Sidebots to Applications, and open it from there.
 2. Choose how your agents sign in to Claude: with Claude Code on this Mac when it is already signed in, with "Sign in to Claude", which opens Claude's own sign-in in your browser, or with an API key.
-3. Open Sidebots on your iPhone and scan the QR code the Mac shows.
+3. Open Sidebots on your phone and scan the QR code the Mac app shows.
 
 The Mac app adds you as the one person on the server, named as the Mac knows you, with `~/.claude` as your Claude Code config folder, and opens at login from then on. A click on its menu bar icon opens a panel, like the system's own menu bar panels. It says whether phones can reach the Mac and lists the paired phones, each with a button to remove it. It also has "Pair a phone…", how your agents sign in with a button to change it, an "Open at login" switch and Quit. The QR code holds the address the relay gave the Mac, so the window waits until the Mac has one. The server's output goes to `~/Library/Logs/Sidebots/server.log`.
 
@@ -30,7 +30,7 @@ The Mac app uses the same data folder and port as a server you start yourself, s
 - A machine that stays on, with [Node](https://nodejs.org) 24 or later, [pnpm](https://pnpm.io) and [Claude Code](https://claude.com/claude-code). It has been run on a Mac.
 - [cloudflared](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/), which gives the machine its address. On a Mac, `brew install cloudflared`.
 - For each person, a Claude subscription or an Anthropic API key.
-- An iPhone, and a Mac with Xcode to build the app. There is no Android build today.
+- A phone. The phone app builds for iPhone today, on a Mac with Xcode.
 - A paid Apple Developer account. The app uses push notifications, which a free account can't sign.
 
 ## Set up the server

@@ -3,7 +3,7 @@ import { Stack } from "expo-router";
 // Welcome is always the first screen, even under the scanner when a pairing link opens it.
 export const unstable_settings = { anchor: "welcome" };
 
-/** What a phone that hasn't paired with a Mac has: the welcome screen, and the scanner it opens. */
+/** What a phone that hasn't paired with a computer has: the welcome screen, and the scanner it opens. */
 export default function Unpaired() {
   return (
     <Stack screenOptions={{ headerShown: false }}>

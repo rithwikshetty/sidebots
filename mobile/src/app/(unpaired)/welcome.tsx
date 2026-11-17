@@ -12,10 +12,10 @@ const STEP = 26;
 const NUMBER_MAX_SCALE = 1.3;
 
 /**
- * What a phone that hasn't paired with a Mac opens on: what Sidebots is, and
- * the two steps to pair, getting Sidebots for Mac and scanning the code it
+ * What a phone that hasn't paired with a computer opens on: what Sidebots is, and
+ * the two steps to pair, getting Sidebots for the computer and scanning the code it
  * shows. Its one button opens the scanner, which is when the phone asks for
- * the camera. A phone the Mac removed says so here.
+ * the camera. A phone the computer removed says so here.
  */
 export default function Welcome() {
   const theme = useTheme();
@@ -26,15 +26,15 @@ export default function Welcome() {
       <ScrollView contentContainerStyle={styles.page}>
         <Image source={require("../../../assets/icon.png")} style={styles.icon} accessibilityIgnoresInvertColors />
         <Text style={[styles.title, { color: theme.ink }]}>Sidebots</Text>
-        <Text style={[styles.lead, { color: theme.ink2 }]}>Text your own AI agents. They run on your Mac and reply when they're done.</Text>
+        <Text style={[styles.lead, { color: theme.ink2 }]}>Text your agents. They run on your computer and reply when they're done.</Text>
         <View style={[styles.card, { backgroundColor: theme.field }]}>
           <Step number={1}>
-            Get Sidebots for Mac from <Text style={[styles.strong, { color: theme.ink }]}>sidebots.app</Text>, and open it.
+            Get Sidebots for your computer from <Text style={[styles.strong, { color: theme.ink }]}>sidebots.app</Text>, and open it.
           </Step>
           <View style={[styles.rule, { backgroundColor: theme.line }]} />
           <Step number={2}>Scan the code it shows.</Step>
         </View>
-        {wasRemoved() ? <Text style={[styles.removed, { color: theme.danger }]}>Your Mac removed this phone. Scan a new code to pair again.</Text> : null}
+        {wasRemoved() ? <Text style={[styles.removed, { color: theme.danger }]}>Your computer removed this phone. Scan a new code to pair again.</Text> : null}
       </ScrollView>
       <Pressable
         onPress={() => router.push("/pair")}

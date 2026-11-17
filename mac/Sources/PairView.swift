@@ -18,14 +18,14 @@ struct PairView: View {
         success(paired)
       } else {
         VStack(spacing: 8) {
-          Text("Pair your iPhone").font(.title2.bold())
-          Text("Open Sidebots on your iPhone and point its camera at this code.")
+          Text("Pair your phone").font(.title2.bold())
+          Text("Open Sidebots on your phone and point its camera at this code.")
             .multilineTextAlignment(.center)
             .foregroundStyle(.secondary)
             .fixedSize(horizontal: false, vertical: true)
         }
         code
-        Text("No Sidebots on your iPhone yet? Get it from the App Store.")
+        Text("No Sidebots on your phone yet? Get it from the App Store.")
           .font(.callout)
           .multilineTextAlignment(.center)
           .foregroundStyle(.secondary)
@@ -64,7 +64,7 @@ struct PairView: View {
     } else {
       VStack(spacing: 10) {
         ProgressView().controlSize(.small)
-        Text(problem ?? "Getting this Mac ready for your phone. This needs an internet connection.")
+        Text(problem ?? "Getting this computer ready for your phone. This needs an internet connection.")
           .multilineTextAlignment(.center)
           .foregroundStyle(.secondary)
           .fixedSize(horizontal: false, vertical: true)
@@ -100,7 +100,7 @@ struct PairView: View {
         paired = phone
         return
       }
-      // A Mac gets the address phones reach it at from the relay, once it is online. It can't make a code before then.
+      // A computer gets the address phones reach it at from the relay, once it is online. It can't make a code before then.
       let expired = pairing.map { $0.expiresAt <= Date.now.timeIntervalSince1970 * 1000 } ?? true
       if server.status?.address != nil, expired {
         do {

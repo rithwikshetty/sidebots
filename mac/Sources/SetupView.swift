@@ -21,7 +21,7 @@ struct SetupView: View {
   @State private var code = ""
   @State private var problem: String?
 
-  /// The Claude Code config folder the agents use: the person's own, or for someone new, the one Claude Code uses on this Mac.
+  /// The Claude Code config folder the agents use: the person's own, or for someone new, the one Claude Code uses on this computer.
   private var configDir: String {
     server.account?.configDir ?? ProcessInfo.processInfo.environment["CLAUDE_CONFIG_DIR"]
       ?? FileManager.default.homeDirectoryForCurrentUser.appending(path: ".claude").path
@@ -66,7 +66,7 @@ struct SetupView: View {
     VStack(spacing: 8) {
       Image(nsImage: NSApp.applicationIconImage).resizable().frame(width: 72, height: 72)
       Text(changing ? "How your agents sign in" : "Set up Sidebots").font(.title2.bold())
-      Text("Your agents run on this Mac, on Claude Code. \(now)Choose how they sign in to Claude.")
+      Text("Your agents run on this computer, on Claude Code. \(now)Choose how they sign in to Claude.")
       .multilineTextAlignment(.center)
       .foregroundStyle(.secondary)
       .fixedSize(horizontal: false, vertical: true)
@@ -80,7 +80,7 @@ struct SetupView: View {
         let who = account?.email.map { "Signed in as \($0). " } ?? ""
         Choice(
           symbol: "checkmark.seal",
-          title: current == "login" ? "Keep using Claude Code on this Mac" : "Use Claude Code on this Mac",
+          title: current == "login" ? "Keep using Claude Code on this computer" : "Use Claude Code on this computer",
           detail: "\(who)Your agents use the same Claude plan."
         ) { save(.login) }
       } else {
@@ -130,7 +130,7 @@ struct SetupView: View {
     VStack(alignment: .leading, spacing: 12) {
       Text("Paste your API key.")
       SecureField("sk-ant-…", text: $key).textFieldStyle(.roundedBorder).onSubmit(saveKey)
-      Text("Make one in the [Claude Console](https://platform.claude.com/settings/keys). Sidebots keeps it on this Mac.")
+      Text("Make one in the [Claude Console](https://platform.claude.com/settings/keys). Sidebots keeps it on this computer.")
         .foregroundStyle(.secondary)
         .fixedSize(horizontal: false, vertical: true)
       HStack {
@@ -141,7 +141,7 @@ struct SetupView: View {
     }
   }
 
-  /// Looks at whether Claude Code is signed in on this Mac, then asks the person to choose.
+  /// Looks at whether Claude Code is signed in on this computer, then asks the person to choose.
   private func check() async {
     problem = nil
     step = .checking

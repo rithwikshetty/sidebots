@@ -12,20 +12,20 @@ import { haptics } from "@/lib/haptics";
 import { useTheme } from "@/lib/theme";
 
 const NOT_A_CODE = "That isn't a Sidebots pairing code.";
-// How long the Mac's name stays up before the agents take the screen.
+// How long the computer's name stays up before the agents take the screen.
 const PAIRED_MS = 1200;
 // How long before a code the camera still sees is tried again.
 const RETRY_MS = 3000;
 
 /**
  * The scanner, opened from the welcome screen and laid out as the chat's
- * camera: the preview on black, reading the code Sidebots shows on the Mac,
+ * camera: the preview on black, reading the code Sidebots shows on the computer,
  * with one line under it that says what to do or what went wrong. Back, above
  * the preview, returns to the welcome screen. The link button beside it asks
  * for the code as its link instead, in the system's own prompt. When the
  * camera is refused, a button in its place opens Settings. A pairing link
  * opened anywhere on the phone lands here and pairs the same way. Once
- * paired, the line names the Mac, and the agents take the screen.
+ * paired, the line names the computer, and the agents take the screen.
  */
 export default function Pair() {
   const theme = useTheme();
@@ -67,7 +67,7 @@ export default function Pair() {
   function enterLink() {
     Alert.prompt(
       "Enter a link",
-      "Paste the link under the code on your Mac.",
+      "Paste the link under the code on your computer.",
       [
         { text: "Cancel", style: "cancel" },
         { text: "Pair", isPreferred: true, onPress: (link?: string) => void pair(readPairingLink(link ?? "")) },
@@ -89,8 +89,8 @@ export default function Pair() {
 
   const noCamera = permission !== null && !permission.granted && !permission.canAskAgain;
   const prompt = noCamera
-    ? "Allow Sidebots to use the camera in Settings to scan the code on your Mac, or enter its link."
-    : "Scan the code Sidebots shows on your Mac.";
+    ? "Allow Sidebots to use the camera in Settings to scan the code on your computer, or enter its link."
+    : "Scan the code Sidebots shows on your computer.";
   const line = machine ? `Paired with ${machine}` : (error ?? prompt);
 
   return (
