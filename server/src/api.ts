@@ -5,7 +5,7 @@ import { extname } from "node:path";
 import { Hono } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import { streamSSE } from "hono/streaming";
-import { CONTRACT_HEADER, CONTRACT_VERSION, EFFORTS, MODELS } from "./contract.ts";
+import { COLOR, CONTRACT_HEADER, CONTRACT_VERSION, EFFORTS, MODELS } from "./contract.ts";
 import type { Effort, Model, Paired, PushToken, StreamEvent } from "./contract.ts";
 import type { AgentChanges, Device, Person, Store } from "./store.ts";
 import type { Queue } from "./runner.ts";
@@ -83,11 +83,19 @@ export function createApi(store: Store, queue: Queue, machine: string) {
     return c.json(store.createAgent(c.var.person, name.trim(), avatarId.trim()), 201);
   });
 
-  /** Changes any of an agent's name, avatar, model and effort, and whether it is muted or hidden. */
+  /** Changes any of an agent's name, avatar, model, effort and colour, and whether it is muted or hidden. A colour of null takes the avatar's. */
   app.patch("/agents/:id", async (c) => {
     const agent = ownAgent(c.var.person, c.req.param("id"));
     if (!agent) return c.json({ error: "No such agent." }, 404);
-    const { name, avatarId, model, effort, muted, hidden } = await c.req.json<{ name?: string; avatarId?: string; model?: string; effort?: string; muted?: boolean; hidden?: boolean }>();
+    const { name, avatarId, model, effort, muted, hidden, color } = await c.req.json<{
+      name?: string;
+      avatarId?: string;
+      model?: string;
+      effort?: string;
+      muted?: boolean;
+      hidden?: boolean;
+      color?: string | null;
+    }>();
     const changes: AgentChanges = {};
     if (name !== undefined) {
       if (!name.trim()) return c.json({ error: "An agent needs a name." }, 400);
@@ -107,6 +115,10 @@ export function createApi(store: Store, queue: Queue, machine: string) {
     }
     if (typeof muted === "boolean") changes.muted = muted;
     if (typeof hidden === "boolean") changes.hidden = hidden;
+    if (color !== undefined) {
+      if (color !== null && (typeof color !== "string" || !COLOR.test(color))) return c.json({ error: "A colour is #RRGGBB, or null for the avatar's." }, 400);
+      changes.color = color === null ? null : color.toUpperCase();
+    }
     store.updateAgent(agent, changes);
     return c.json(store.agentWithLatest(agent.id));
   });

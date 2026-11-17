@@ -8,11 +8,12 @@ import { EFFORTS, MODELS, scheduleWords, type AgentWithLatest, type Job } from "
 import { AvatarPicker } from "@/components/AvatarPicker";
 import { AvatarView } from "@/components/AvatarView";
 import { Choices } from "@/components/Choices";
+import { ColorPicker } from "@/components/ColorPicker";
 import { FadingText } from "@/components/FadingText";
 import { IconButton } from "@/components/IconButton";
 import { confirmDelete, problem } from "@/lib/alerts";
 import { HIDE, MOVE, POP_IN, SHOW } from "@/lib/motion";
-import { changeAgent, loadAbout, removeJob, useAbout, useAgent, type AgentChanges } from "@/lib/state";
+import { changeAgent, loadAbout, removeJob, useAbout, useAgent, useChatColor, type AgentChanges } from "@/lib/state";
 import { useTheme } from "@/lib/theme";
 import { nextTime } from "@/lib/time";
 
@@ -28,8 +29,8 @@ export default function AgentPage() {
 /**
  * An agent's page, opened from its avatar at the top of its chat. It opens on
  * the agent's avatar, large, with its name and the model it answers with. Edit
- * turns the name into a field and brings up the avatars to choose from, and
- * Save keeps both. Below are two tabs. Settings holds the model and effort,
+ * turns the name into a field and brings up the avatars and the colours of its
+ * chat to choose from, and Save keeps them. Below are two tabs. Settings holds the model and effort,
  * Mute and Hide, and Delete. Jobs & memory holds what the agent works from:
  * its jobs, which can be removed here, the instructions it follows and what
  * it remembers. The agent writes those three itself, as it is told things
@@ -44,6 +45,9 @@ function AgentAbout({ agent }: { agent: AgentWithLatest }) {
   const [editing, setEditing] = useState(false);
   const [name, setName] = useState(agent.name);
   const [avatarId, setAvatarId] = useState(agent.avatar_id);
+  const [color, setColor] = useState(agent.color ?? null);
+  // The colour of the avatar being picked, which the chat takes when no colour of its own is picked.
+  const avatarColor = useChatColor({ avatar_id: avatarId, color: null });
 
   useEffect(() => {
     loadAbout(agent.id).catch(() => {});
@@ -53,6 +57,7 @@ function AgentAbout({ agent }: { agent: AgentWithLatest }) {
   const edit = () => {
     setName(agent.name);
     setAvatarId(agent.avatar_id);
+    setColor(agent.color ?? null);
     setEditing(true);
   };
   const save = () => {
@@ -60,6 +65,7 @@ function AgentAbout({ agent }: { agent: AgentWithLatest }) {
     const changes: AgentChanges = {};
     if (trimmed !== agent.name) changes.name = trimmed;
     if (avatarId !== agent.avatar_id) changes.avatarId = avatarId;
+    if (color !== (agent.color ?? null)) changes.color = color;
     if (Object.keys(changes).length) change(changes);
     Keyboard.dismiss();
     setEditing(false);
@@ -114,6 +120,8 @@ function AgentAbout({ agent }: { agent: AgentWithLatest }) {
             <Animated.View key="editing" entering={SHOW} exiting={HIDE} style={styles.section}>
               <Text style={[styles.sectionTitle, { color: theme.ink2 }]}>Avatar</Text>
               <AvatarPicker value={avatarId} onChange={setAvatarId} />
+              <Text style={[styles.sectionTitle, styles.later, { color: theme.ink2 }]}>Chat colour</Text>
+              <ColorPicker value={color} avatarColor={avatarColor} onChange={setColor} />
             </Animated.View>
           ) : (
             <Animated.View key="tabs" entering={SHOW} exiting={HIDE}>
@@ -285,6 +293,8 @@ const styles = StyleSheet.create({
   tabs: { marginTop: 24, borderRadius: 16, borderCurve: "continuous" },
   section: { marginTop: 24, gap: 8 },
   sectionTitle: { fontSize: 13, fontWeight: "600", textTransform: "uppercase", letterSpacing: 0.4, paddingHorizontal: 4 },
+  // A second title in one section, set apart from what is above it.
+  later: { marginTop: 16 },
   sectionNote: { fontSize: 13, lineHeight: 18, paddingHorizontal: 4 },
   card: { borderRadius: 16, borderCurve: "continuous", overflow: "hidden" },
   row: { flexDirection: "row", alignItems: "center", gap: 12, paddingHorizontal: 16, paddingVertical: 12, minHeight: 50 },

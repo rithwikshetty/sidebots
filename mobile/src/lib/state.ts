@@ -29,7 +29,7 @@ type State = {
 };
 
 /** What the person can change about an agent. */
-export type AgentChanges = { name?: string; avatarId?: string; model?: Model; effort?: Effort; muted?: boolean; hidden?: boolean };
+export type AgentChanges = { name?: string; avatarId?: string; model?: Model; effort?: Effort; muted?: boolean; hidden?: boolean; color?: string | null };
 
 // The number changes when the shape of what is saved does.
 const CACHE_KEY = "cache-5";
@@ -79,6 +79,13 @@ export function useMessages(agentId: string): Message[] {
 
 export function useAvatars(): Avatar[] {
   return useSyncExternalStore(subscribe, () => state.avatars);
+}
+
+/** The colour of an agent's chat: the one picked for it, or its avatar's. Null until the avatars have loaded. */
+export function useChatColor(agent: Pick<Agent, "avatar_id" | "color"> | undefined): string | null {
+  const avatars = useAvatars();
+  if (!agent) return null;
+  return agent.color ?? avatars.find((avatar) => avatar.id === agent.avatar_id)?.color ?? null;
 }
 
 export function useAbout(agentId: string): About | undefined {

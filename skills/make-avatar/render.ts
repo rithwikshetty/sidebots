@@ -17,6 +17,8 @@ type Design = {
   palette: Record<string, string>;
   grid: string[];
   eyes: { row: number; left: number; right: number; skin: string };
+  /** The colour the avatar gives its agents' chats, when it isn't the body colour. */
+  color?: string;
 };
 
 type Eyes = "open" | "closed" | "down" | "happy" | "x";
@@ -74,6 +76,7 @@ function check(design: Design): void {
   const { row, left, right, skin } = design.eyes;
   if (row < 0 || row > GRID - 2 || left < 0 || right > GRID - 2 || left + 1 >= right) fail("eyes must be two 2 by 2 squares inside the grid");
   if (!design.palette[skin]) fail(`eyes.skin "${skin}" isn't in the palette`);
+  if (design.color !== undefined && !/^#[0-9A-Fa-f]{6}$/.test(design.color)) fail("color must be #RRGGBB");
 }
 
 function rgb(hex: string): [number, number, number] {
@@ -179,6 +182,6 @@ if (!folder) {
 const design: Design = JSON.parse(readFileSync(join(folder, "design.json"), "utf8"));
 check(design);
 writeFileSync(join(folder, "spritesheet.png"), render(design));
-const manifest = { id: design.id, displayName: design.displayName, description: design.description, spritesheetPath: "spritesheet.png" };
+const manifest = { id: design.id, displayName: design.displayName, description: design.description, spritesheetPath: "spritesheet.png", ...(design.color ? { color: design.color } : {}) };
 writeFileSync(join(folder, "avatar.json"), JSON.stringify(manifest, null, 2) + "\n");
 console.log(`${design.displayName}: ${join(folder, "spritesheet.png")}`);
