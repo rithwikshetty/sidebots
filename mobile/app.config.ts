@@ -45,14 +45,14 @@ const config: ExpoConfig = {
       "expo-image-picker",
       {
         photosPermission: "Sidebots opens the photos you choose so you can send them to an agent.",
-        cameraPermission: "Sidebots uses the camera to scan the code on your Mac, and so you can send a photo to an agent.",
+        cameraPermission: "Sidebots uses the camera to scan the code on your computer, and so you can send a photo to an agent.",
         // The same words as expo-audio's, which this plugin would otherwise remove.
         microphonePermission: MICROPHONE_PERMISSION,
       },
     ],
     // Records what you say for dictation, which Apple's speech model turns into text on the phone.
     ["expo-audio", { microphonePermission: MICROPHONE_PERMISSION, recordAudioAndroid: false }],
-    // Keeps the keys that prove this phone to its Mac and open its notifications in the Keychain.
+    // Keeps the keys that prove this phone to its computer and open its notifications in the Keychain.
     "expo-secure-store",
     // Builds the native targets in targets/, such as the extension that opens each notification as it arrives.
     "@bacons/apple-targets",

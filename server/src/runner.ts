@@ -243,7 +243,7 @@ export function createQueue(store: Store, drivers: Drivers, now: () => number = 
       const message = store.nextQueued(agentId);
       const job = message ? undefined : store.dueJob(agentId, now());
       const turn = async (text: string, rest: Pick<Turn, "followUps" | "seen" | "replied" | "sendUpdate"> & { id?: string; ofJob?: boolean }) => {
-        if (!account) throw new Error(`${person.name} hasn't set up ${PROVIDERS[agent.provider].name} on this Mac.`);
+        if (!account) throw new Error(`${person.name} hasn't set up ${PROVIDERS[agent.provider].name} on this computer.`);
         return driver.runTurn({
           prompt: { id: rest.id ?? randomUUID(), text },
           followUps: rest.followUps,

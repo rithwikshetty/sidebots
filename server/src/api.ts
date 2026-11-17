@@ -13,7 +13,7 @@ import type { Queue } from "./runner.ts";
 const KEEPALIVE_MS = 25_000;
 // The most one message carries, under the 100 MB Cloudflare takes in one request.
 const MESSAGE_BYTES = 95 * 1024 * 1024;
-// An Apple device token as the iPhone reports it: hex, 32 bytes today, with room for Apple to lengthen it.
+// An Apple device token as the phone reports it: hex, 32 bytes today, with room for Apple to lengthen it.
 const DEVICE_TOKEN = /^[0-9a-f]{64,200}$/;
 // An app's bundle identifier, as Apple allows it.
 const BUNDLE_ID = /^[A-Za-z0-9.-]{1,155}$/;
@@ -50,12 +50,12 @@ export function createApi(store: Store, queue: Queue, machine: string) {
    */
   app.post("/pair", async (c) => {
     if (Number(c.req.header(CONTRACT_HEADER)) !== CONTRACT_VERSION) {
-      return c.json({ error: "This app and Sidebots on this Mac speak different versions. Update the older one." }, 409);
+      return c.json({ error: "This app and Sidebots on this computer speak different versions. Update the older one." }, 409);
     }
     const code = credential(c.req.header("Authorization"), "Pairing");
     const { name } = await c.req.json<{ name?: string }>();
-    const keys = code && store.pair(code, name?.trim() || "iPhone");
-    if (!keys) return c.json({ error: "That code has been used or has run out. Make a new one on the Mac." }, 401);
+    const keys = code && store.pair(code, name?.trim() || "Phone");
+    if (!keys) return c.json({ error: "That code has been used or has run out. Make a new one on the computer." }, 401);
     const paired: Paired = { ...keys, machine };
     return c.json(paired, 201);
   });
@@ -63,7 +63,7 @@ export function createApi(store: Store, queue: Queue, machine: string) {
   app.use(async (c, next) => {
     const key = credential(c.req.header("Authorization"), "Bearer");
     const device = key ? store.deviceByKey(key) : undefined;
-    if (!device) return c.json({ error: "This phone isn't paired with this Mac." }, 401);
+    if (!device) return c.json({ error: "This phone isn't paired with this computer." }, 401);
     c.set("device", device);
     c.set("person", store.person(device.person_id)!);
     await next();

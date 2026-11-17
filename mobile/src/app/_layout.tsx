@@ -26,7 +26,7 @@ export default function Layout() {
         <ThemeProvider value={navigation}>
           <StatusBar style="auto" />
           <Stack screenOptions={{ headerShown: false }}>
-            {/* A phone that hasn't paired with a Mac has the welcome and pairing screens and nothing else, and opens on welcome. Once paired, it has everything but those. */}
+            {/* A phone that hasn't paired with a computer has the welcome and pairing screens and nothing else, and opens on welcome. Once paired, it has everything but those. */}
             <Stack.Protected guard={paired} redirectTo="/welcome">
               <Stack.Screen name="index" />
               <Stack.Screen name="chat/[id]" />

@@ -31,11 +31,11 @@ function setup(answer: (turn: Turn) => Promise<Answer>, now: () => number = Date
   store.addPerson({ name: "Alex", provider: "claude", configDir: "/config/alex" });
   store.addPerson({ name: "Robin", provider: "claude", configDir: "/config/robin" });
   const queue = createQueue(store, { claude: { ...claude, runTurn } }, now);
-  const app = createApi(store, queue, "Test Mac");
+  const app = createApi(store, queue, "Test computer");
   const notificationKeys = new Map<string, string>();
   /** Pairs another phone as the person, and returns what it sends with each request. */
   const pair = (name: string) => {
-    const keys = store.pair(store.addPairing(store.personByName(name)!.id).code, `${name}'s iPhone`)!;
+    const keys = store.pair(store.addPairing(store.personByName(name)!.id).code, `${name}'s phone`)!;
     notificationKeys.set(keys.key, keys.notificationKey);
     return { Authorization: `Bearer ${keys.key}` };
   };
@@ -82,7 +82,7 @@ test("a phone pairs once with a code, and only a paired phone is let in", async 
     const response = await app.request("/pair", {
       method: "POST",
       headers: { Authorization: `Pairing ${code}`, "Content-Type": "application/json", "Sidebots-Contract": String(CONTRACT_VERSION) },
-      body: JSON.stringify({ name: "Alex's iPhone" }),
+      body: JSON.stringify({ name: "Alex's phone" }),
     });
     return { status: response.status, json: await response.json() };
   };
@@ -94,7 +94,7 @@ test("a phone pairs once with a code, and only a paired phone is let in", async 
   const { code } = store.addPairing(alex.id);
   const paired = await pairWith(code);
   assert.equal(paired.status, 201);
-  assert.equal(paired.json.machine, "Test Mac");
+  assert.equal(paired.json.machine, "Test computer");
   assert.equal((await pairWith(code)).status, 401);
   // The code works as a code only, and the key as a key only.
   assert.equal((await call({ Authorization: `Bearer ${code}` }, "GET", "/agents")).status, 401);
@@ -106,13 +106,13 @@ test("a phone pairs once with a code, and only a paired phone is let in", async 
   assert.equal((await pairWith(late.code)).status, 401);
 });
 
-test("a phone removed on the Mac is refused from its next request, and the person's other phones stay paired", async () => {
+test("a phone removed on the computer is refused from its next request, and the person's other phones stay paired", async () => {
   const { store, call, pair } = setup(async () => reply("ok"));
   const kept = pair(ME);
   const removed = pair(ME);
   const [, phone] = store.devices();
 
-  assert.equal(store.removeDevice(phone.id)?.name, "Alex's iPhone");
+  assert.equal(store.removeDevice(phone.id)?.name, "Alex's phone");
   assert.equal(store.removeDevice(phone.id), undefined);
   assert.equal((await call(removed, "GET", "/agents")).status, 401);
   assert.equal((await call(kept, "GET", "/agents")).status, 200);
@@ -125,7 +125,7 @@ test("an app on another version of the contract can't pair, and its code still w
   const pairAs = async (version?: number) => {
     const headers: Record<string, string> = { Authorization: `Pairing ${code}`, "Content-Type": "application/json" };
     if (version !== undefined) headers["Sidebots-Contract"] = String(version);
-    const response = await app.request("/pair", { method: "POST", headers, body: JSON.stringify({ name: "Alex's iPhone" }) });
+    const response = await app.request("/pair", { method: "POST", headers, body: JSON.stringify({ name: "Alex's phone" }) });
     return { status: response.status, version: response.headers.get("Sidebots-Contract"), json: await response.json() };
   };
 
@@ -139,7 +139,7 @@ test("an app on another version of the contract can't pair, and its code still w
   // A phone is stored only as its code is used, so the code still pairing shows none was stored before.
   const paired = await pairAs(CONTRACT_VERSION);
   assert.equal(paired.status, 201);
-  assert.equal(store.deviceByKey(paired.json.key)?.name, "Alex's iPhone");
+  assert.equal(store.deviceByKey(paired.json.key)?.name, "Alex's phone");
 });
 
 test("every answer says which version of the contract the server speaks", async () => {
@@ -148,7 +148,7 @@ test("every answer says which version of the contract the server speaks", async 
     app.request("/pair", {
       method: "POST",
       headers: { Authorization: `Pairing ${code}`, "Content-Type": "application/json", "Sidebots-Contract": String(CONTRACT_VERSION) },
-      body: JSON.stringify({ name: "Alex's iPhone" }),
+      body: JSON.stringify({ name: "Alex's phone" }),
     });
   const phone = phoneOf(ME);
   const events = await app.request("/events", { headers: phone });
@@ -240,7 +240,7 @@ test("a failed turn keeps the message and adds a note from Sidebots saying why",
   );
 });
 
-test("a turn that fails for a reason the person can fix says what to do on the Mac, not in Claude Code", async () => {
+test("a turn that fails for a reason the person can fix says what to do on the computer, not in Claude Code", async () => {
   // Each turn fails with what the person's newest message says, which ends the prompt.
   const { queue, call, say } = setup(async (turn) => {
     throw new Error(turn.prompt.text.split("\n").at(-1));
@@ -261,8 +261,8 @@ test("a turn that fails for a reason the person can fix says what to do on the M
   assert.deepEqual(
     notices.map((m: { body: string }) => m.body),
     [
-      "Sidebots couldn't finish this. Claude Code on your Mac is signed out. Sign in to it there.",
-      "Sidebots couldn't finish this. Anthropic refused your API key. Save a new one on your Mac.",
+      "Sidebots couldn't finish this. Claude Code on your computer is signed out. Sign in to it there.",
+      "Sidebots couldn't finish this. Anthropic refused your API key. Save a new one on your computer.",
       "Sidebots couldn't finish this. Your Claude usage limit is reached. It resets at 3pm (Europe/London).",
       "Sidebots couldn't finish this. Your Claude usage limit is reached. Try again once it resets.",
     ],

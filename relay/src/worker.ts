@@ -43,7 +43,7 @@ const STALE_MS = 60 * 24 * 60 * 60_000;
 const DAY_MS = 24 * 60 * 60_000;
 const ID_LETTERS = "abcdefghijklmnopqrstuvwxyz0123456789";
 const PUBLIC_KEY = /^[\w-]{43}$/;
-// An Apple device token as the iPhone reports it: hex, 32 bytes today, with room for Apple to lengthen it.
+// An Apple device token as the phone reports it: hex, 32 bytes today, with room for Apple to lengthen it.
 const DEVICE_TOKEN = /^[0-9a-f]{64,200}$/;
 // An encrypted notice, in base64, small enough that Apple takes the notification it rides in, which is at most 4096 bytes.
 const SEALED = /^[A-Za-z0-9+/]{1,3800}={0,2}$/;

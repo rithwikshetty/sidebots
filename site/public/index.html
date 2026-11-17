@@ -4,84 +4,205 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Sidebots</title>
-<meta name="description" content="AI agents that run on your own Mac and text you on your iPhone when the work is done.">
+<meta name="description" content="A messaging app for your agents. Text one from your phone, and it does the work on your computer and texts you back.">
+<meta name="theme-color" content="#000000">
 <link rel="icon" href="/icon.png">
 <link rel="apple-touch-icon" href="/icon.png">
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Schibsted+Grotesk:wght@400;500;700;800&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="/site.css">
 </head>
 <body>
+<header class="bar">
+  <a class="brand" href="/"><img src="/icon.png" alt="" width="28" height="28">Sidebots</a>
+  <nav>
+    <a href="https://github.com/rithwikshetty/sidebots">GitHub</a>
+    <a href="/privacy">Privacy</a>
+  </nav>
+</header>
+
 <main>
   <section class="hero">
-    <div class="pitch">
-      <h1>AI agents that text you.</h1>
-      <p class="lede">Sidebots runs your own agents on your Mac, on Claude Code today. Give one a job from your iPhone, put the phone away, and it texts you when the work is done.</p>
-      <div class="actions">
-        <a class="download" href="https://github.com/rithwikshetty/sidebots/releases/latest/download/Sidebots.dmg">Download for Mac</a>
-        <p class="soon">The iPhone app is coming to the App Store.</p>
+    <h1>A messaging app for your agents.</h1>
+    <p class="lede">Text an agent from your phone and put the phone away. It does the work on your computer and texts you back when it's done.</p>
+    <div class="actions">
+      <a class="download" href="https://github.com/rithwikshetty/sidebots/releases/latest/download/Sidebots.dmg">
+        <svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true"><path d="M8 1.5v8.5m0 0L4.5 6.5M8 10l3.5-3.5M2.5 13.5h11" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        Download for Mac
+      </a>
+      <a class="quiet" href="https://github.com/rithwikshetty/sidebots">Read the source</a>
+    </div>
+    <p class="fine">For macOS 14 or later on Apple silicon. The phone app is coming to the App Store.</p>
+
+    <!-- The app's home screen: one chat per agent. On load, Scout finishes its job. -->
+    <div class="stage" aria-hidden="true">
+      <div class="phone">
+        <div class="screen">
+          <div class="status"><span>9:47</span><span class="island"></span><span class="signal"><i></i><i></i><i></i><i></i></span></div>
+          <div class="add"><svg viewBox="0 0 24 24" width="22" height="22"><path d="M12 5v14M5 12h14" fill="none" stroke="currentColor" stroke-width="2.25" stroke-linecap="round"/></svg></div>
+          <ul class="chats">
+            <li id="scout">
+              <span class="avatar replied" style="--sheet: url(/avatars/moss.png)"></span>
+              <div class="chat">
+                <div class="top"><b>Scout</b><time>9:47 am</time></div>
+                <div class="bottom"><p class="preview unread">Found three. The one on Albert St has a garden and a second bedroom for $620. Want me to book an inspection for Saturday?</p><span class="count">1</span></div>
+              </div>
+            </li>
+            <li>
+              <span class="avatar" style="--sheet: url(/avatars/mochi.png)"></span>
+              <div class="chat">
+                <div class="top"><b>Wedding</b><time>8:15 am</time></div>
+                <div class="bottom"><p class="preview">The photographer sent her quote. $3,400 for the day, travel included.</p></div>
+              </div>
+            </li>
+            <li>
+              <span class="avatar" style="--sheet: url(/avatars/skye.png)"></span>
+              <div class="chat">
+                <div class="top"><b>Morning brief</b><time>8:00 am</time></div>
+                <div class="bottom"><p class="preview">17° and clear. Cake tasting at 11, and the celebrant wants a call back.</p></div>
+              </div>
+            </li>
+            <li>
+              <span class="avatar" style="--sheet: url(/avatars/cog.png)"></span>
+              <div class="chat">
+                <div class="top"><b>Budget</b><time>Yesterday</time></div>
+                <div class="bottom"><p class="preview">$1,140 this week, $90 under. Groceries were the big one.</p></div>
+              </div>
+            </li>
+          </ul>
+        </div>
       </div>
     </div>
+  </section>
 
-    <div class="thread" aria-label="An example chat with an agent called Scout">
-      <div class="head">
-        <span class="avatar big resting" style="--sheet: url(/avatars/moss.png)" aria-hidden="true"></span>
-        <span class="name">Scout</span>
+  <section class="feature">
+    <div class="words">
+      <h2>One reply, when the work is done.</h2>
+      <p>Send a job as text, photos or files. The agent works on your computer for as long as it takes, then texts you once, with a notification. You don't watch it think.</p>
+    </div>
+    <div class="shot" aria-hidden="true">
+      <div class="thread">
+        <div class="who"><span class="avatar" style="--sheet: url(/avatars/moss.png)"></span><span class="pill">Scout</span></div>
+        <p class="bubble mine">Find me a flat in Brunswick under $650 a week. A garden would be nice.</p>
+        <p class="receipt">Read 9:02 am</p>
+        <div class="answer">
+          <p class="busy"><span class="avatar working" style="--sheet: url(/avatars/moss.png)"></span>Consulting the augurs</p>
+          <p class="bubble theirs">Found three. The one on Albert St has a garden and a second bedroom for $620. Want me to book an inspection for Saturday?</p>
+        </div>
       </div>
-      <p class="bubble mine">Find me a flat in Brunswick under $650 a week. A garden would be nice.</p>
-      <p class="receipt">Read 9:02</p>
-      <div class="reply">
-        <span class="avatar replied" style="--sheet: url(/avatars/moss.png)" aria-hidden="true"></span>
-        <p class="bubble theirs">Found three. The one on Albert St has a garden and a second bedroom for $620. Want me to book an inspection for Saturday?</p>
+    </div>
+  </section>
+
+  <section class="feature flip">
+    <div class="words">
+      <h2>It runs on your computer.</h2>
+      <p>Sidebots sits quietly on your computer and runs your agents on the agent harness you already use, such as Claude Code, with the skills and connections you have there. They use your own subscription or API key.</p>
+      <ul class="facts">
+        <li>No accounts, analytics or ads.</li>
+        <li>Chats, memory and files stay on your computer.</li>
+        <li>Notifications are encrypted so only your phone can read them.</li>
+      </ul>
+    </div>
+    <div class="shot" aria-hidden="true">
+      <div class="panel">
+        <div class="app"><img src="/icon.png" alt="" width="36" height="36"><div><b>Sidebots</b><span><i class="dot"></i>Phones can reach this computer</span></div></div>
+        <hr>
+        <h3>Phones</h3>
+        <div class="item"><span class="tile"><svg viewBox="0 0 16 16"><rect x="4.5" y="1.5" width="7" height="13" rx="1.75" fill="none" stroke="currentColor" stroke-width="1.4"/></svg></span>Alex's phone</div>
+        <div class="item"><span class="tile"><svg viewBox="0 0 16 16"><path d="M2.5 2.5h4v4h-4zM9.5 2.5h4v4h-4zM2.5 9.5h4v4h-4zM9.5 9.5h1.5v1.5H9.5zM12 12h1.5v1.5H12z" fill="none" stroke="currentColor" stroke-width="1.3"/></svg></span>Pair a phone…</div>
+        <hr>
+        <h3>Claude Code</h3>
+        <div class="item"><span class="tile"><svg viewBox="0 0 16 16"><circle cx="8" cy="6" r="2.5" fill="currentColor"/><path d="M3 13.5c.6-2.4 2.6-3.5 5-3.5s4.400 1.100 5 3.500" fill="currentColor"/></svg></span><div>Your Claude plan<small>Agents use your Claude subscription</small></div><span class="change">Change</span></div>
+        <hr>
+        <div class="plain">Open at login<span class="switch"></span></div>
+        <div class="plain">Check for updates…</div>
+        <div class="plain">Quit Sidebots<kbd>⌘Q</kbd></div>
+      </div>
+    </div>
+  </section>
+
+  <section class="feature">
+    <div class="words">
+      <h2>Jobs that run without you.</h2>
+      <p>Ask an agent to remind you of something, brief you every morning, or check a price every hour. It keeps the schedule, and only texts you when it has something to say.</p>
+    </div>
+    <div class="shot" aria-hidden="true">
+      <div class="jobs">
+        <h3>Jobs</h3>
+        <div class="card">
+          <div class="job"><b>Every day at 08:00</b><span>Next Tomorrow 8:00 am</span><span>Weather, today's calendar, and anything urgent in the wedding inbox.</span></div>
+          <div class="job"><b>Every 60 minutes</b><span>Next Today 10:00 am</span><span>Check the Sydney to Melbourne fare for 4 December. Stay silent unless it is under $900.</span></div>
+          <div class="job"><b>Once, 20 Nov at 15:30</b><span>Next Friday 3:30 pm</span><span>Remind Alex to call the celebrant.</span></div>
+        </div>
       </div>
     </div>
   </section>
 
   <section class="setup">
-    <h2>Set it up once</h2>
+    <h2>Set up in three steps.</h2>
     <ol>
-      <li>
-        <h3>Download Sidebots for Mac and open it.</h3>
-        <p>It sits in your menu bar and starts with your Mac. Your agents, their chats and their memory stay on your Mac.</p>
-      </li>
-      <li>
-        <h3>Choose how your agents sign in.</h3>
-        <p>Use the agent harness already signed in on your Mac, such as Claude Code, or paste an API key.</p>
-      </li>
-      <li>
-        <h3>Scan the code with your iPhone.</h3>
-        <p>Open Sidebots on your phone and point it at the code your Mac shows. Your phone reaches your Mac from anywhere, on Wi-Fi or mobile data.</p>
-      </li>
+      <li><b>Open Sidebots on your computer.</b> It starts when your computer does, and updates itself.</li>
+      <li><b>Choose how your agents sign in.</b> Use the agent harness already signed in on your computer, such as Claude Code, or an API key.</li>
+      <li><b>Scan the code with your phone.</b> After that your phone reaches your computer from anywhere, on Wi-Fi or mobile data.</li>
     </ol>
   </section>
 
-  <section class="agents">
-    <div class="cast" aria-hidden="true">
-      <span class="avatar big resting" style="--sheet: url(/avatars/moss.png)"></span>
-      <span class="avatar big working" style="--sheet: url(/avatars/mochi.png)"></span>
-      <span class="avatar big resting" style="--sheet: url(/avatars/cog.png)"></span>
-    </div>
-    <h2>One chat per agent</h2>
-    <p>Each agent is a chat with its own job, its own memory and its own little character. Send it text, photos or files. It works through your skills and connections in Claude Code, keeps scheduled jobs, and sends one reply when it's done, not a stream of steps.</p>
+  <section class="know">
+    <h2>Know this first.</h2>
+    <dl>
+      <div><dt>Agents act without asking.</dt><dd>They run as you on your computer, so they can read and change your files and run commands. The harness's own safety check decides what is safe to run.</dd></div>
+      <div><dt>Your computer has to be awake.</dt><dd>While it is asleep or off, agents wait. Your messages reach them when it wakes.</dd></div>
+      <div><dt>You pay for the model.</dt><dd>Sidebots is free and open source. Your agents use your own subscription or API key.</dd></div>
+      <div><dt>Your messages go to the model.</dt><dd>To answer you, an agent sends them to the company behind its harness, such as Anthropic for Claude Code, under your own login or key. <a href="/privacy">Read the privacy policy</a>.</dd></div>
+    </dl>
   </section>
 
-  <section class="know">
-    <h2>Before you start</h2>
-    <ul>
-      <li><strong>Agents act without asking.</strong> They run as you on your Mac, so they can read and change your files and run commands. Claude Code's own safety check decides what is safe to run.</li>
-      <li><strong>Your Mac does the work.</strong> While it is asleep or off, your agents wait, and anything you send reaches them when it wakes.</li>
-      <li><strong>You pay for the model.</strong> Agents use your Claude subscription or your API key. Sidebots itself is free.</li>
-      <li><strong>What you need.</strong> A Mac with Apple silicon on macOS 14 or later, and an iPhone.</li>
-      <li><strong>Your messages stay on your Mac.</strong> Notifications are encrypted so that only your phone can read them. <a href="/privacy">Read the privacy policy</a>.</li>
-    </ul>
+  <section class="last">
+    <h2>Start on your computer.</h2>
+    <a class="download" href="https://github.com/rithwikshetty/sidebots/releases/latest/download/Sidebots.dmg">
+      <svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true"><path d="M8 1.5v8.5m0 0L4.5 6.5M8 10l3.5-3.5M2.5 13.5h11" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      Download for Mac
+    </a>
+    <p class="fine">For macOS 14 or later on Apple silicon. The phone app is coming to the App Store.</p>
   </section>
 </main>
 
 <footer>
-  <img src="/icon.png" alt="" width="28" height="28">
-  <p>Sidebots is open source. <a href="https://github.com/rithwikshetty/sidebots">See the code on GitHub</a>.</p>
-  <a href="/privacy">Privacy</a>
+  <span><img src="/icon.png" alt="" width="20" height="20">Sidebots is open source, under the MIT licence.</span>
+  <nav>
+    <a href="https://github.com/rithwikshetty/sidebots">GitHub</a>
+    <a href="/privacy">Privacy</a>
+  </nav>
 </footer>
+
+<script>
+// On load, Scout is still working, with the lines the app shows meanwhile. Then its reply arrives, as it does on the phone.
+// Further down, the chat plays out once it comes into view.
+(() => {
+  if (matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+  const thread = document.querySelector(".thread");
+  thread.classList.add("waiting");
+  new IntersectionObserver((seen, watch) => {
+    if (!seen[0].isIntersecting) return;
+    watch.disconnect();
+    thread.classList.replace("waiting", "playing");
+  }, { threshold: 0.6 }).observe(thread);
+  const row = document.getElementById("scout");
+  const avatar = row.querySelector(".avatar"), preview = row.querySelector(".preview"), time = row.querySelector("time"), count = row.querySelector(".count");
+  const reply = preview.textContent;
+  const lines = ["Crossing the Rubicon", "Consulting the augurs"];
+  avatar.className = "avatar working";
+  preview.className = "preview working";
+  preview.textContent = lines[0];
+  time.textContent = "9:02 am";
+  count.hidden = true;
+  setTimeout(() => (preview.textContent = lines[1]), 2400);
+  setTimeout(() => {
+    avatar.className = "avatar replied";
+    preview.className = "preview unread arrive";
+    preview.textContent = reply;
+    time.textContent = "9:47 am";
+    count.hidden = false;
+  }, 4800);
+})();
+</script>
 </body>
 </html>

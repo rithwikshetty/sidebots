@@ -131,7 +131,7 @@ import SwiftUI
 
 /**
  * The panel under the menu bar icon, laid out as the system's own menu bar
- * panels are: whether phones can reach this Mac at the top, then the paired
+ * panels are: whether phones can reach this computer at the top, then the paired
  * phones with a way to pair another, then how the agents sign in to Claude Code,
  * and Open at login, Check for updates and Quit at the foot. Rows light up under the pointer.
  */
@@ -181,7 +181,7 @@ struct MenuContent: View {
     .frame(width: 300)
   }
 
-  /// The app's icon over whether phones can reach this Mac, with a dot in the light's color.
+  /// The app's icon over whether phones can reach this computer, with a dot in the light's color.
   private var header: some View {
     HStack(spacing: 10) {
       Image(nsImage: NSApp.applicationIconImage).resizable().frame(width: 36, height: 36)
@@ -208,9 +208,9 @@ struct MenuContent: View {
     guard let status = server.status, status.running else { return ("Starting…", .gray) }
     if server.person == nil { return ("Not set up yet", .orange) }
     switch status.reachable {
-    case true: return ("Phones can reach this Mac", .green)
-    case false: return ("Phones can't reach this Mac", .red)
-    default: return ("Getting this Mac ready for phones…", .orange)
+    case true: return ("Phones can reach this computer", .green)
+    case false: return ("Phones can't reach this computer", .red)
+    default: return ("Getting this computer ready for phones…", .orange)
     }
   }
 

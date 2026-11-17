@@ -24,7 +24,7 @@ type State = {
    */
   pending: Record<string, AgentChanges>;
   online: boolean;
-  /** Which side to update when the Mac speaks another version of the contract, or null while they match. */
+  /** Which side to update when the computer speaks another version of the contract, or null while they match. */
   behind: Behind | null;
 };
 
@@ -318,14 +318,14 @@ async function listen(signal: AbortSignal): Promise<void> {
     try {
       const events = remote("/events");
       const response = await streamingFetch(events.uri, { headers: { ...events.headers, Accept: "text/event-stream" }, signal });
-      // A Mac on another version of the contract is asked again until one side is updated.
+      // A computer on another version of the contract is asked again until one side is updated.
       const side = behind(response);
       if (side !== state.behind) set({ behind: side });
       if (side) {
         void response.body?.cancel();
-        throw new Error("the Mac speaks another version");
+        throw new Error("the computer speaks another version");
       }
-      // The Mac doesn't know this phone, so there is nothing to listen to until it pairs again.
+      // The computer doesn't know this phone, so there is nothing to listen to until it pairs again.
       if (response.status === 401) return unpair();
       if (!response.ok || !response.body) throw new Error(`events answered ${response.status}`);
       await refresh();
@@ -352,7 +352,7 @@ async function listen(signal: AbortSignal): Promise<void> {
   }
 }
 
-// Pairing with a Mac starts the sync. Losing the pairing stops it, and clears what the phone kept of that Mac.
+// Pairing with a computer starts the sync. Losing the pairing stops it, and clears what the phone kept of that computer.
 onPairing(() => {
   if (isPaired()) return startSync();
   stopSync?.();

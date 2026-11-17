@@ -155,12 +155,12 @@ const runTurn: RunTurn = async (turn) => {
 /**
  * Why a turn failed, in words for the person on their phone. Claude Code's
  * words for the common causes are instructions for its own terminal, such as
- * "Not logged in · Please run /login", so those say what to do on the Mac
+ * "Not logged in · Please run /login", so those say what to do on the computer
  * instead. Anything else keeps Claude Code's words.
  */
 function failure(words: string): string {
-  if (/invalid api key|invalid x-api-key/i.test(words)) return "Anthropic refused your API key. Save a new one on your Mac.";
-  if (/not logged in|please run \/login|sign in again/i.test(words)) return "Claude Code on your Mac is signed out. Sign in to it there.";
+  if (/invalid api key|invalid x-api-key/i.test(words)) return "Anthropic refused your API key. Save a new one on your computer.";
+  if (/not logged in|please run \/login|sign in again/i.test(words)) return "Claude Code on your computer is signed out. Sign in to it there.";
   if (/you've (?:hit|reached) your|usage limit/i.test(words)) {
     const resets = /resets ([^·\n]+)/.exec(words)?.[1].trim();
     return `Your Claude usage limit is reached. ${resets ? `It resets at ${resets}.` : "Try again once it resets."}`;
