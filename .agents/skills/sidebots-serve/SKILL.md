@@ -41,6 +41,7 @@ Install this checkout's app when the user wants to try the app or the phone. Ins
 
    - `RequestDenied` at launch means the phone was locked. The app is installed, so ask the user to open it.
    - A signing error means Xcode isn't signed in with an Apple ID on the team in `mobile/.env.local`.
+   - "does not support the Push Notifications capability" means Apple doesn't know Sidebots Dev's identifier yet. Build it once from `mobile/ios` with `xcodebuild -workspace SidebotsDev.xcworkspace -scheme SidebotsDev -configuration Release -destination id=<phone identifier> -allowProvisioningUpdates build`, which registers it with notifications, then run the install again.
    - Sidebots Dev pairs apart from the published app. Once it has paired, it stays paired when it is installed over itself. One that hasn't opens on a camera. The user can't see your terminal, so give them the command that prints its pairing code, to run in `server/`: `pnpm pair <their name> --host <address from step 6>`. The names are in the `people` table.
 
 ## Handing over
