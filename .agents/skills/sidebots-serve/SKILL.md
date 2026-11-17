@@ -13,7 +13,7 @@ Only one Sidebots server runs at a time. The phone reaches port 4317 through `ta
 
 1. Note what is being served: `git rev-parse --show-toplevel`, `git status --short --branch` and `git log -1 --oneline`.
 2. In a fresh worktree, `server/` or `mobile/` has no `node_modules`. Run `pnpm install --frozen-lockfile` in each folder that lacks it.
-3. If this checkout changes the database, ask before starting. The server makes the tables in `SCHEMA` only when they are missing, so a change to `SCHEMA` in `server/src/store.ts` against main (`git diff main -- server/src/store.ts`) needs `~/.sidebots/sidebots.sqlite` changed by hand or made again. Main can't undo it, and serving main again afterwards can break.
+3. If this checkout adds to `TABLE_CHANGES` in `server/src/store.ts` against main (`git diff main -- server/src/store.ts`), ask before starting. The server makes those changes to `~/.sidebots/sidebots.sqlite` when it starts, and main's server can't undo them.
 4. Find the running server with `lsof -tiTCP:4317 -sTCP:LISTEN`, and its checkout with `lsof -a -p <pid> -d cwd -Fn`, which prints `<checkout>/server`. Stop it with `kill <pid>`, whether it is another checkout's or this one's. Node doesn't reload changed code, so this one restarts too. A turn cut off by the stop is queued again when the next server starts.
 5. Start this checkout's server detached, so it outlives the session's limit on background jobs:
 
