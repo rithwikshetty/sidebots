@@ -15,6 +15,8 @@ struct ServerStatus: Decodable {
   let address: String?
   /// Whether phones reach the server at its address. Nil until it has one.
   let reachable: Bool?
+  /// Whether any agent has a turn queued or running.
+  let working: Bool
   let people: [Person]
 }
 

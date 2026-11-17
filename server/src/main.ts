@@ -121,6 +121,8 @@ if (process.argv[2] === "status") {
     address,
     // Whether a phone reaches the server at its address. Null until it has one.
     reachable: address ? await answers(`https://${address}`) : null,
+    // Whether any agent has a turn queued or running, which an update waits for before it restarts the server.
+    working: store.people().some((person) => store.agentsFor(person.id).some((agent) => agent.working)),
     people: store.people().map((person) => ({
       name: person.name,
       config_dir: person.claude_config_dir,

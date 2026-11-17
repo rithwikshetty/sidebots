@@ -128,7 +128,7 @@ Anthropic's terms decide which you may use. A subscription is for the subscriber
 
 ## The website
 
-`site/` is the page at [sidebots.app](https://sidebots.app), with the privacy policy the App Store asks for. It is static files in `site/public`, served by Cloudflare. Publish it with `npx wrangler deploy` from `site/`, with Wrangler signed in to the account that holds the domain.
+`site/` is the page at [sidebots.app](https://sidebots.app), with the privacy policy the App Store asks for and the Mac app's update feed. It is static files in `site/public`, served by Cloudflare. Publish it with `npx wrangler deploy` from `site/`, with Wrangler signed in to the account that holds the domain.
 
 ## Build the Mac app
 
@@ -138,13 +138,22 @@ On a Mac with Apple silicon, Xcode and pnpm:
 mac/build.sh
 ```
 
-The script downloads Node and `cloudflared` at the versions it names and checks them against the checksums it names. It builds the menu bar app in `mac/`, adds the server with its production dependencies, which include the Claude Code program the Agent SDK ships, and the starter avatars, and signs every program inside with `SIDEBOTS_IDENTITY`. That is a code signing identity in your keychain, `Apple Development` unless you set it, or `-` to sign for your own Mac only. It makes `mac/build/Sidebots.app` and `mac/build/Sidebots.zip`.
+The script downloads Node and `cloudflared` at the versions it names and checks them against the checksums it names. It builds the menu bar app in `mac/` with Sparkle, adds the server with its production dependencies, which include the Claude Code program the Agent SDK ships, and the starter avatars, and signs every program inside with `SIDEBOTS_IDENTITY`. That is a code signing identity in your keychain, `Apple Development` unless you set it, or `-` to sign for your own Mac only. It makes `mac/build/Sidebots.app` and `mac/build/Sidebots.zip`.
 
 ```sh
 mac/build.sh release
 ```
 
 A release goes on from there. Xcode signs the app with the Developer ID of the identity's team, which Apple keeps in its cloud, and sends it to Apple to notarise. The script waits for Apple, up to two hours, and makes `mac/build/Sidebots.dmg` from the notarised app. Xcode must be signed in to an account in that team that may use the Developer ID, as the Account Holder and Admins can.
+
+The app updates itself with Sparkle from the feed at `sidebots.app/appcast.xml`, and installs an update once no agent is in the middle of a turn. A release signs the disk image with the update key in your keychain, whose public half is `SUPublicEDKey` in `mac/Info.plist`, and writes the feed for it in `site/public/appcast.xml`. Sparkle's `generate_keys -x <file>` in `mac/.build/artifacts/sparkle/Sparkle/bin` exports the key to keep it safe, and `-f <file>` imports it on another Mac. Without it, nobody's copy can be updated again.
+
+Each release has a higher `CFBundleShortVersionString` in `mac/Info.plist`. Publish it by putting the disk image on a GitHub release tagged with that version, then publishing the site with the new feed:
+
+```sh
+gh release create v1.0.0 mac/build/Sidebots.dmg --title "Sidebots 1.0.0"
+(cd site && npx wrangler deploy)
+```
 
 To try a build beside the Sidebots you already run, start it from a terminal with a data folder and port of its own. The app passes `SIDEBOTS_HOME`, `PORT` and `SIDEBOTS_RELAY` on to the server, and sets a new person up with the Claude Code config folder in `CLAUDE_CONFIG_DIR` when it is set:
 

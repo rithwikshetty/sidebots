@@ -1,10 +1,11 @@
 #!/bin/bash
-# Builds Sidebots for Mac in mac/build: the menu bar app with Node, the server
-# and its production dependencies, the starter avatars and cloudflared inside it.
+# Builds Sidebots for Mac in mac/build: the menu bar app with Sparkle, Node, the
+# server and its production dependencies, the starter avatars and cloudflared inside it.
 #
 #   mac/build.sh           Signs with SIDEBOTS_IDENTITY, for use on this Mac, and makes build/Sidebots.zip.
 #   mac/build.sh release   Has Xcode sign it with the Developer ID of that identity's team and send it to
-#                          Apple to notarise, then makes build/Sidebots.dmg from the notarised app.
+#                          Apple to notarise, then makes build/Sidebots.dmg from the notarised app, signs it
+#                          with the update key in the keychain, and writes site/public/appcast.xml for it.
 #
 # SIDEBOTS_IDENTITY is a code signing identity in the keychain, "Apple Development" unless set, or "-"
 # to sign for this Mac only. A release needs Xcode signed in to an account in the identity's team that
@@ -40,9 +41,11 @@ download() {
 
 echo "Building the app"
 swift build -c release --arch arm64 --package-path "$mac"
+products=$(swift build -c release --arch arm64 --package-path "$mac" --show-bin-path)
 rm -rf "$app"
-mkdir -p "$app/Contents/MacOS" "$resources/bin" "$resources/server"
-cp "$(swift build -c release --arch arm64 --package-path "$mac" --show-bin-path)/Sidebots" "$app/Contents/MacOS/"
+mkdir -p "$app/Contents/MacOS" "$app/Contents/Frameworks" "$resources/bin" "$resources/server"
+cp "$products/Sidebots" "$app/Contents/MacOS/"
+ditto "$products/Sparkle.framework" "$app/Contents/Frameworks/Sparkle.framework"
 cp "$mac/Info.plist" "$app/Contents/Info.plist"
 plutil -replace CFBundleVersion -string "$(git -C "$root" rev-list --count HEAD)" "$app/Contents/Info.plist"
 cp "$mac/AppIcon.icns" "$resources/"
@@ -73,6 +76,12 @@ find "$resources" -type f ! -path "$resources/bin/node" ! -path "$claude" -print
   while IFS= read -r -d '' file; do
     if file -b "$file" | grep -q Mach-O; then sign "$file"; fi
   done
+# Sparkle's helpers from the inside out, as Sparkle's documentation sets out. The downloader keeps its entitlements.
+sparkle=$app/Contents/Frameworks/Sparkle.framework/Versions/B
+sign "$sparkle/XPCServices/Installer.xpc"
+sign --preserve-metadata=entitlements "$sparkle/XPCServices/Downloader.xpc"
+sign "$sparkle/Autoupdate" "$sparkle/Updater.app"
+sign "$app/Contents/Frameworks/Sparkle.framework"
 sign "$app"
 codesign --verify --strict --deep "$app"
 
@@ -136,3 +145,26 @@ ln -s /Applications "$build/dmg/Applications"
 hdiutil create -volname Sidebots -srcfolder "$build/dmg" -format UDZO -quiet "$build/Sidebots.dmg"
 rm -rf "$build/dmg"
 echo "Built $build/Sidebots.dmg"
+
+# The update feed names the disk image on the GitHub release for this version,
+# with its length and its signature by the update key, which Sparkle checks
+# against the public key in Info.plist before it installs.
+version=$(plutil -extract CFBundleShortVersionString raw "$info")
+signature=$("$mac/.build/artifacts/sparkle/Sparkle/bin/sign_update" "$build/Sidebots.dmg")
+cat >"$root/site/public/appcast.xml" <<EOF
+<?xml version="1.0" encoding="utf-8"?>
+<rss version="2.0" xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle">
+  <channel>
+    <title>Sidebots</title>
+    <item>
+      <title>Sidebots $version</title>
+      <pubDate>$(LC_ALL=C date -u "+%a, %d %b %Y %H:%M:%S +0000")</pubDate>
+      <sparkle:version>$(plutil -extract CFBundleVersion raw "$info")</sparkle:version>
+      <sparkle:shortVersionString>$version</sparkle:shortVersionString>
+      <sparkle:minimumSystemVersion>$(plutil -extract LSMinimumSystemVersion raw "$info")</sparkle:minimumSystemVersion>
+      <enclosure url="https://github.com/rithwikshetty/sidebots/releases/download/v$version/Sidebots.dmg" type="application/octet-stream" $signature/>
+    </item>
+  </channel>
+</rss>
+EOF
+echo "Wrote $root/site/public/appcast.xml for Sidebots $version"
