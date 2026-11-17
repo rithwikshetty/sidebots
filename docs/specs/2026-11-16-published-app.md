@@ -83,13 +83,19 @@ The api's first step, which today matches the `Tailscale-User-Login` header to a
 
 ### Database
 
-`people` loses `tailscale_login`. `devices` changes from a list of push tokens to the list of paired phones, and `pairings` is new.
+`people` loses `tailscale_login`. `devices` changes from a list of push tokens to the list of paired phones, and `pairings` is new. `accounts` holds each person's config folder for each provider.
 
 ```sql
 create table people (
-  id                text primary key,
-  name              text not null unique,
-  claude_config_dir text not null
+  id          text primary key,
+  name        text not null unique
+);
+
+create table accounts (
+  person_id   text not null references people(id),
+  provider    text not null,
+  config_dir  text not null,
+  primary key (person_id, provider)
 );
 
 create table devices (
@@ -111,7 +117,7 @@ create table pairings (
 );
 ```
 
-`devices.topic` goes: the relay knows which app it serves. `add-person` takes a name and a config folder, and `api-key` and `pair` name the person by name.
+`devices.topic` goes: the relay knows which app it serves. `add-person` takes a name, a provider and a config folder for it, `api-key` takes the person and the provider, and `pair` names the person by name.
 
 ### The machine's identity
 

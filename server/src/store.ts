@@ -6,10 +6,12 @@ import { basename, join } from "node:path";
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
 
-import { COLOR, DEFAULT_EFFORT, DEFAULT_MODEL, readableColor } from "./contract.ts";
-import type { About, Agent, AgentWithLatest, Avatar, Found, Job, Memory, Message, PushToken, Schedule, Sender, Status } from "./contract.ts";
+import { COLOR, DEFAULT_PROVIDER, PROVIDERS, readableColor } from "./contract.ts";
+import type { About, Agent, AgentWithLatest, Avatar, Found, Job, Memory, Message, Provider, PushToken, Schedule, Sender, Status } from "./contract.ts";
 
-export type Person = { id: string; name: string; claude_config_dir: string };
+export type Person = { id: string; name: string };
+/** How a person's agents sign in to a provider: the provider's config folder of the person's own, which holds their login, rules, skills and sessions. */
+export type Account = { person_id: string; provider: Provider; config_dir: string };
 /** A phone that has paired with this server, and the person whose agents it reaches. */
 export type Device = { id: string; person_id: string; name: string; paired_at: number };
 /** Where Apple delivers a phone's notifications, and the key, in base64, that only that phone can read them with. */
@@ -33,19 +35,31 @@ export type Machine = { privateKey: string; id?: string; address?: string; tunne
 // The app's blue, for an avatar with no colour of its own and no design to take one from.
 const DEFAULT_COLOR = "#1F5FD6";
 
-const TABLE_CHANGES = ["alter table devices add column app text", "alter table agents add column color text"];
+const TABLE_CHANGES = [
+  "alter table devices add column app text",
+  "alter table agents add column color text",
+  "insert into accounts (person_id, provider, config_dir) select id, 'claude', claude_config_dir from people",
+  "alter table people drop column claude_config_dir",
+  "alter table agents add column provider text not null default 'claude'",
+];
 
 const SCHEMA = `
 create table if not exists people (
-  id                text primary key,
-  name              text not null unique,
-  claude_config_dir text not null
+  id          text primary key,
+  name        text not null unique
+);
+create table if not exists accounts (
+  person_id   text not null references people(id),
+  provider    text not null,
+  config_dir  text not null,
+  primary key (person_id, provider)
 );
 create table if not exists agents (
   id          text primary key,
   person_id   text not null references people(id),
   name        text not null,
   avatar_id   text not null,
+  provider    text not null default 'claude',
   model       text not null default 'opus',
   effort      text not null default 'medium',
   muted       integer not null default 0,
@@ -153,8 +167,16 @@ export function openStore(home: string) {
   const avatarsHome = join(home, "avatars");
   const machinePath = join(home, "machine.json");
   const apiKeysPath = join(home, "api-keys.json");
-  /** Each person's Anthropic API key, by the person's id, for the people who have one. */
-  const apiKeys = (): Record<string, string> => (existsSync(apiKeysPath) ? (JSON.parse(readFileSync(apiKeysPath, "utf8")) as Record<string, string>) : {});
+  /**
+   * Each person's API keys, by the person's id and then by provider, for the
+   * people who have one. A key saved on its own, as Sidebots 1.0.2 saved one,
+   * is a Claude Code key.
+   */
+  const apiKeys = (): Record<string, Partial<Record<Provider, string>>> => {
+    if (!existsSync(apiKeysPath)) return {};
+    const saved = JSON.parse(readFileSync(apiKeysPath, "utf8")) as Record<string, string | Partial<Record<Provider, string>>>;
+    return Object.fromEntries(Object.entries(saved).map(([personId, keys]) => [personId, typeof keys === "string" ? { claude: keys } : keys]));
+  };
   const listeners = new Set<(change: Change) => void>();
   const changed = (change: Change) => listeners.forEach((listener) => listener(change));
 
@@ -224,11 +246,27 @@ export function openStore(home: string) {
       return existsSync(path) ? path : undefined;
     },
 
-    /** Adds a person. Each person on a server has a name of their own, which the commands know them by. */
-    addPerson(input: { name: string; configDir: string }): Person {
-      const person: Person = { id: randomUUID(), name: input.name, claude_config_dir: input.configDir };
-      db.prepare("insert into people (id, name, claude_config_dir) values (?, ?, ?)").run(person.id, person.name, person.claude_config_dir);
+    /**
+     * Adds a person, with the config folder their agents sign in to a provider
+     * with. Each person on a server has a name of their own, which the
+     * commands know them by.
+     */
+    addPerson(input: { name: string; provider: Provider; configDir: string }): Person {
+      const person: Person = { id: randomUUID(), name: input.name };
+      db.exec("begin");
+      db.prepare("insert into people (id, name) values (?, ?)").run(person.id, person.name);
+      db.prepare("insert into accounts (person_id, provider, config_dir) values (?, ?, ?)").run(person.id, input.provider, input.configDir);
+      db.exec("commit");
       return person;
+    },
+
+    /** How the person's agents sign in to each provider they have set up. */
+    accounts(personId: string): Account[] {
+      return db.prepare("select * from accounts where person_id = ? order by rowid").all(personId) as Account[];
+    },
+
+    account(personId: string, provider: Provider): Account | undefined {
+      return db.prepare("select * from accounts where person_id = ? and provider = ?").get(personId, provider) as Account | undefined;
     },
 
     /** Everyone on this server, in the order they were added. */
@@ -245,23 +283,25 @@ export function openStore(home: string) {
     },
 
     /**
-     * Has the person's agents run on this Anthropic API key from their next
-     * turn, or with no key, on the Claude login in their config folder. The
+     * Has the person's agents on a provider run on this API key from their
+     * next turn, or with no key, on the login in their config folder. The
      * file is swapped in whole, since the server reads it for a turn that may
      * start while a key is being saved.
      */
-    setApiKey(personId: string, key: string | null): void {
+    setApiKey(personId: string, provider: Provider, key: string | null): void {
       const keys = apiKeys();
-      if (key === null) delete keys[personId];
-      else keys[personId] = key;
+      const theirs = { ...keys[personId] };
+      if (key === null) delete theirs[provider];
+      else theirs[provider] = key;
+      keys[personId] = theirs;
       const written = `${apiKeysPath}.new`;
       writeFileSync(written, JSON.stringify(keys), { mode: 0o600 });
       renameSync(written, apiKeysPath);
     },
 
-    /** The Anthropic API key the person's agents run on. A person without one uses the Claude login in their config folder. */
-    apiKey(personId: string): string | undefined {
-      return apiKeys()[personId];
+    /** The API key the person's agents on a provider run on. Without one, they use the login in the person's config folder. */
+    apiKey(personId: string, provider: Provider): string | undefined {
+      return apiKeys()[personId]?.[provider];
     },
 
     createAgent(person: Person, name: string, avatarId: string): Agent {
@@ -271,8 +311,9 @@ export function openStore(home: string) {
         person_id: person.id,
         name,
         avatar_id: avatarId,
-        model: DEFAULT_MODEL,
-        effort: DEFAULT_EFFORT,
+        provider: DEFAULT_PROVIDER,
+        model: PROVIDERS[DEFAULT_PROVIDER].model,
+        effort: PROVIDERS[DEFAULT_PROVIDER].effort,
         muted: false,
         hidden: false,
         color: null,
@@ -283,12 +324,15 @@ export function openStore(home: string) {
       const folder = agentHome(agent.id);
       mkdirSync(join(folder, "memory"), { recursive: true });
       mkdirSync(join(folder, "attachments"), { recursive: true });
-      writeFileSync(join(folder, "CLAUDE.md"), instructions(name, person.name));
-      db.prepare("insert into agents (id, person_id, name, avatar_id, model, effort, session_id, read_at, created_at) values (?, ?, ?, ?, ?, ?, ?, ?, ?)").run(
+      writeFileSync(join(folder, PROVIDERS[agent.provider].instructions), instructions(name, person.name));
+      db.prepare(
+        "insert into agents (id, person_id, name, avatar_id, provider, model, effort, session_id, read_at, created_at) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+      ).run(
         agent.id,
         agent.person_id,
         agent.name,
         agent.avatar_id,
+        agent.provider,
         agent.model,
         agent.effort,
         null,
@@ -321,37 +365,31 @@ export function openStore(home: string) {
       const values = columns.map((column) => (typeof changes[column] === "boolean" ? Number(changes[column]) : changes[column]!));
       db.prepare(`update agents set ${columns.map((column) => `${column} = ?`).join(", ")} where id = ?`).run(...values, agent.id);
       if (changes.name === undefined || changes.name === agent.name) return;
-      const path = join(agentHome(agent.id), "CLAUDE.md");
+      const path = join(agentHome(agent.id), PROVIDERS[agent.provider].instructions);
       const text = readFileSync(path, "utf8");
       writeFileSync(path, text.replace(`# ${agent.name}\n`, `# ${changes.name}\n`).replace(`You are ${agent.name},`, `You are ${changes.name},`));
     },
 
-    /**
-     * Removes an agent and everything it had: its messages, its jobs, its home
-     * folder, and the sessions Claude Code kept for it. Claude Code keeps a
-     * folder's sessions in its config folder, under `projects`, in a folder
-     * named after the path with every other character turned into a dash.
-     */
-    deleteAgent(agent: Agent, person: Person): void {
+    /** Removes an agent and everything Sidebots kept for it: its messages, its jobs and its home folder. */
+    deleteAgent(agent: Agent): void {
       db.prepare("delete from jobs where agent_id = ?").run(agent.id);
       db.prepare("delete from messages where agent_id = ?").run(agent.id);
       db.prepare("delete from agents where id = ?").run(agent.id);
       rmSync(agentHome(agent.id), { recursive: true, force: true });
-      rmSync(join(person.claude_config_dir, "projects", agentHome(agent.id).replace(/[^a-zA-Z0-9]/g, "-")), { recursive: true, force: true });
       changed({ agent, deleted: true });
     },
 
     /** The instructions an agent follows, what it remembers and its jobs. */
-    about(agentId: string): About {
-      const folder = agentHome(agentId);
+    about(agent: Agent): About {
+      const folder = agentHome(agent.id);
       const read = (path: string) => (existsSync(path) ? readFileSync(path, "utf8") : "");
       const memory = join(folder, "memory");
       // MEMORY.md is Claude Code's list of the other files.
       const files = existsSync(memory) ? readdirSync(memory).filter((file) => file.endsWith(".md") && file !== "MEMORY.md") : [];
       return {
-        instructions: read(join(folder, "CLAUDE.md")),
+        instructions: read(join(folder, PROVIDERS[agent.provider].instructions)),
         memories: files.sort().map((file) => toMemory(file, read(join(memory, file)))),
-        jobs: jobsFor(agentId),
+        jobs: jobsFor(agent.id),
       };
     },
 

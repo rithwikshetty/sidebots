@@ -1,17 +1,16 @@
-// The runner runs turns. It is the only module that imports the Agent SDK.
+// The runner runs each agent's turns one at a time, on the provider the agent
+// runs on, and gives every provider the same tools for the agent.
 
 import { randomUUID } from "node:crypto";
-import { join } from "node:path";
-import { createSdkMcpServer, query, tool, type SDKMessage, type SDKUserMessage } from "@anthropic-ai/claude-agent-sdk";
 import { z } from "zod";
-import { scheduleWords } from "./contract.ts";
-import type { Effort, Found, Job, Message, Model, Schedule } from "./contract.ts";
+import { PROVIDERS, scheduleWords } from "./contract.ts";
+import type { Agent, Effort, Found, Job, Message, Model, Provider, Schedule } from "./contract.ts";
 import type { Person, Store } from "./store.ts";
 
 /** A job as an agent asks for one: what to do on each run, and one of three ways to say when. */
 export type JobRequest = { what: string; every_minutes?: number; daily_at?: string; weekdays?: number[]; once_at?: string };
 
-/** A message as the agent is given it: its id, which Claude Code names again once it has read it, and its words. */
+/** A message as the agent is given it: its id, which the provider names again once the agent has read it, and its words. */
 export type Prompt = { id: string; text: string };
 
 /**
@@ -31,8 +30,9 @@ export type Turn = {
   replied: (text: string, ids: string[]) => void;
   cwd: string;
   sessionId: string | null;
+  /** The person's config folder for the provider. */
   configDir: string;
-  /** The person's Anthropic API key. Without one, the turn runs on the Claude login in `configDir`. */
+  /** The person's API key for the provider. Without one, the turn runs on the login in `configDir`. */
   apiKey?: string;
   model: Model;
   effort: Effort;
@@ -53,6 +53,78 @@ export type Turn = {
 export type TurnResult = { sessionId: string; contextTokens: number };
 export type RunTurn = (turn: Turn) => Promise<TurnResult>;
 
+/**
+ * What the runner needs from a provider. `runTurn` runs a turn on it. A turn
+ * runs on the person's API key for the provider when they have one, and
+ * otherwise on the login in their config folder for it. It keeps the session
+ * open while the turn runs, so that a message the person sends meanwhile goes
+ * into it, and replies to every message it was sent. `failure` puts why a
+ * turn failed in words for the person on their phone, from the provider's
+ * own. `forget` removes the sessions the provider keeps for the agent that
+ * works in `cwd`, once the agent is deleted.
+ */
+export type Driver = {
+  runTurn: RunTurn;
+  failure: (words: string) => string;
+  forget: (cwd: string, configDir: string) => void;
+};
+/** A driver for each provider. */
+export type Drivers = Record<Provider, Driver>;
+
+/** A tool Sidebots gives the agent: its name, what the agent is told it does, what it takes, and what it does, in words the agent reads. */
+export type Tool<Input extends z.ZodRawShape = z.ZodRawShape> = {
+  name: string;
+  description: string;
+  input: Input;
+  run(input: z.infer<z.ZodObject<Input>>): string;
+};
+const define = <Input extends z.ZodRawShape>(tool: Tool<Input>): Tool => tool as Tool;
+
+/** The agent's tools for a turn, which a driver hands to its provider. `send_update` is there only for a turn the person is waiting on. */
+export function toolsFor(turn: Turn): Tool[] {
+  const { sendUpdate } = turn;
+  return [
+    define({
+      name: "search_history",
+      description:
+        "Search the messages in every chat this person has in Sidebots, with this agent and their other agents. Use it for things said before this session or to another agent.",
+      input: { text: z.string().describe("A word or phrase the messages contain") },
+      run: (search) => turn.searchHistory(search.text),
+    }),
+    define({
+      name: "schedule_job",
+      description:
+        "Save a job that Sidebots runs for you later with nobody asking: once at a time, at a time of day, or every so many minutes. Use it for a reminder, a regular check, or anything the person wants done or watched without asking again. Each run is a session of its own that is given `what` and remembers nothing else, and what you reply then is sent to the person, so write `what` as full instructions to yourself, including when a run should stay silent. Give exactly one of every_minutes, daily_at and once_at. Times are this machine's local time, and the answer tells you the time now.",
+      input: {
+        what: z.string().describe("What to do on each run, written to yourself"),
+        every_minutes: z.number().optional().describe("Run every this many minutes"),
+        daily_at: z.string().optional().describe("Run at this time of day, as HH:MM on a 24-hour clock"),
+        weekdays: z.array(z.number()).optional().describe("With daily_at, the days it runs on, where 0 is Sunday. Leave out for every day."),
+        once_at: z.string().optional().describe("Run once at this time, as YYYY-MM-DDTHH:MM"),
+      },
+      run: (request) => turn.scheduleJob(request),
+    }),
+    define({ name: "list_jobs", description: "List the jobs you have saved, with when each next runs and the time now.", input: {}, run: () => turn.listJobs() }),
+    define({
+      name: "cancel_job",
+      description: "Remove one of your jobs.",
+      input: { id: z.string().describe("The job's id, as list_jobs gives it") },
+      run: ({ id }) => turn.cancelJob(id),
+    }),
+    ...(sendUpdate
+      ? [
+          define({
+            name: "send_update",
+            description:
+              "Send the person a short text while you are still working. Use it only when the work is taking a long time: after a minute or more, and then no more than every few minutes. Say in a sentence or two what you have done and what is left. It arrives quietly, without a notification; your final reply is what tells them you are done, so don't repeat the update there. Don't use it for work that will be done soon.",
+            input: { text: z.string().describe("The update, as a short plain text") },
+            run: (update) => sendUpdate(update.text),
+          }),
+        ]
+      : []),
+  ];
+}
+
 /** What a fresh start shows in the chat. */
 const FRESH_START = "Fresh start";
 // A session this large gets a fresh start once its reply is in.
@@ -64,206 +136,11 @@ const RECENT_MESSAGE_CHARS = 1500;
 const QUOTE_CHARS = 300;
 // How often the clock looks for jobs whose time has come.
 const CLOCK_MS = 15_000;
-// The longest a session stays open, after its replies are in, for background work the agent started.
-const BACKGROUND_WAIT_MS = 30 * 60_000;
 // How long a turn runs before the agent may send an update, and how long between updates.
 const FIRST_UPDATE_MS = 60_000;
 const UPDATE_GAP_MS = 3 * 60_000;
 /** What a job's run replies when it has nothing to tell the person. */
 const SILENT = "SILENT";
-const TOOLS = ["search_history", "schedule_job", "list_jobs", "cancel_job"];
-
-const text = (words: string) => ({ content: [{ type: "text" as const, text: words }] });
-
-/** The messages a frame from Claude Code says it has read, by the ids they were sent with. */
-const readIds = (message: SDKMessage): string[] => ("user_message_uuids" in message && message.user_message_uuids) || [];
-
-/** Messages for Claude Code, handed over as they come, until `end`. */
-function inbox() {
-  const waiting: SDKUserMessage[] = [];
-  let wake: (() => void) | null = null;
-  let ended = false;
-  return {
-    push(message: SDKUserMessage) {
-      waiting.push(message);
-      wake?.();
-    },
-    end() {
-      ended = true;
-      wake?.();
-    },
-    async *messages(): AsyncGenerator<SDKUserMessage> {
-      for (;;) {
-        while (waiting.length) yield waiting.shift()!;
-        if (ended) return;
-        await new Promise<void>((resolve) => (wake = resolve));
-        wake = null;
-      }
-    },
-  };
-}
-
-/**
- * Runs a turn through Claude Code, paid for by the person who owns the agent:
- * on their API key when they have one, and otherwise on the Claude login in
- * their config folder. The session stays open while the turn runs, so a
- * message the person sends meanwhile goes into it: Claude Code reads it at its
- * next pause between steps, and its reply answers both. One that arrives as the turn is finishing
- * gets a reply of its own in the same session. The session closes once every
- * message sent to it has its reply and no background work the agent started,
- * such as a long command, is still running. When such work finishes, Claude
- * Code wakes the agent by itself, and what it says then is a reply too. The
- * session waits for that work for half an hour at most.
- */
-export const claudeTurn: RunTurn = async ({
-  prompt,
-  followUps,
-  seen,
-  replied,
-  cwd,
-  sessionId,
-  configDir,
-  apiKey,
-  model,
-  effort,
-  keepSession,
-  stop,
-  searchHistory,
-  scheduleJob,
-  listJobs,
-  cancelJob,
-  sendUpdate,
-}) => {
-  const sidebots = createSdkMcpServer({
-    name: "sidebots",
-    tools: [
-      tool(
-        "search_history",
-        "Search the messages in every chat this person has in Sidebots, with this agent and their other agents. Use it for things said before this session or to another agent.",
-        { text: z.string().describe("A word or phrase the messages contain") },
-        async (search) => text(searchHistory(search.text)),
-      ),
-      tool(
-        "schedule_job",
-        "Save a job that Sidebots runs for you later with nobody asking: once at a time, at a time of day, or every so many minutes. Use it for a reminder, a regular check, or anything the person wants done or watched without asking again. Each run is a session of its own that is given `what` and remembers nothing else, and what you reply then is sent to the person, so write `what` as full instructions to yourself, including when a run should stay silent. Give exactly one of every_minutes, daily_at and once_at. Times are this machine's local time, and the answer tells you the time now.",
-        {
-          what: z.string().describe("What to do on each run, written to yourself"),
-          every_minutes: z.number().optional().describe("Run every this many minutes"),
-          daily_at: z.string().optional().describe("Run at this time of day, as HH:MM on a 24-hour clock"),
-          weekdays: z.array(z.number()).optional().describe("With daily_at, the days it runs on, where 0 is Sunday. Leave out for every day."),
-          once_at: z.string().optional().describe("Run once at this time, as YYYY-MM-DDTHH:MM"),
-        },
-        async (request) => text(scheduleJob(request)),
-      ),
-      tool("list_jobs", "List the jobs you have saved, with when each next runs and the time now.", {}, async () => text(listJobs())),
-      tool("cancel_job", "Remove one of your jobs.", { id: z.string().describe("The job's id, as list_jobs gives it") }, async ({ id }) => text(cancelJob(id))),
-      ...(sendUpdate
-        ? [
-            tool(
-              "send_update",
-              "Send the person a short text while you are still working. Use it only when the work is taking a long time: after a minute or more, and then no more than every few minutes. Say in a sentence or two what you have done and what is left. It arrives quietly, without a notification; your final reply is what tells them you are done, so don't repeat the update there. Don't use it for work that will be done soon.",
-              { text: z.string().describe("The update, as a short plain text") },
-              async (update) => text(sendUpdate(update.text)),
-            ),
-          ]
-        : []),
-    ],
-  });
-  const input = inbox();
-  // Sent to Claude Code and not yet answered.
-  const unanswered = new Set<string>();
-  let open = true;
-  // The session the replies came from, once there is one, and the background work it has running.
-  let session: string | null = null;
-  let background = 0;
-  let waitForBackground: ReturnType<typeof setTimeout> | null = null;
-  const close = () => {
-    if (waitForBackground) clearTimeout(waitForBackground);
-    open = false;
-    input.end();
-  };
-  // Closes the session when nothing is left for it to do, or waits for its background work.
-  const settle = () => {
-    if (!open || session === null || unanswered.size > 0) return;
-    if (background === 0) close();
-    else waitForBackground ??= setTimeout(close, BACKGROUND_WAIT_MS);
-  };
-  const send = ({ id, text: words }: Prompt) => {
-    if (waitForBackground) clearTimeout(waitForBackground);
-    waitForBackground = null;
-    unanswered.add(id);
-    input.push({ type: "user", message: { role: "user", content: words }, parent_tool_use_id: null, uuid: id as SDKUserMessage["uuid"], priority: "next" });
-  };
-  const takeFollowUps = () => {
-    if (open) followUps?.take().forEach(send);
-  };
-  send(prompt);
-  takeFollowUps();
-  const stopListening = followUps?.onArrival(takeFollowUps);
-
-  const run = query({
-    prompt: input.messages(),
-    options: {
-      cwd,
-      resume: sessionId ?? undefined,
-      persistSession: keepSession,
-      model,
-      effort,
-      abortController: stop,
-      // Claude Code uses a key in its environment ahead of a login in the config folder.
-      env: { ...process.env, CLAUDE_CONFIG_DIR: configDir, ...(apiKey && { ANTHROPIC_API_KEY: apiKey }) },
-      settingSources: ["user", "project"],
-      // Claude Code's full prompt. Left out, the SDK gives a short one that says nothing of memory.
-      systemPrompt: { type: "preset", preset: "claude_code" },
-      // Claude Code's own memory, kept in the agent's folder so it outlives
-      // every session. It is on for a Sidebots agent even when its owner has
-      // turned it off for their own Claude Code.
-      settings: { autoMemoryEnabled: true, autoMemoryDirectory: join(cwd, "memory"), env: { CLAUDE_CODE_DISABLE_AUTO_MEMORY: "0" } },
-      skills: "all",
-      mcpServers: { sidebots },
-      allowedTools: [...TOOLS, ...(sendUpdate ? ["send_update"] : [])].map((name) => `mcp__sidebots__${name}`),
-      permissionMode: "auto",
-      // Auto mode asks here when its classifier can't decide. Nobody is at
-      // the keyboard, so the agent carries on without the action.
-      canUseTool: async () => ({
-        behavior: "deny",
-        message: "Nobody is available to approve this. Skip it, finish the rest, and say in your reply what you couldn't do.",
-      }),
-    },
-  });
-  let contextTokens = 0;
-  try {
-    for await (const message of run) {
-      const read = readIds(message).filter((id) => unanswered.has(id));
-      if (read.length) seen(read);
-      if (message.type === "assistant" && message.parent_tool_use_id === null) {
-        // Each of the agent's own steps reports everything the model read for it, which is the session so far.
-        const usage = message.message.usage;
-        contextTokens = usage.input_tokens + (usage.cache_creation_input_tokens ?? 0) + (usage.cache_read_input_tokens ?? 0) + usage.output_tokens;
-      }
-      if (message.type === "system" && message.subtype === "background_tasks_changed") {
-        background = message.tasks.filter((task) => !task.ambient).length;
-        settle();
-      }
-      if (message.type !== "result") continue;
-      if (message.subtype !== "success") throw new Error(message.errors.join("; ") || message.subtype);
-      if (message.is_error) throw new Error(message.result || "Claude Code returned an error");
-      // A result names the messages it answers. One for finished background work names none.
-      read.forEach((id) => unanswered.delete(id));
-      replied(message.result, read);
-      session = message.session_id;
-      settle();
-    }
-  } finally {
-    if (waitForBackground) clearTimeout(waitForBackground);
-    open = false;
-    stopListening?.();
-    input.end();
-  }
-  if (session !== null && unanswered.size === 0) return { sessionId: session, contextTokens };
-  throw new Error("Claude Code stopped without a reply");
-};
-
 function found(messages: Found[]): string {
   if (messages.length === 0) return "No messages match.";
   return messages
@@ -325,22 +202,6 @@ Do it now. This run is a session of its own. It remembers no earlier run and not
 Your reply is sent to ${person.name} as a message and notifies their phone. If this run found nothing worth telling them, reply with only the word ${SILENT}.`;
 }
 
-/**
- * Why a turn failed, in words for the person on their phone. Claude Code's
- * words for the common causes are instructions for its own terminal, such as
- * "Not logged in · Please run /login", so those say what to do on the Mac
- * instead. Anything else keeps Claude Code's words.
- */
-function plainFailure(words: string): string {
-  if (/invalid api key|invalid x-api-key/i.test(words)) return "Anthropic refused your API key. Save a new one on your Mac.";
-  if (/not logged in|please run \/login|sign in again/i.test(words)) return "Claude Code on your Mac is signed out. Sign in to it there.";
-  if (/you've (?:hit|reached) your|usage limit/i.test(words)) {
-    const resets = /resets ([^·\n]+)/.exec(words)?.[1].trim();
-    return `Your Claude usage limit is reached. ${resets ? `It resets at ${resets}.` : "Try again once it resets."}`;
-  }
-  return words;
-}
-
 /** Whether a job's run chose to send nothing. */
 const silent = (reply: string) => reply.trim() === "" || new RegExp(`^\\W*${SILENT}\\W*$`, "i").test(reply);
 
@@ -365,7 +226,7 @@ function promptFor(message: Message, person: Person, unseen: { recent: Message[]
  * order they came, and then any job whose time has come. A message the person
  * sends during a turn goes into that turn instead of waiting for the next.
  */
-export function createQueue(store: Store, runTurn: RunTurn, now: () => number = Date.now) {
+export function createQueue(store: Store, drivers: Drivers, now: () => number = Date.now) {
   const busy = new Map<string, Promise<void>>();
   const stops = new Map<string, AbortController>();
   // For an agent running a turn the person can talk to, what to call when they send another message.
@@ -376,11 +237,14 @@ export function createQueue(store: Store, runTurn: RunTurn, now: () => number = 
       const agent = store.agent(agentId);
       const person = agent && store.person(agent.person_id);
       if (!agent || !person) return;
-      const apiKey = store.apiKey(person.id);
+      const driver = drivers[agent.provider];
+      const account = store.account(person.id, agent.provider);
+      const apiKey = store.apiKey(person.id, agent.provider);
       const message = store.nextQueued(agentId);
       const job = message ? undefined : store.dueJob(agentId, now());
-      const turn = (text: string, rest: Pick<Turn, "followUps" | "seen" | "replied" | "sendUpdate"> & { id?: string; ofJob?: boolean }) =>
-        runTurn({
+      const turn = async (text: string, rest: Pick<Turn, "followUps" | "seen" | "replied" | "sendUpdate"> & { id?: string; ofJob?: boolean }) => {
+        if (!account) throw new Error(`${person.name} hasn't set up ${PROVIDERS[agent.provider].name} on this Mac.`);
+        return driver.runTurn({
           prompt: { id: rest.id ?? randomUUID(), text },
           followUps: rest.followUps,
           seen: rest.seen,
@@ -388,7 +252,7 @@ export function createQueue(store: Store, runTurn: RunTurn, now: () => number = 
           sendUpdate: rest.sendUpdate,
           cwd: store.agentHome(agent.id),
           sessionId: rest.ofJob ? null : agent.session_id,
-          configDir: person.claude_config_dir,
+          configDir: account.config_dir,
           apiKey,
           model: agent.model,
           effort: agent.effort,
@@ -408,9 +272,10 @@ export function createQueue(store: Store, runTurn: RunTurn, now: () => number = 
           },
           cancelJob: (id) => (store.removeJob(agent.id, id) ? "Removed." : "You have no job with that id."),
         });
+      };
       // Why a turn failed, as the chat says it. An error can quote what the turn ran with, and the person's API key never goes with it.
       const reason = (error: unknown) => {
-        const words = plainFailure(error instanceof Error ? error.message : String(error));
+        const words = driver.failure(error instanceof Error ? error.message : String(error));
         return apiKey ? words.replaceAll(apiKey, "your API key") : words;
       };
 
@@ -533,10 +398,12 @@ export function createQueue(store: Store, runTurn: RunTurn, now: () => number = 
       return message;
     },
 
-    /** Stops whatever the agent is running and waits for it to end, as before the agent is deleted. */
-    async stop(agentId: string): Promise<void> {
-      stops.get(agentId)?.abort();
-      await busy.get(agentId)?.catch(() => undefined);
+    /** Stops whatever the agent is running, waits for it to end, and removes the sessions its provider keeps for it, as the agent is deleted. */
+    async remove(agent: Agent): Promise<void> {
+      stops.get(agent.id)?.abort();
+      await busy.get(agent.id)?.catch(() => undefined);
+      const account = store.account(agent.person_id, agent.provider);
+      if (account) drivers[agent.provider].forget(store.agentHome(agent.id), account.config_dir);
     },
 
     /** Starts the clock that runs each job when its time comes. Returns a function that stops it. */

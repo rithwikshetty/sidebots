@@ -5,7 +5,7 @@ import { extname } from "node:path";
 import { Hono } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import { streamSSE } from "hono/streaming";
-import { COLOR, CONTRACT_HEADER, CONTRACT_VERSION, EFFORTS, MODELS } from "./contract.ts";
+import { COLOR, CONTRACT_HEADER, CONTRACT_VERSION, PROVIDERS } from "./contract.ts";
 import type { Effort, Model, Paired, PushToken, StreamEvent } from "./contract.ts";
 import type { AgentChanges, Device, Person, Store } from "./store.ts";
 import type { Queue } from "./runner.ts";
@@ -106,11 +106,11 @@ export function createApi(store: Store, queue: Queue, machine: string) {
       changes.avatar_id = avatarId;
     }
     if (model !== undefined) {
-      if (!Object.hasOwn(MODELS, model)) return c.json({ error: "No such model." }, 400);
+      if (!Object.hasOwn(PROVIDERS[agent.provider].models, model)) return c.json({ error: "No such model." }, 400);
       changes.model = model as Model;
     }
     if (effort !== undefined) {
-      if (!Object.hasOwn(EFFORTS, effort)) return c.json({ error: "No such effort." }, 400);
+      if (!Object.hasOwn(PROVIDERS[agent.provider].efforts, effort)) return c.json({ error: "No such effort." }, 400);
       changes.effort = effort as Effort;
     }
     if (typeof muted === "boolean") changes.muted = muted;
@@ -127,15 +127,15 @@ export function createApi(store: Store, queue: Queue, machine: string) {
   app.delete("/agents/:id", async (c) => {
     const agent = ownAgent(c.var.person, c.req.param("id"));
     if (!agent) return c.json({ error: "No such agent." }, 404);
-    await queue.stop(agent.id);
-    store.deleteAgent(agent, c.var.person);
+    await queue.remove(agent);
+    store.deleteAgent(agent);
     return c.json({});
   });
 
   app.get("/agents/:id/about", (c) => {
     const agent = ownAgent(c.var.person, c.req.param("id"));
     if (!agent) return c.json({ error: "No such agent." }, 404);
-    return c.json(store.about(agent.id));
+    return c.json(store.about(agent));
   });
 
   app.delete("/agents/:id/jobs/:job", (c) => {

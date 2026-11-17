@@ -8,7 +8,7 @@
  * its own. The app sends its own in the same header, and the server refuses
  * to pair an app on another version.
  */
-export const CONTRACT_VERSION = 1;
+export const CONTRACT_VERSION = 2;
 export const CONTRACT_HEADER = "Sidebots-Contract";
 
 export type Sender = "person" | "agent" | "sidebots";
@@ -39,22 +39,29 @@ export type Message = {
 };
 
 /**
- * The models an agent can run on, by the names Claude Code gives them and the
- * names the app shows. Each name always means the newest model of its kind.
+ * The programs an agent can run on, by id. Each has the name the apps show,
+ * the models it answers with and how hard it can think before it answers, by
+ * the program's own names for them and the names the app shows, and what a
+ * new agent starts on. A more capable model and more effort are slower and use
+ * more of the person's plan or API credit. `instructions` is the file in the
+ * agent's folder that the program reads the agent's instructions from.
  */
-export const MODELS = { fable: "Fable", opus: "Opus", sonnet: "Sonnet", haiku: "Haiku" } as const;
-export type Model = keyof typeof MODELS;
-/** The model a new agent starts on. */
-export const DEFAULT_MODEL: Model = "opus";
-/**
- * How hard an agent thinks before it answers, by Claude Code's names for the
- * levels and the names the app shows. More effort is slower and uses more of
- * the person's Claude subscription or API credit.
- */
-export const EFFORTS = { low: "Low", medium: "Medium", high: "High" } as const;
-export type Effort = keyof typeof EFFORTS;
-/** The effort a new agent starts on. */
-export const DEFAULT_EFFORT: Effort = "medium";
+export const PROVIDERS = {
+  claude: {
+    name: "Claude Code",
+    models: { fable: "Fable", opus: "Opus", sonnet: "Sonnet", haiku: "Haiku" },
+    efforts: { low: "Low", medium: "Medium", high: "High" },
+    model: "opus",
+    effort: "medium",
+    instructions: "CLAUDE.md",
+  },
+} as const;
+export type Provider = keyof typeof PROVIDERS;
+/** The provider a new agent runs on. */
+export const DEFAULT_PROVIDER: Provider = "claude";
+/** A model of any provider. Each name always means the newest model of its kind. */
+export type Model = { [P in Provider]: keyof (typeof PROVIDERS)[P]["models"] }[Provider];
+export type Effort = { [P in Provider]: keyof (typeof PROVIDERS)[P]["efforts"] }[Provider];
 
 /**
  * `read_at` is the time up to which the person has read the chat. A `muted`
@@ -67,6 +74,7 @@ export type Agent = {
   person_id: string;
   name: string;
   avatar_id: string;
+  provider: Provider;
   model: Model;
   effort: Effort;
   muted: boolean;

@@ -1,8 +1,8 @@
 # Sidebots
 
-Sidebots is an iPhone messaging app for your own Claude agents. Each chat is an agent. You send it a message, it does the work on a machine you own, and the finished reply arrives like a text from a person, with a notification.
+Sidebots is an iPhone messaging app for your own AI agents. Each chat is an agent. You send it a message, it does the work on a machine you own, and the finished reply arrives like a text from a person, with a notification.
 
-You run Sidebots yourself. There is no hosted service: a small server runs on your machine, drives Claude Code there, and keeps every message in a folder on that machine. You build your own copy of the app and pair it with your server.
+You run Sidebots yourself. There is no hosted service: a small server runs on your machine, drives the program each agent runs on, and keeps every message in a folder on that machine. Sidebots calls those programs providers, and today it has one, Claude Code. [Providers](#providers) says how another is added. You build your own copy of the app and pair it with your server.
 
 The full design is in [docs/specs/2026-11-15-sidebots.md](docs/specs/2026-11-15-sidebots.md).
 
@@ -40,10 +40,10 @@ cd server
 pnpm install
 ```
 
-Add each person once, with a name and a Claude Code config folder of their own:
+Add each person once, with a name, the provider their agents run on, and a config folder of their own for it:
 
 ```sh
-pnpm add-person Alex ~/.claude
+pnpm add-person Alex claude ~/.claude
 ```
 
 Claude Code keeps the person's sessions in that folder and loads their own rules, skills and connections from it. A second person needs a folder of their own, such as `~/.claude-robin`.
@@ -59,10 +59,10 @@ CLAUDE_CONFIG_DIR=~/.claude claude
 With an Anthropic API key, the agents sign in with the key and nobody signs in to Claude Code. Put the key in a file, with nothing else in it, and save it for the person:
 
 ```sh
-pnpm api-key Robin ~/robin-key.txt
+pnpm api-key Robin claude ~/robin-key.txt
 ```
 
-Sidebots copies the key into `~/.sidebots/api-keys.json`, which only your account can read, so delete your file afterwards. The person's agents run on the key from their next turn, even if their folder is also signed in to a subscription. Saving another key replaces it, and `pnpm api-key Robin --remove` puts the person's agents back on the login in their folder. Sidebots never puts the key in a log, a reply or a failure notice, but an agent's own commands can read the key it runs on, as they can any of your account's files.
+Sidebots copies the key into `~/.sidebots/api-keys.json`, which only your account can read, so delete your file afterwards. The person's agents run on the key from their next turn, even if their folder is also signed in to a subscription. Saving another key replaces it, and `pnpm api-key Robin claude --remove` puts the person's agents back on the login in their folder. Sidebots never puts the key in a log, a reply or a failure notice, but an agent's own commands can read the key it runs on, as they can any of your account's files.
 
 Start the server:
 
@@ -127,6 +127,15 @@ Each person pays for their own agents, in one of two ways:
 
 Anthropic's terms decide which you may use. A subscription is for the subscriber's own use. For a product built on the Agent SDK, as Sidebots is, Anthropic [asks for API keys](https://code.claude.com/docs/en/agent-sdk/overview) and doesn't allow Claude sign-ins to be offered to its users without its approval. So read the terms before you set Sidebots up for anyone but yourself, and when in doubt give each person an API key.
 
+## Providers
+
+A provider is a program that runs agents, such as Claude Code. Each agent runs on one, and each person signs in to each provider their agents use with a config folder of their own. Adding a provider takes two things:
+
+- An entry in `PROVIDERS` in `server/src/contract.ts`, with the name the apps show, its models and levels of effort, and the file its agents read their instructions from. The phone shows an agent's models from there.
+- A driver, the module that runs a turn on the program: `server/src/claude.ts` is Claude Code's. It hands the program the agent's tools from `toolsFor` in `server/src/runner.ts`, puts the program's failures in words for the person, and removes the program's sessions when an agent is deleted. `server/src/main.ts` passes each driver to the queue.
+
+The Mac app sets up Claude Code only, so a person's other providers are set up with `pnpm add-person` and `pnpm api-key` for now.
+
 ## The website
 
 `site/` is the page at [sidebots.app](https://sidebots.app), with the privacy policy the App Store asks for and the Mac app's update feed. It is static files in `site/public`, served by Cloudflare. Publish it with `npx wrangler deploy` from `site/`, with Wrangler signed in to the account that holds the domain.
@@ -182,7 +191,7 @@ Setting up turns on "Open at login" for the copy you ran, so turn it off in the 
 (cd mobile && pnpm typecheck)
 ```
 
-The server's tests run through its HTTP routes with the model swapped for a fake, so they need no Claude sign-in or API key. The relay's tests run the server's relay module against the relay's own request handler, with Cloudflare's database and API and Apple's push service faked. The app imports the server's wire types from `server/src/contract.ts`.
+The server's tests run through its HTTP routes with Claude Code's turns swapped for a fake, so they need no Claude sign-in or API key. The relay's tests run the server's relay module against the relay's own request handler, with Cloudflare's database and API and Apple's push service faked. The app imports the server's wire types from `server/src/contract.ts`.
 
 ## Licence
 
