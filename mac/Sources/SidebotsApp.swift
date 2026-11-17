@@ -10,6 +10,7 @@ import SwiftUI
     } label: {
       Image(nsImage: MenuBarIcon.image(awake: app.server.status?.running == true && app.server.status?.reachable == true))
     }
+    .menuBarExtraStyle(.window)
   }
 }
 
@@ -123,51 +124,165 @@ import SwiftUI
   }
 }
 
-/// The menu under the menu bar icon.
+/**
+ * The panel under the menu bar icon, laid out as the system's own menu bar
+ * panels are: whether phones can reach this Mac at the top, then the paired
+ * phones with a way to pair another, then how the agents sign in to Claude,
+ * and Open at login and Quit at the foot. Rows light up under the pointer.
+ */
 struct MenuContent: View {
   let app: AppDelegate
   let server: Server
 
   var body: some View {
-    Text(state)
-    Divider()
-    if let person = server.person {
-      Section("Phones") {
-        if server.phones.isEmpty { Text("No phones yet") }
+    VStack(alignment: .leading, spacing: 0) {
+      header
+      if let person = server.person {
+        Divider().padding(.vertical, 6)
+        heading("Phones")
+        if server.phones.isEmpty {
+          Text("No phones yet").font(.callout).foregroundStyle(.secondary).padding(.horizontal, 10).padding(.vertical, 4)
+        }
         ForEach(server.phones) { phone in
-          Menu(phone.name) {
-            Button("Remove…") { app.remove(phone) }
+          PanelRow(symbol: "iphone", title: phone.name) {
+            HoverButton(symbol: "xmark.circle.fill", label: "Remove \(phone.name)") { app.remove(phone) }
           }
         }
-        Button("Pair a phone…") { app.showPairing() }
+        PanelRow(symbol: "qrcode", title: "Pair a phone…", action: app.showPairing)
+        Divider().padding(.vertical, 6)
+        heading("Claude")
+        PanelRow(symbol: person.signIn == "api-key" ? "key.fill" : "person.crop.circle.fill", title: signIn(person), detail: signInDetail(person), warning: signedOut(person)) {
+          Button(signedOut(person) ? "Sign in" : "Change") { app.showSetup() }.controlSize(.small)
+        }
+      } else {
+        Divider().padding(.vertical, 6)
+        PanelRow(symbol: "sparkles", title: "Finish setting up…", action: app.showSetup)
       }
-      Divider()
-      Section("Claude") {
-        Text(signIn(person))
-        Button(server.claudeSignedIn == false && person.signIn == "claude" ? "Sign in to Claude…" : "Change how agents sign in…") { app.showSetup() }
+      Divider().padding(.vertical, 6)
+      Toggle(isOn: Binding(get: { app.openAtLogin }, set: { app.setOpenAtLogin($0) })) {
+        Text("Open at login")
       }
-    } else {
-      Button("Finish setting up…") { app.showSetup() }
+      .toggleStyle(.switch)
+      .controlSize(.mini)
+      .padding(.horizontal, 10)
+      .padding(.vertical, 5)
+      PanelRow(symbol: nil, title: "Quit Sidebots", shortcut: "⌘Q") { NSApp.terminate(nil) }
+        .keyboardShortcut("q")
     }
-    Divider()
-    Toggle("Open at login", isOn: Binding(get: { app.openAtLogin }, set: { app.setOpenAtLogin($0) }))
-    Button("Quit Sidebots") { NSApp.terminate(nil) }.keyboardShortcut("q")
+    .padding(6)
+    .frame(width: 300)
   }
 
-  /// Whether Sidebots is running and phones can reach it.
-  private var state: String {
-    guard let status = server.status, status.running else { return "Sidebots is starting…" }
-    if server.person == nil { return "Sidebots isn't set up yet" }
-    switch status.reachable {
-    case true: return "Sidebots is running"
-    case false: return "Phones can't reach this Mac"
-    default: return "Getting this Mac ready for phones…"
+  /// The app's icon over whether phones can reach this Mac, with a dot in the light's color.
+  private var header: some View {
+    HStack(spacing: 10) {
+      Image(nsImage: NSApp.applicationIconImage).resizable().frame(width: 36, height: 36)
+      VStack(alignment: .leading, spacing: 2) {
+        Text("Sidebots").font(.headline)
+        HStack(spacing: 5) {
+          Circle().fill(state.color).frame(width: 7, height: 7)
+          Text(state.words).font(.callout).foregroundStyle(.secondary)
+        }
+      }
+      Spacer(minLength: 0)
     }
+    .padding(.horizontal, 10)
+    .padding(.top, 6)
+    .padding(.bottom, 2)
+  }
+
+  private func heading(_ words: String) -> some View {
+    Text(words).font(.caption.weight(.semibold)).foregroundStyle(.secondary).padding(.horizontal, 10).padding(.bottom, 2)
+  }
+
+  /// Whether Sidebots is running and phones can reach it, and the color of its light.
+  private var state: (words: String, color: Color) {
+    guard let status = server.status, status.running else { return ("Starting…", .gray) }
+    if server.person == nil { return ("Not set up yet", .orange) }
+    switch status.reachable {
+    case true: return ("Phones can reach this Mac", .green)
+    case false: return ("Phones can't reach this Mac", .red)
+    default: return ("Getting this Mac ready for phones…", .orange)
+    }
+  }
+
+  private func signedOut(_ person: ServerStatus.Person) -> Bool {
+    person.signIn == "claude" && server.claudeSignedIn == false
   }
 
   private func signIn(_ person: ServerStatus.Person) -> String {
-    if person.signIn == "api-key" { return "Agents use an API key" }
-    return server.claudeSignedIn == false ? "Signed out of Claude" : "Agents use your Claude plan"
+    if person.signIn == "api-key" { return "API key" }
+    return signedOut(person) ? "Signed out of Claude" : "Your Claude plan"
+  }
+
+  private func signInDetail(_ person: ServerStatus.Person) -> String {
+    if person.signIn == "api-key" { return "Agents bill your Anthropic API key" }
+    return signedOut(person) ? "Agents can't answer until you sign in" : "Agents use your Claude subscription"
+  }
+}
+
+/// One row of the panel: a symbol in a round tile, words, and whatever goes at its end. A row with an action lights up under the pointer and runs it on a click.
+struct PanelRow<Accessory: View>: View {
+  let symbol: String?
+  let title: String
+  var detail: String? = nil
+  var warning = false
+  var shortcut: String? = nil
+  var action: (() -> Void)? = nil
+  @ViewBuilder var accessory: Accessory
+  @State private var hovering = false
+
+  var body: some View {
+    let row = HStack(spacing: 10) {
+      if let symbol {
+        Image(systemName: symbol)
+          .font(.system(size: 13, weight: .medium))
+          .foregroundStyle(warning ? Color.white : Color.primary)
+          .frame(width: 26, height: 26)
+          .background(Circle().fill(warning ? Color.orange : Color.primary.opacity(0.1)))
+      }
+      VStack(alignment: .leading, spacing: 1) {
+        Text(title)
+        if let detail { Text(detail).font(.caption).foregroundStyle(.secondary) }
+      }
+      Spacer(minLength: 8)
+      accessory
+      if let shortcut { Text(shortcut).foregroundStyle(.secondary) }
+    }
+    .padding(.horizontal, 10)
+    .padding(.vertical, symbol == nil ? 5 : 4)
+    .contentShape(Rectangle())
+    .background(RoundedRectangle(cornerRadius: 6).fill(action != nil && hovering ? Color.primary.opacity(0.1) : .clear))
+    .onHover { hovering = $0 }
+    if let action {
+      Button(action: action) { row }.buttonStyle(.plain)
+    } else {
+      row
+    }
+  }
+}
+
+extension PanelRow where Accessory == EmptyView {
+  init(symbol: String?, title: String, detail: String? = nil, shortcut: String? = nil, action: @escaping () -> Void) {
+    self.init(symbol: symbol, title: title, detail: detail, shortcut: shortcut, action: action) { EmptyView() }
+  }
+}
+
+/// A small round button at the end of a row, quiet until the pointer is on it.
+struct HoverButton: View {
+  let symbol: String
+  let label: String
+  let action: () -> Void
+  @State private var hovering = false
+
+  var body: some View {
+    Button(action: action) {
+      Image(systemName: symbol).font(.system(size: 14)).foregroundStyle(hovering ? Color.secondary : Color.secondary.opacity(0.45))
+    }
+    .buttonStyle(.plain)
+    .help(label)
+    .accessibilityLabel(label)
+    .onHover { hovering = $0 }
   }
 }
 
