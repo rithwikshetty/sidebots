@@ -1,0 +1,7 @@
+{
+  "name": "side-menu-swipe",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Makes a list's scroll wait for the side menu's swipe to decide, so a diagonal swipe right opens the menu.",
+  "main": "src/index.ts"
+}

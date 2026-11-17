@@ -1,13 +1,13 @@
 ---
 name: sidebots-serve
-description: "Serve this Sidebots checkout, whether main or any worktree or branch: run its server for the phone over Tailscale, and put its app on the user's phone. Use when the user asks to start, run or spin up a server or the app, to serve this branch, or to test or try the work on their phone."
+description: "Serve this Sidebots checkout, whether main or any worktree or branch: run its server for the phone, and put its app on the user's phone. Use when the user asks to start, run or spin up a server or the app, to serve this branch, or to test or try the work on their phone."
 ---
 
 # Serve Sidebots
 
 Serve the checkout this thread works in, whether it is main or another worktree or branch. Several threads often run in parallel, so start nothing until the user asks in this thread.
 
-Only one Sidebots server runs at a time. The phone reaches port 4317 through `tailscale serve`, and every checkout's server keeps its data in `~/.sidebots`. Two servers on that data would both run the agents' turns. So serving this checkout replaces whichever server is running, and its agents are the user's real agents.
+Only one Sidebots server runs at a time. The phone reaches port 4317 through the machine's tunnel, at its address under `sidebots.app`, and every checkout's server keeps its data in `~/.sidebots`, with that address in `machine.json`. Two servers on that data would both run the agents' turns. So serving this checkout replaces whichever server is running, and its agents are the user's real agents.
 
 ## The server
 
@@ -22,7 +22,7 @@ Only one Sidebots server runs at a time. The phone reaches port 4317 through `ta
    ```
 
    It is up once `lsof -tiTCP:4317 -sTCP:LISTEN` returns a process and the log's last line is `Sidebots is listening on http://127.0.0.1:4317`.
-6. Run `tailscale serve status`. Port 8443 must proxy to `http://127.0.0.1:4317`. When nothing serves 8443, publish it with `tailscale serve --bg --https=8443 http://127.0.0.1:4317`. The phone reaches the server at `<tailnet name>:8443`, where the name is `Self.DNSName` from `tailscale status --json` without the trailing dot.
+6. Run `node src/main.ts status` in `server/`. It must say `Phones reach it at <address>`. The server starts the tunnel itself, with `cloudflared`, so give it a few seconds after it starts. A phone that has paired with this machine reaches any checkout's server at that address.
 
 ## The phone app
 
@@ -37,12 +37,12 @@ Install this checkout's app when the user wants to try the app or the phone. Ins
    APP_VARIANT=development CI=1 npx expo run:ios --device <phone identifier> --configuration Release --no-bundler
    ```
 
-   It is done at `Build Succeeded` and `Complete 100%`, after a few minutes. Build Release, never Debug. The app has no dev client, so a Debug build loads its code from Metro on the Mac when it opens. When the phone can't reach the Mac's network, it fails with "No script URL provided". A Release build carries its code, so it needs no Metro and works anywhere the phone has Tailscale.
+   It is done at `Build Succeeded` and `Complete 100%`, after a few minutes. Build Release, never Debug. The app has no dev client, so a Debug build loads its code from Metro on the Mac when it opens. When the phone can't reach the Mac's network, it fails with "No script URL provided". A Release build carries its code, so it needs no Metro and works anywhere the phone is online.
 
    - `RequestDenied` at launch means the phone was locked. The app is installed, so ask the user to open it.
    - A signing error means Xcode isn't signed in with an Apple ID on the team in `mobile/.env.local`.
    - "does not support the Push Notifications capability" means Apple doesn't know Sidebots Dev's identifier yet. Build it once from `mobile/ios` with `xcodebuild -workspace SidebotsDev.xcworkspace -scheme SidebotsDev -configuration Release -destination id=<phone identifier> -allowProvisioningUpdates build`, which registers it with notifications, then run the install again.
-   - Sidebots Dev pairs apart from the published app. Once it has paired, it stays paired when it is installed over itself. One that hasn't opens on a camera. The user can't see your terminal, so give them the command that prints its pairing code, to run in `server/`: `pnpm pair <their name> --host <address from step 6>`. The names are in the `people` table.
+   - Sidebots Dev pairs apart from the published app. Once it has paired, it stays paired when it is installed over itself. One that hasn't opens on a camera. The user can't see your terminal, so give them the command that prints its pairing code, to run in `server/`: `pnpm pair <their name>`. The names are in the `people` table.
 
 ## Handing over
 

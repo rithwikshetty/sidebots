@@ -14,6 +14,8 @@ export const haptics = {
   threshold: () => quietly(Haptics.selectionAsync()),
   /** The phone paired with a computer. */
   paired: () => quietly(Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success)),
+  /** The side menu opened. */
+  menu: () => quietly(Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light)),
   /** A choice was made, such as the flash, or a photo opened full screen. */
   select: () => quietly(Haptics.selectionAsync()),
 };

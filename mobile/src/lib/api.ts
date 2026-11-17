@@ -7,6 +7,7 @@ import Storage from "expo-sqlite/kv-store";
 import { CONTRACT_HEADER, CONTRACT_VERSION, type Paired } from "@server/contract";
 
 const HOST_KEY = "host";
+const MACHINE_KEY = "machine";
 // Set while the phone waits to pair again after its computer removed it.
 const REMOVED_KEY = "removed";
 const DEVICE_KEY = "device-key";
@@ -51,11 +52,11 @@ export type Pairing = { host: string; key: string; notificationKey: string; mach
 /** A file on the computer: its address, and the header that lets this phone fetch it. */
 export type Remote = { uri: string; headers: Record<string, string> };
 
-// The address is in the app's store and the key in the Keychain, so a phone has paired when it holds both.
-function kept(): { host: string; key: string } | null {
+// The address and the computer's name are in the app's store and the key in the Keychain, so a phone has paired when it holds the address and the key.
+function kept(): { host: string; key: string; machine: string | null } | null {
   const host = Storage.getItemSync(HOST_KEY);
   const key = host ? SecureStore.getItem(DEVICE_KEY) : null;
-  return host && key ? { host, key } : null;
+  return host && key ? { host, key, machine: Storage.getItemSync(MACHINE_KEY) } : null;
 }
 
 let pairing = kept();
@@ -74,6 +75,11 @@ export function isPaired(): boolean {
 
 export function usePaired(): boolean {
   return useSyncExternalStore(onPairing, isPaired);
+}
+
+/** The name of the computer this phone has paired with, or null when the phone holds none. */
+export function useMachine(): string | null {
+  return useSyncExternalStore(onPairing, () => pairing?.machine ?? null);
 }
 
 /** Whether the phone lost its pairing because the computer no longer knows it. It stays so, through relaunches, until the phone pairs again. */
@@ -97,26 +103,50 @@ export async function requestPairing({ host, code }: { host: string; code: strin
 }
 
 /** Keeps a pairing, from which point every call goes to that computer. */
-export function keepPairing({ host, key, notificationKey }: Pairing): void {
+export function keepPairing({ host, key, notificationKey, machine }: Pairing): void {
   Storage.setItemSync(HOST_KEY, host);
+  Storage.setItemSync(MACHINE_KEY, machine);
   SecureStore.setItem(DEVICE_KEY, key, KEYCHAIN);
   SecureStore.setItem(NOTIFICATION_KEY, notificationKey, KEYCHAIN);
   Storage.removeItemSync(REMOVED_KEY);
-  pairing = { host, key };
+  pairing = { host, key, machine };
   removed = false;
   listeners.forEach((listener) => listener());
 }
 
-/** Forgets the computer, once it has answered that it doesn't know this phone. */
-export function unpair(): void {
+/**
+ * Forgets the computer. `byComputer` says the computer let go of the phone,
+ * having answered that it doesn't know it, which the welcome screen then
+ * tells the person.
+ */
+export function unpair(byComputer = true): void {
   if (!pairing) return;
   Storage.removeItemSync(HOST_KEY);
+  Storage.removeItemSync(MACHINE_KEY);
   void SecureStore.deleteItemAsync(DEVICE_KEY);
   void SecureStore.deleteItemAsync(NOTIFICATION_KEY);
-  Storage.setItemSync(REMOVED_KEY, "yes");
+  if (byComputer) Storage.setItemSync(REMOVED_KEY, "yes");
   pairing = null;
-  removed = true;
+  removed = byComputer;
   listeners.forEach((listener) => listener());
+}
+
+/**
+ * Disconnects from the computer, as the person asked. The computer forgets
+ * the phone first, so it sends it nothing more, and then the phone forgets
+ * the computer. It fails, with the phone still paired, when the computer
+ * can't be told. `untold` disconnects the phone without telling it.
+ */
+export async function disconnect(untold = false): Promise<void> {
+  if (!pairing) return;
+  const { uri, headers } = remote("/device");
+  if (!untold) {
+    await send(uri, headers.Authorization, { method: "DELETE" }).catch((failure) => {
+      // A computer that doesn't know the phone has nothing left to forget.
+      if (!(failure instanceof ApiError && failure.status === 401)) throw failure;
+    });
+  }
+  unpair(false);
 }
 
 /** Where a path on the computer is, with the header that lets this phone fetch it. */

@@ -207,6 +207,12 @@ export function createApi(store: Store, queue: Queue, machine: string) {
     return c.json(push);
   });
 
+  /** The phone unpairs itself. The computer forgets it, with its keys and where its notifications go, and refuses it from its next request. */
+  app.delete("/device", (c) => {
+    store.removeDevice(c.var.device.id);
+    return c.json({});
+  });
+
   app.get("/avatars", (c) => c.json(store.avatars()));
 
   app.get("/avatars/:id/spritesheet", (c) => {

@@ -119,6 +119,19 @@ test("a phone removed on the computer is refused from its next request, and the 
   assert.deepEqual(store.devices().map((device) => device.id), [store.deviceByKey(kept.Authorization.slice("Bearer ".length))!.id]);
 });
 
+test("a phone that unpairs itself is forgotten by the computer, and the person's other phones stay paired", async () => {
+  const { store, call, pair } = setup(async () => reply("ok"));
+  const kept = pair(ME);
+  const leaving = pair(ME);
+  await call(leaving, "PUT", "/push-token", { token: "ab".repeat(32), environment: "production" });
+
+  assert.equal((await call(leaving, "DELETE", "/device")).status, 200);
+  assert.equal((await call(leaving, "GET", "/agents")).status, 401);
+  assert.equal((await call(kept, "GET", "/agents")).status, 200);
+  assert.deepEqual(store.devices().map((device) => device.id), [store.deviceByKey(kept.Authorization.slice("Bearer ".length))!.id]);
+  assert.deepEqual(store.pushTargetsFor(store.personByName(ME)!.id), []);
+});
+
 test("an app on another version of the contract can't pair, and its code still works once the versions match", async () => {
   const { store, app } = setup(async () => reply("ok"));
   const { code } = store.addPairing(store.personByName(ME)!.id);
