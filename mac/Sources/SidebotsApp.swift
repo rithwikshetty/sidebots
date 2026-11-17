@@ -24,9 +24,13 @@ import SwiftUI
 
   func applicationDidFinishLaunching(_ notification: Notification) {
     // Quits as usual when asked to stop, as `kill` does, so the server stops with it.
+    // The run loop makes the call: quitting waits for the server to stop, and that
+    // news comes on the main queue, which stands still while one of its own handlers runs.
     signal(SIGTERM, SIG_IGN)
     terminating = DispatchSource.makeSignalSource(signal: SIGTERM, queue: .main)
-    terminating?.setEventHandler { NSApp.terminate(nil) }
+    terminating?.setEventHandler {
+      RunLoop.main.perform(inModes: [.common]) { MainActor.assumeIsolated { NSApp.terminate(nil) } }
+    }
     terminating?.resume()
     server.start()
     _ = updater
@@ -79,25 +83,6 @@ import SwiftUI
     openAtLogin = SMAppService.mainApp.status == .enabled
   }
 
-  /// Asks before unpairing a phone, since it needs a new code to pair again.
-  func remove(_ phone: Phone) {
-    NSApp.activate()
-    let alert = NSAlert()
-    alert.messageText = "Remove \(phone.name)?"
-    alert.informativeText = "It stops reaching your agents at once. To use it again, pair it with a new code."
-    alert.addButton(withTitle: "Remove")
-    alert.addButton(withTitle: "Cancel")
-    alert.buttons[0].hasDestructiveAction = true
-    guard alert.runModal() == .alertFirstButtonReturn else { return }
-    Task {
-      do {
-        try await server.remove(phone)
-      } catch {
-        NSAlert(error: error).runModal()
-      }
-    }
-  }
-
   /// Shows a window, or brings it forward when it is already open. The app shows in the Dock while one is open, so the window is easy to find.
   private func show(_ id: String, title: String, @ViewBuilder content: () -> some View) {
     let window = windows[id] ?? {
@@ -134,10 +119,15 @@ import SwiftUI
  * panels are: whether phones can reach this computer at the top, then the paired
  * phones with a way to pair another, then how the agents sign in to Claude Code,
  * and Open at login, Check for updates and Quit at the foot. Rows light up under the pointer.
+ * A phone's row asks before it unpairs the phone, since the phone needs a new code to pair again.
  */
 struct MenuContent: View {
   let app: AppDelegate
   let server: Server
+  /// The phone whose row asks whether to remove it.
+  @State private var removing: Phone.ID?
+  /// The phone the server couldn't remove, and why.
+  @State private var problem: (phone: Phone.ID, words: String)?
 
   var body: some View {
     VStack(alignment: .leading, spacing: 0) {
@@ -149,9 +139,14 @@ struct MenuContent: View {
           Text("No phones yet").font(.callout).foregroundStyle(.secondary).padding(.horizontal, 10).padding(.vertical, 4)
         }
         ForEach(server.phones) { phone in
-          PanelRow(symbol: "iphone", title: phone.name) {
-            HoverButton(symbol: "xmark.circle.fill", label: "Remove \(phone.name)") { app.remove(phone) }
+          PanelRow(symbol: "iphone", title: phone.name, detail: detail(phone), warning: problem?.phone == phone.id) {
+            if removing == phone.id {
+              Button("Remove", role: .destructive) { remove(phone) }.controlSize(.small)
+            } else {
+              HoverButton(symbol: "xmark.circle.fill", label: "Remove \(phone.name)") { removing = phone.id }
+            }
           }
+          .onHover { if !$0, removing == phone.id { removing = nil } }
         }
         PanelRow(symbol: "qrcode", title: "Pair a phone…", action: app.showPairing)
         Divider().padding(.vertical, 6)
@@ -211,6 +206,25 @@ struct MenuContent: View {
     case true: return ("Phones can reach this computer", .green)
     case false: return ("Phones can't reach this computer", .red)
     default: return ("Getting this computer ready for phones…", .orange)
+    }
+  }
+
+  /// What a phone's row says under its name: when it paired, which tells apart two phones of one name. A row that asks whether to remove its phone says what removing costs, and one whose phone the server couldn't remove says why.
+  private func detail(_ phone: Phone) -> String {
+    if removing == phone.id { return "It will need a new code" }
+    if let problem, problem.phone == phone.id { return problem.words }
+    return "Paired \(Date(timeIntervalSince1970: phone.pairedAt / 1000).formatted(date: .abbreviated, time: .shortened))"
+  }
+
+  private func remove(_ phone: Phone) {
+    removing = nil
+    problem = nil
+    Task {
+      do {
+        try await server.remove(phone)
+      } catch {
+        problem = (phone.id, error.localizedDescription)
+      }
     }
   }
 

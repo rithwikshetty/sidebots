@@ -21,7 +21,7 @@ Sidebots for Mac is the server as a menu bar app. It runs on a Mac with Apple si
 2. Choose how your agents sign in to Claude: with Claude Code on this Mac when it is already signed in, with "Sign in to Claude", which opens Claude's own sign-in in your browser, or with an API key.
 3. Open Sidebots on your phone and scan the QR code the Mac app shows.
 
-The Mac app adds you as the one person on the server, named as the Mac knows you, with `~/.claude` as your Claude Code config folder, and opens at login from then on. A click on its menu bar icon opens a panel, like the system's own menu bar panels. It says whether phones can reach the Mac and lists the paired phones, each with a button to remove it. It also has "Pair a phone…", how your agents sign in with a button to change it, an "Open at login" switch and Quit. The QR code holds the address the relay gave the Mac, so the window waits until the Mac has one. The server's output goes to `~/Library/Logs/Sidebots/server.log`.
+The Mac app adds you as the one person on the server, named as the Mac knows you, with `~/.claude` as your Claude Code config folder, and opens at login from then on. A click on its menu bar icon opens a panel, like the system's own menu bar panels. It says whether phones can reach the Mac and lists the paired phones, each with when it paired and a button to remove it. It also has "Pair a phone…", how your agents sign in with a button to change it, an "Open at login" switch and Quit. The QR code holds the address the relay gave the Mac, so the window waits until the Mac has one. The server's output goes to `~/Library/Logs/Sidebots/server.log`.
 
 The Mac app uses the same data folder and port as a server you start yourself, so run one or the other.
 
