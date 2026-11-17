@@ -132,7 +132,7 @@ Anthropic's terms decide which you may use. A subscription is for the subscriber
 
 ## Build the Mac app
 
-On a Mac with Apple silicon, Xcode and pnpm:
+On a Mac with Apple silicon, Xcode, pnpm and [uv](https://docs.astral.sh/uv/):
 
 ```sh
 mac/build.sh
@@ -144,7 +144,16 @@ The script downloads Node and `cloudflared` at the versions it names and checks 
 mac/build.sh release
 ```
 
-A release goes on from there. Xcode signs the app with the Developer ID of the identity's team, which Apple keeps in its cloud, and sends it to Apple to notarise. The script waits for Apple, up to two hours, and makes `mac/build/Sidebots.dmg` from the notarised app. Xcode must be signed in to an account in that team that may use the Developer ID, as the Account Holder and Admins can.
+A release follows Apple's [Packaging Mac software for distribution](https://developer.apple.com/documentation/xcode/packaging-mac-software-for-distribution). It signs the app with the `Developer ID Application` certificate in your keychain and makes `mac/build/Sidebots.dmg` with [dmgbuild](https://dmgbuild.readthedocs.io), which lays out the window that opens: the app, an arrow and a link to Applications, from `mac/dmg/`. It signs the disk image, sends it to Apple to notarise with `notarytool`, waits up to two hours, and staples the ticket to it.
+
+A release needs, once per Mac:
+
+- The team's Developer ID Application certificate with its private key in the keychain. The Account Holder makes one in Xcode, under Settings, Accounts, Manage Certificates, or on the Certificates page of the developer site.
+- `notarytool` credentials saved in the keychain as `sidebots`, or under the name in `SIDEBOTS_NOTARY_PROFILE`. With an App Store Connect API key from Users and Access, Integrations:
+
+  ```sh
+  xcrun notarytool store-credentials sidebots --key AuthKey_<KEYID>.p8 --key-id <KEYID> --issuer <ISSUER-ID>
+  ```
 
 The app updates itself with Sparkle from the feed at `sidebots.app/appcast.xml`, and installs an update once no agent is in the middle of a turn. A release signs the disk image with the update key in your keychain, whose public half is `SUPublicEDKey` in `mac/Info.plist`, and writes the feed for it in `site/public/appcast.xml`. Sparkle's `generate_keys -x <file>` in `mac/.build/artifacts/sparkle/Sparkle/bin` exports the key to keep it safe, and `-f <file>` imports it on another Mac. Without it, nobody's copy can be updated again.
 

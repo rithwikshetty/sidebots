@@ -197,7 +197,7 @@ The windows for signing in and for the QR code show the app in the Dock while th
 
 It updates itself with Sparkle, from an update feed at `sidebots.app`, and waits for running turns to end before it restarts the server.
 
-`mac/build.sh` signs every program in the bundle with a local identity. For a release it puts the app in an Xcode archive, and Xcode signs it with the team's Developer ID, which Apple keeps in its cloud, and uploads it to be notarised. The script waits for the notarised app and makes the disk image. Nobody needs the Developer ID certificate on their Mac, only Xcode signed in to an account that may use it.
+`mac/build.sh` signs every program in the bundle with a local identity. A release follows Apple's "Packaging Mac software for distribution": it signs with the team's Developer ID certificate, makes the disk image with dmgbuild, which lays out its window with the app, an arrow and a link to Applications, signs the disk image, has Apple notarise it with `notarytool`, and staples the ticket to it.
 
 ### The site
 
