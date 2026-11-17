@@ -17,8 +17,8 @@ const KEYCHAIN = { keychainAccessible: SecureStore.AFTER_FIRST_UNLOCK };
 const TIMEOUT_MS = 10_000;
 // A message carrying photos, over a phone's connection.
 const UPLOAD_TIMEOUT_MS = 120_000;
-// What `tailscale serve` answers in Sidebots' place when Sidebots isn't running.
-const NOT_RUNNING = new Set([502, 503, 504]);
+// What Cloudflare or `tailscale serve` answers in Sidebots' place when the Mac or its server can't be reached. 530 is Cloudflare's answer when the Mac's tunnel is down.
+const NOT_RUNNING = new Set([502, 503, 504, 530]);
 
 /** A failed call. `status` is the server's answer, or 0 when Sidebots couldn't be reached. */
 export class ApiError extends Error {
@@ -36,8 +36,8 @@ export const UPDATE: Record<Behind, string> = { mac: "Update Sidebots on your Ma
 /**
  * Which side to update, from the contract version the Mac sent with its
  * answer, or null when the two match. A Mac too old to send a version is
- * behind. What `tailscale serve` answers in Sidebots' place carries no version
- * and says nothing about it.
+ * behind. What Cloudflare or `tailscale serve` answers in Sidebots' place
+ * carries no version and says nothing about it.
  */
 export function behind(response: Pick<Response, "status" | "headers">): Behind | null {
   if (NOT_RUNNING.has(response.status)) return null;
@@ -161,11 +161,11 @@ async function send<T>(url: string, authorization: string, init: { method?: stri
       signal: controller.signal,
     });
   } catch {
-    throw new ApiError("Can't reach Sidebots. Check that Tailscale is on.", 0);
+    throw new ApiError("Can't reach Sidebots. Check that the phone is online.", 0);
   } finally {
     clearTimeout(timer);
   }
-  if (NOT_RUNNING.has(response.status)) throw new ApiError("Can't reach Sidebots. The server isn't running.", 0);
+  if (NOT_RUNNING.has(response.status)) throw new ApiError("Can't reach Sidebots. The Mac is asleep or off, or Sidebots isn't running on it.", 0);
   // Nothing a Mac on another version says is used, so it can't be read wrongly. Until one side is updated it is as good as out of reach.
   const side = behind(response);
   if (side) throw new ApiError(`${UPDATE[side]}.`, 0);

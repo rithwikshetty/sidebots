@@ -22,8 +22,8 @@ export type Extras = { files?: Upload[]; replyTo?: string; jobId?: string; inter
 export type AgentChanges = Partial<Pick<Agent, "name" | "avatar_id" | "model" | "effort" | "muted" | "hidden">>;
 /** What the store tells its listeners about: a message that was added or changed status, or an agent that was added or deleted. */
 export type Change = { message: Message } | { agent: Agent; deleted: boolean };
-/** How this server is known to the relay: its signing key, and the id and the address phones reach it at, which the relay gives it once it has registered. */
-export type Machine = { privateKey: string; id?: string; address?: string };
+/** How this server is known to the relay: its signing key, and the id, the address phones reach it at and the token its tunnel runs with, which the relay gives it once it has registered. */
+export type Machine = { privateKey: string; id?: string; address?: string; tunnelToken?: string };
 
 const SCHEMA = `
 create table if not exists people (

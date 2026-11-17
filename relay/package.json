@@ -5,7 +5,8 @@
   "scripts": {
     "deploy": "wrangler deploy",
     "test": "node --test",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "zone-rule": "node zone-rule.ts"
   },
   "dependencies": {
     "@noble/curves": "1.9.1",

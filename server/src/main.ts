@@ -17,6 +17,7 @@ import { claudeTurn, createQueue } from "./runner.ts";
 import { createApi } from "./api.ts";
 import { startPush } from "./push.ts";
 import { relay } from "./relay.ts";
+import { startTunnel } from "./tunnel.ts";
 
 const home = process.env.SIDEBOTS_HOME ?? join(homedir(), ".sidebots");
 const port = Number(process.env.PORT ?? 4317);
@@ -143,14 +144,24 @@ const queue = createQueue(store, claudeTurn);
 for (const agentId of store.requeueInterrupted()) void queue.kick(agentId);
 queue.startClock();
 
-// The relay that passes notifications to Apple. `off` sends none, for a server nobody needs notifications from.
+// The relay gives the machine its address and tunnel, and passes notifications to Apple. `off` uses neither, for a server reached some other way.
 const relayOrigin = process.env.SIDEBOTS_RELAY ?? "https://relay.sidebots.app";
-if (relayOrigin !== "off") startPush(store, relay(store, relayOrigin));
-else console.log("Notifications are off, as SIDEBOTS_RELAY is off.");
+if (relayOrigin !== "off") {
+  const toRelay = relay(store, relayOrigin, port);
+  startPush(store, toRelay.notify);
+  const stopTunnel = startTunnel(store, toRelay.register, process.env.SIDEBOTS_CLOUDFLARED ?? "cloudflared");
+  // `cloudflared` runs apart from the server, so it would outlive a server that is stopped. The server stops it first.
+  for (const signal of ["SIGTERM", "SIGINT"] as const) {
+    process.once(signal, () => {
+      stopTunnel();
+      process.exit(0);
+    });
+  }
+} else console.log("The tunnel and notifications are off, as SIDEBOTS_RELAY is off.");
 
 // The machine's name as its owner knows it. macOS keeps one apart from the network's name for the machine.
 const machine = process.platform === "darwin" ? execFileSync("scutil", ["--get", "ComputerName"], { encoding: "utf8" }).trim() : hostname();
-// Local only. `tailscale serve` publishes it to our own devices.
+// Local only. The tunnel, or `tailscale serve`, brings the phone's requests here.
 serve({ fetch: createApi(store, queue, machine).fetch, hostname: "127.0.0.1", port }, () => {
   console.log(`Sidebots is listening on http://127.0.0.1:${port}, with data in ${home}`);
 });

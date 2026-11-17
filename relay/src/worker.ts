@@ -1,8 +1,9 @@
-// The relay passes Sidebots servers' notifications to Apple, under the push key
-// of the developer account that publishes the app. Each notification comes
-// encrypted for the phone it goes to, so the relay can't read it. It knows each
-// server as a machine: a public key the server registered, and an id. It keeps
-// nothing about people, agents or messages.
+// The relay gives each Sidebots server an address under the zone, through a
+// Cloudflare Tunnel, and passes the server's notifications to Apple, under the
+// push key of the developer account that publishes the app. Each notification
+// comes encrypted for the phone it goes to, so the relay can't read it. It knows
+// each server as a machine: a public key the server registered, an id, and its
+// tunnel. It keeps nothing about people, agents or messages.
 //
 // Every request is signed with the machine's private key, in the header
 //
@@ -13,6 +14,7 @@
 // covers `<method> <path>\n<time>\n<sha256 of the body, in hex>`.
 
 import { notify, type PushKey } from "./apple.ts";
+import { makeTunnel, removeTunnel, routeTunnel, type Tunnels } from "./cloudflare.ts";
 
 export type Env = {
   DB: D1Database;
@@ -24,6 +26,14 @@ export type Env = {
   APNS_TOPIC: string;
   /** How many notifications one machine may send in a day. */
   NOTICES_PER_DAY: string;
+  /** The zone machines' addresses are under, such as `sidebots.app`, and its id. */
+  ZONE: string;
+  ZONE_ID: string;
+  /** The Cloudflare account the zone and the tunnels are in, and an API token that can edit its tunnels and the zone's DNS records. */
+  CLOUDFLARE_ACCOUNT_ID: string;
+  CLOUDFLARE_API_TOKEN: string;
+  /** Limits how many new machines one network address registers in a minute. */
+  NEW_MACHINES: RateLimit;
 };
 
 // How far a request's time may be from the relay's, either way.
@@ -38,14 +48,19 @@ const DEVICE_TOKEN = /^[0-9a-f]{64,200}$/;
 // An encrypted notice, in base64, small enough that Apple takes the notification it rides in, which is at most 4096 bytes.
 const SEALED = /^[A-Za-z0-9+/]{1,3800}={0,2}$/;
 const MESSAGE_ID = /^[\w-]{1,64}$/;
+// The server's port on its machine, when a machine registers without one.
+const DEFAULT_PORT = 4317;
 
 const fromBase64 = (text: string) => Uint8Array.from(atob(text.replaceAll("-", "+").replaceAll("_", "/")), (char) => char.charCodeAt(0));
 const answer = (body: object, status = 200) => Response.json(body, { status });
 
-/** A machine's id: 16 random letters and digits, which in a later slice is also the label of its address. */
+/** A machine's id: 16 random letters and digits, which is also the label of its address. */
 function newId(): string {
   return Array.from(crypto.getRandomValues(new Uint8Array(16)), (byte) => ID_LETTERS[byte % ID_LETTERS.length]).join("");
 }
+
+const tunnelsOf = (env: Env): Tunnels => ({ token: env.CLOUDFLARE_API_TOKEN, accountId: env.CLOUDFLARE_ACCOUNT_ID, zoneId: env.ZONE_ID });
+const addressOf = (id: string, env: Env) => `${id}.${env.ZONE}`;
 
 /** Whether `signature` is the machine's, by `publicKey`, over this request. */
 async function signedBy(publicKey: string, request: Request<unknown, unknown>, path: string, time: string, signature: string, body: ArrayBuffer): Promise<boolean> {
@@ -59,11 +74,17 @@ async function signedBy(publicKey: string, request: Request<unknown, unknown>, p
   }
 }
 
-/** Answers one request. `apple` is how the relay reaches Apple's push service, and `now` is the time. */
-export async function handle(request: Request<unknown, unknown>, env: Env, apple: typeof fetch = fetch, now = Date.now()): Promise<Response> {
+/** Removes a machine with its tunnel and its address. */
+async function forget(env: Env, machine: { id: string; tunnel_id: string | null }, send: typeof fetch): Promise<void> {
+  if (machine.tunnel_id) await removeTunnel(tunnelsOf(env), machine.tunnel_id, addressOf(machine.id, env), send);
+  await env.DB.prepare("delete from machines where id = ?").bind(machine.id).run();
+}
+
+/** Answers one request. `send` is how the relay reaches Apple's push service and Cloudflare's API, and `now` is the time. */
+export async function handle(request: Request<unknown, unknown>, env: Env, send: typeof fetch = fetch, now = Date.now()): Promise<Response> {
   const { pathname } = new URL(request.url);
-  const route = `${request.method} ${pathname}`;
-  if (route !== "POST /machines" && route !== "POST /notifications") return answer({ error: "No such route." }, 404);
+  const route = /^DELETE \/machines\/[a-z0-9]+$/.test(`${request.method} ${pathname}`) ? "DELETE /machines/:id" : `${request.method} ${pathname}`;
+  if (route !== "POST /machines" && route !== "DELETE /machines/:id" && route !== "POST /notifications") return answer({ error: "No such route." }, 404);
 
   const [, machine = "", time = "", signature = ""] = /^Signature ([^:]+):(\d+):([\w-]+)$/.exec(request.headers.get("Authorization") ?? "") ?? [];
   if (Math.abs(now - Number(time)) > SKEW_MS) return answer({ error: "The request is unsigned, or its time is too far from the relay's." }, 401);
@@ -73,19 +94,47 @@ export async function handle(request: Request<unknown, unknown>, env: Env, apple
     if (!PUBLIC_KEY.test(machine) || !(await signedBy(machine, request, pathname, time, signature, body))) {
       return answer({ error: "A machine registers with a public key, and signs with it." }, 401);
     }
-    // A key that is already registered keeps its id.
-    const { id } = (await env.DB.prepare(
-      "insert into machines (id, public_key, created_at, seen_at) values (?1, ?2, ?3, ?3) on conflict (public_key) do update set seen_at = ?3 returning id",
+    // The server says which port it listens on, and an empty body means the usual one.
+    const { port = DEFAULT_PORT } = (body.byteLength ? JSON.parse(new TextDecoder().decode(body)) : {}) as { port?: unknown };
+    if (!Number.isInteger(port) || (port as number) < 1 || (port as number) > 65535) return answer({ error: "A machine's port is a whole number up to 65535." }, 400);
+    const registered = await env.DB.prepare("select 1 from machines where public_key = ?").bind(machine).first();
+    if (!registered && !(await env.NEW_MACHINES.limit({ key: request.headers.get("CF-Connecting-IP") ?? "" })).success) {
+      return answer({ error: "This network has registered too many machines in the last minute. Try again in a minute." }, 429);
+    }
+    // A key that is already registered keeps its id and its tunnel.
+    const { id, tunnel_id } = (await env.DB.prepare(
+      "insert into machines (id, public_key, created_at, seen_at) values (?1, ?2, ?3, ?3) on conflict (public_key) do update set seen_at = ?3 returning id, tunnel_id",
     )
       .bind(newId(), machine, now)
-      .first<{ id: string }>())!;
-    return answer({ id }, 201);
+      .first<{ id: string; tunnel_id: string | null }>())!;
+    const address = addressOf(id, env);
+    try {
+      let tunnelId = tunnel_id;
+      if (!tunnelId) {
+        const made = await makeTunnel(tunnelsOf(env), address, send);
+        // Two registrations at once both make a tunnel, and the one that is saved first stays.
+        const { meta } = await env.DB.prepare("update machines set tunnel_id = ?1 where id = ?2 and tunnel_id is null").bind(made, id).run();
+        if (meta.changes === 0) await removeTunnel(tunnelsOf(env), made, address, send);
+        tunnelId = (await env.DB.prepare("select tunnel_id from machines where id = ?").bind(id).first<{ tunnel_id: string }>())!.tunnel_id;
+      }
+      const tunnelToken = await routeTunnel(tunnelsOf(env), tunnelId, address, port as number, send);
+      return answer({ id, address, tunnelToken }, 201);
+    } catch (failure) {
+      console.error(failure);
+      return answer({ error: "The relay couldn't make the machine's tunnel." }, 502);
+    }
   }
 
-  const known = await env.DB.prepare("select public_key from machines where id = ?").bind(machine).first<{ public_key: string }>();
+  const known = await env.DB.prepare("select id, public_key, tunnel_id from machines where id = ?").bind(machine).first<{ id: string; public_key: string; tunnel_id: string | null }>();
   // A machine the relay doesn't know registers again, so the answer says so apart from a bad signature.
   if (!known) return answer({ error: "No such machine." }, 404);
   if (!(await signedBy(known.public_key, request, pathname, time, signature, body))) return answer({ error: "The signature isn't the machine's." }, 401);
+
+  if (route === "DELETE /machines/:id") {
+    if (pathname !== `/machines/${known.id}`) return answer({ error: "A machine removes only itself." }, 403);
+    await forget(env, known, send);
+    return new Response(null, { status: 204 });
+  }
 
   const { token, environment, sealed, messageId } = JSON.parse(new TextDecoder().decode(body)) as Record<string, unknown>;
   if (
@@ -108,12 +157,13 @@ export async function handle(request: Request<unknown, unknown>, env: Env, apple
   if (sent > Number(env.NOTICES_PER_DAY)) return answer({ error: "This machine has sent all the notifications it may today." }, 429);
 
   const push: PushKey = { key: env.APNS_KEY, keyId: env.APNS_KEY_ID, teamId: env.APNS_TEAM_ID };
-  return answer({ result: await notify(push, env.APNS_TOPIC, { token, environment }, { sealed, messageId }, apple, now) });
+  return answer({ result: await notify(push, env.APNS_TOPIC, { token, environment }, { sealed, messageId }, send, now) });
 }
 
-/** Removes the machines that have sent nothing for 60 days. */
-export async function removeStale(env: Env, now = Date.now()): Promise<void> {
-  await env.DB.prepare("delete from machines where seen_at < ?").bind(now - STALE_MS).run();
+/** Removes the machines that have been quiet for 60 days, with their tunnels and addresses. One that Cloudflare fails to remove stays for the next day's run. */
+export async function removeStale(env: Env, send: typeof fetch = fetch, now = Date.now()): Promise<void> {
+  const { results } = await env.DB.prepare("select id, tunnel_id from machines where seen_at < ?").bind(now - STALE_MS).all<{ id: string; tunnel_id: string | null }>();
+  for (const machine of results) await forget(env, machine, send).catch((failure) => console.error(failure));
 }
 
 export default {

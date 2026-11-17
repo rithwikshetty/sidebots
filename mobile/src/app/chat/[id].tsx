@@ -17,7 +17,7 @@ import { FileCard, MessagePhotos, type Shown } from "@/components/MessageAttachm
 import { SwipeToReply } from "@/components/SwipeToReply";
 import { problem } from "@/lib/alerts";
 import { attachment } from "@/lib/api";
-import { isImage, MAX_FILES, pick, type Picked, type PickSource } from "@/lib/files";
+import { fitsInMessage, isImage, MAX_FILES, pick, SIZE_LIMIT_NOTICE, type Picked, type PickSource } from "@/lib/files";
 import { haptics } from "@/lib/haptics";
 import { useWorkingLine } from "@/lib/lines";
 import { preview } from "@/lib/messages";
@@ -127,6 +127,7 @@ function ChatWith({ agent }: { agent: AgentWithLatest }) {
     }
     try {
       const added = await pick(source, MAX_FILES - picked.length);
+      if (!fitsInMessage([...picked, ...added])) throw new Error(SIZE_LIMIT_NOTICE);
       setPicked((current) => [...current, ...added].slice(0, MAX_FILES));
     } catch (failure) {
       problem("Can't add that", failure);

@@ -11,8 +11,8 @@ import type { AgentChanges, Device, Person, Store } from "./store.ts";
 import type { Queue } from "./runner.ts";
 
 const KEEPALIVE_MS = 25_000;
-// Room for ten full-size photos in one message, the most the app sends.
-const MESSAGE_BYTES = 200 * 1024 * 1024;
+// The most one message carries, under the 100 MB Cloudflare takes in one request.
+const MESSAGE_BYTES = 95 * 1024 * 1024;
 // An Apple device token as the iPhone reports it: hex, 32 bytes today, with room for Apple to lengthen it.
 const DEVICE_TOKEN = /^[0-9a-f]{64,200}$/;
 const CONTENT_TYPES: Record<string, string> = {

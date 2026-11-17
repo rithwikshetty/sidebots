@@ -79,7 +79,7 @@ The store keeps the device key's hash, never the key. The phone keeps both keys 
 
 The api's first step, which today matches the `Tailscale-User-Login` header to a person, matches the device key to a device and its person. A request with no known key gets 401. A code is too long to guess, so wrong codes need no limit.
 
-`host` in a development setup is whatever address reaches the server, such as a Tailscale name, given to the command as `pair <person> --host <address>`.
+`host` is the machine's address, which the server keeps in `machine.json`. In a development setup it is whatever address reaches the server, such as a Tailscale name, given to the command as `pair <person> --host <address>`.
 
 ### Database
 
@@ -114,7 +114,7 @@ create table pairings (
 
 ### The machine's identity
 
-The first time it needs the relay, the server makes an Ed25519 key pair and registers with it. `~/.sidebots/machine.json` holds the private key, the machine's id and address, and the tunnel's token, readable only by the server's user account. It takes the place of `push.json`.
+The first time it starts with the relay on, the server makes an Ed25519 key pair and registers with it. It registers again at each start and once a day, which keeps the relay from taking it for a machine that has gone away. `~/.sidebots/machine.json` holds the private key, the machine's id and address, and the tunnel's token, readable only by the server's user account. It takes the place of `push.json`.
 
 ### Server modules
 
@@ -132,7 +132,7 @@ A Cloudflare Worker with a D1 database, in `relay/`, deployed with Wrangler to t
 
 | Route | Purpose |
 | --- | --- |
-| `POST /machines` | Register a machine by its public key. Makes a tunnel that forwards to `http://127.0.0.1:4317`, gives it the address `<id>.sidebots.app`, and answers with the id, the address and the tunnel's token |
+| `POST /machines` | Register a machine by its public key and its server's port. Makes a tunnel that forwards to `http://127.0.0.1:<port>`, 4317 unless the machine says otherwise, gives it the address `<id>.sidebots.app`, and answers with the id, the address and the tunnel's token. A key already registered gets the same machine and tunnel back |
 | `DELETE /machines/:id` | Remove a machine, its tunnel and its address |
 | `POST /notifications` | Pass one encrypted notice to Apple for one device token, and answer `sent`, `gone` or `failed` |
 
@@ -142,17 +142,17 @@ Every request but the first is signed: `Authorization: Signature <machine id>:<t
 create table machines (
   id         text primary key,   -- 16 random letters and digits, the label in its address
   public_key text not null unique,
-  tunnel_id  text not null,
+  tunnel_id  text,                -- its Cloudflare Tunnel, once the relay has made it
   created_at integer not null,
   seen_at    integer not null    -- its last signed request
 );
 ```
 
-A machine's id is random and one label deep, so Cloudflare's certificate for `*.sidebots.app` covers every machine. A daily scheduled run removes machines not seen for 60 days, with their tunnels.
+A machine's id is random and one label deep, so Cloudflare's certificate for `*.sidebots.app` covers every machine. A daily scheduled run removes machines not seen for 60 days, with their tunnels and DNS records. New machines are limited to three a minute per network address, through the Workers rate limiting binding, which counts by the minute at most.
 
-The Worker's secrets are the push key with its key id and team id, and a Cloudflare API token that can edit tunnels on the account and DNS records on the zone. `APNS_TOPIC`, `ZONE` and the limits are plain settings, so another person's relay is the same code with their own values.
+The Worker's secrets are the push key with its key id and team id, and a Cloudflare API token that can edit tunnels on the account and DNS records on the zone. `APNS_TOPIC`, `ZONE`, `ZONE_ID`, `CLOUDFLARE_ACCOUNT_ID` and the limits are plain settings, so another person's relay is the same code with their own values.
 
-A custom rule on the zone blocks any request whose host is a machine's address and which has no `Authorization` header.
+A custom rule on the zone blocks any request whose host is a machine's address and which has no `Authorization` header. `relay/zone-rule.ts` sets it through Cloudflare's API, with a token that can also edit the zone's WAF rules.
 
 ### Notifications
 
@@ -176,7 +176,7 @@ An unpaired app opens on a welcome screen, whose button opens the pairing screen
 
 ### Uploads
 
-Cloudflare accepts request bodies up to 100 MB on this plan. The api's limit for one message, 200 MB today, becomes 95 MB, and the app says so when ten photos come to more.
+Cloudflare accepts request bodies up to 100 MB on this plan. The api's limit for one message is 95 MB, and the app says so when the photos and files picked for a message come to more.
 
 ### Mac app
 

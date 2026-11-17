@@ -15,6 +15,14 @@ export type PickSource = "photos" | "camera" | "files";
 /** The most one message carries. */
 export const MAX_FILES = 10;
 export const FILE_LIMIT_NOTICE = `A message can carry up to ${MAX_FILES} files.`;
+/** The most one message carries in bytes, as the server takes it. */
+export const MAX_BYTES = 95 * 1024 * 1024;
+export const SIZE_LIMIT_NOTICE = "A message can carry up to 95 MB of photos and files.";
+
+/** Whether the files fit in one message. A file whose size the picker couldn't tell counts as nothing. */
+export function fitsInMessage(files: Picked[]): boolean {
+  return files.reduce((total, file) => total + (file.size ?? 0), 0) <= MAX_BYTES;
+}
 
 const IMAGE = /\.(jpe?g|png|gif|webp|heic|heif)$/i;
 
