@@ -34,6 +34,8 @@ struct Phone: Decodable, Identifiable {
   let id: String
   let name: String
   let person: String
+  /// When it paired, in milliseconds since 1970.
+  let pairedAt: Double
 }
 
 /// A pairing code, as the server's `pair --json` command makes it.

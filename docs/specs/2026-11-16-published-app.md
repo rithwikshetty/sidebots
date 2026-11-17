@@ -35,7 +35,7 @@ The agents, the messages and the Claude sign-in stay on the person's computer, a
 
 **Pairing a phone.** The person opens the phone app, which opens on a welcome screen that says what Sidebots is and how to pair. Its button opens the camera, laid out as the chat's camera, with one line of instruction, and the phone asks for the camera then. The person points it at the QR code. The app says "Paired with Rithwik's MacBook Pro" and opens on the agents. A QR code works once and for ten minutes. A link button above the camera takes the same code as text.
 
-**The panel.** The menu bar icon shows whether Sidebots is running and reachable. A click opens a panel laid out like the system's own menu bar panels. A header says whether phones can reach the computer, with a green, orange or red dot. Then come the paired phones, each with a button to remove it, "Pair a phone…", how Claude is signed in with Change (or Sign in when signed out), an "Open at login" switch, and Quit.
+**The panel.** The menu bar icon shows whether Sidebots is running and reachable. A click opens a panel laid out like the system's own menu bar panels. A header says whether phones can reach the computer, with a green, orange or red dot. Then come the paired phones, each with when it paired and a button to remove it. That button turns into Remove in the phone's own row, so the panel asks without opening a window. Then "Pair a phone…", how Claude is signed in with Change (or Sign in when signed out), an "Open at login" switch, and Quit.
 
 **Removing a phone.** Remove takes effect at once. The phone's next request is refused, and the app goes back to the welcome screen with a line saying the computer removed it. Its saved chats are cleared.
 
