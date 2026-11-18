@@ -5,14 +5,12 @@ import { extname } from "node:path";
 import { Hono } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import { streamSSE } from "hono/streaming";
-import { COLOR, CONTRACT_HEADER, CONTRACT_VERSION, PROVIDERS } from "./contract.ts";
+import { COLOR, CONTRACT_HEADER, CONTRACT_VERSION, MESSAGE_BYTES, PROVIDERS } from "./contract.ts";
 import type { Effort, Model, Paired, PushToken, StreamEvent } from "./contract.ts";
 import type { AgentChanges, Device, Person, Store } from "./store.ts";
 import type { Queue } from "./runner.ts";
 
 const KEEPALIVE_MS = 25_000;
-// The most one message carries, under the 100 MB Cloudflare takes in one request.
-const MESSAGE_BYTES = 95 * 1024 * 1024;
 // An Apple device token as the phone reports it: hex, 32 bytes today, with room for Apple to lengthen it.
 const DEVICE_TOKEN = /^[0-9a-f]{64,200}$/;
 // An app's bundle identifier, as Apple allows it.

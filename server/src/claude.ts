@@ -133,7 +133,7 @@ const runTurn: RunTurn = async (turn) => {
       settings: { autoMemoryEnabled: true, autoMemoryDirectory: join(cwd, "memory"), env: { CLAUDE_CODE_DISABLE_AUTO_MEMORY: "0" } },
       skills: "all",
       mcpServers: { sidebots },
-      allowedTools: tools.map((each) => `mcp__sidebots__${each.name}`),
+      allowedTools: tools.filter((each) => !each.checked).map((each) => `mcp__sidebots__${each.name}`),
       permissionMode: "auto",
       // The agent asks the person in its reply, as anyone does in a chat.
       disallowedTools: ["AskUserQuestion"],

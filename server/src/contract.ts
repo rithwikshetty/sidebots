@@ -49,6 +49,13 @@ export type Message = {
 };
 
 /**
+ * The most one message carries in files, in bytes, whoever sends it. It is
+ * under the 100 MB Cloudflare takes in one request, which is how the
+ * person's files reach the server.
+ */
+export const MESSAGE_BYTES = 95 * 1024 * 1024;
+
+/**
  * The programs an agent can run on, by id. Each has the name the apps show,
  * the models it answers with and how hard it can think before it answers, by
  * the program's own names for them and the names the app shows, and what a

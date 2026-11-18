@@ -3,9 +3,9 @@
 
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
-import { PROVIDERS, scheduleWords } from "./contract.ts";
+import { MESSAGE_BYTES, PROVIDERS, scheduleWords } from "./contract.ts";
 import type { Agent, Ask, Effort, Found, Job, Message, Model, Provider, Schedule } from "./contract.ts";
-import type { Person, Store } from "./store.ts";
+import type { Person, Store, Upload } from "./store.ts";
 
 /** A job as an agent asks for one: what to do on each run, and one of three ways to say when. */
 export type JobRequest = { what: string; every_minutes?: number; daily_at?: string; weekdays?: number[]; once_at?: string };
@@ -55,6 +55,8 @@ export type Turn = {
   scheduleJob: (request: JobRequest) => string;
   listJobs: () => string;
   cancelJob: (id: string) => string;
+  /** Adds files, by their paths, to the next message the agent sends: its reply, or an update that comes first. Answers in words the agent reads. */
+  sendFiles: (paths: string[]) => string;
   /** Sends the person a short update while the agent works, for a turn they are waiting on. Answers in words the agent reads. */
   sendUpdate?: (text: string) => string;
   /** Asks the person before the agent does something, and waits for their answer. `withdrawn` aborts when the provider no longer wants one. */
@@ -83,10 +85,16 @@ export type Driver = {
 /** A driver for each provider. */
 export type Drivers = Record<Provider, Driver>;
 
-/** A tool Sidebots gives the agent: its name, what the agent is told it does, what it takes, and what it does, in words the agent reads. */
+/**
+ * A tool Sidebots gives the agent: its name, what the agent is told it does,
+ * what it takes, and what it does, in words the agent reads. A tool that is
+ * `checked` reaches the machine's files, so the provider's safety check judges
+ * each call to it, as it does the agent's own actions. The rest always run.
+ */
 export type Tool<Input extends z.ZodRawShape = z.ZodRawShape> = {
   name: string;
   description: string;
+  checked?: true;
   input: Input;
   run(input: z.infer<z.ZodObject<Input>>): string;
 };
@@ -122,6 +130,14 @@ export function toolsFor(turn: Turn): Tool[] {
       description: "Remove one of your jobs.",
       input: { id: z.string().describe("The job's id, as list_jobs gives it") },
       run: ({ id }) => turn.cancelJob(id),
+    }),
+    define({
+      name: "send_files",
+      description:
+        "Send the person files: a photo, a chart, a PDF, anything you made or found for them. The files go with the next message you send, which is your reply unless you send an update first, and show above its text: a picture as a picture, a page as a page, any other file as a card that opens it. Use it whenever the person should have the file itself and not only your words about it. Up to 95 MB to a message. A file whose name ends in .html is a page: it is drawn in the chat and opens full screen, so use one for what words can't carry, such as a chart, a table or a layout. Write it as one file for a phone's width, with its styles, scripts and images inside it, and name it for what it shows. The page is given the chat's background and text colour, which change between light and dark, so set neither yourself. Colour the rest with the CSS variables it is also given: var(--ink) for text, var(--ink2) for quiet text, var(--line) for rules, var(--field) for a fill behind something, and var(--tint) for the one thing to pick out. Any colour of your own has to read on both white and black.",
+      checked: true,
+      input: { paths: z.array(z.string()).describe("Each file's path, in full or from your home folder") },
+      run: ({ paths }) => turn.sendFiles(paths),
     }),
     ...(sendUpdate
       ? [
@@ -273,6 +289,8 @@ export function createQueue(store: Store, drivers: Drivers, now: () => number = 
       const apiKey = store.apiKey(person.id, agent.provider);
       const message = store.nextQueued(agentId);
       const job = message ? undefined : store.dueJob(agentId, now());
+      // The files the agent has asked to send, which its next message takes.
+      const files: Upload[] = [];
       const turn = async (text: string, rest: Pick<Turn, "followUps" | "seen" | "replied" | "sendUpdate"> & { id?: string; ofJob?: boolean }) => {
         if (!account) throw new Error(`${person.name} hasn't set up ${PROVIDERS[agent.provider].name} on this computer.`);
         const ask = (question: Question, withdrawn: AbortSignal) =>
@@ -322,6 +340,20 @@ export function createQueue(store: Store, drivers: Drivers, now: () => number = 
             return `${jobs.join("\n\n") || "You have no jobs."}\n\nIt is now ${clock(now())}.`;
           },
           cancelJob: (id) => (store.removeJob(agent.id, id) ? "Removed." : "You have no job with that id."),
+          sendFiles: (paths) => {
+            // Each file is read as it is counted, so a call that can't fit stops at the file that takes it too far.
+            const added: Upload[] = [];
+            let room = MESSAGE_BYTES - files.reduce((total, file) => total + file.bytes.byteLength, 0);
+            for (const path of paths) {
+              const file = store.fileToSend(agent.id, path);
+              if (!file) return `There is no file at ${path}. Nothing was added, so give the paths again.`;
+              room -= file.bytes.byteLength;
+              if (room < 0) return "A message carries up to 95 MB of files. Nothing was added, so send fewer or smaller ones.";
+              added.push(file);
+            }
+            files.push(...added);
+            return "Added. They go with the next message you send.";
+          },
         })
           // An ask the turn leaves behind, as when it fails or is stopped, waits for nobody.
           .finally(() => stopWaiting(agent.id, "The turn ended."));
@@ -337,7 +369,7 @@ export function createQueue(store: Store, drivers: Drivers, now: () => number = 
           const replies: string[] = [];
           await turn(jobPrompt(job, person), { ofJob: true, seen: () => undefined, replied: (reply) => replies.push(reply) });
           const reply = replies.at(-1) ?? "";
-          if (!silent(reply)) store.addMessage(agent.id, "agent", reply, "done", { jobId: job.id });
+          if (!silent(reply)) store.addMessage(agent.id, "agent", reply, "done", { jobId: job.id, files });
         } catch (error) {
           if (stop.signal.aborted) return;
           // A job that keeps failing says so once, not on every run.
@@ -390,7 +422,7 @@ export function createQueue(store: Store, drivers: Drivers, now: () => number = 
         if (at - started < FIRST_UPDATE_MS) return "Too soon for an update. Carry on, and send one only if the work runs well past a minute.";
         if (lastUpdate !== null && at - lastUpdate < UPDATE_GAP_MS) return "You sent an update moments ago. Carry on, and tell the rest in your reply.";
         lastUpdate = at;
-        store.addMessage(agent.id, "agent", update.trim(), "done", { interim: true });
+        store.addMessage(agent.id, "agent", update.trim(), "done", { interim: true, files: files.splice(0) });
         return "Sent. Carry on with the work.";
       };
       try {
@@ -406,7 +438,7 @@ export function createQueue(store: Store, drivers: Drivers, now: () => number = 
             sendUpdate,
             seen: (ids) => store.markSeen(ids),
             replied: (reply, ids) => {
-              store.addMessage(agent.id, "agent", reply, "done");
+              store.addMessage(agent.id, "agent", reply, "done", { files: files.splice(0) });
               store.markSeen(ids);
               ids.forEach((id) => store.setStatus(id, "done"));
             },
