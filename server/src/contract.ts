@@ -109,6 +109,14 @@ export type Agent = {
  * the person hasn't read.
  */
 export type AgentWithLatest = Agent & { latest: Message | null; working: boolean; unread: number };
+
+/** The state an agent's avatar acts out: working while it has a turn, then failed when its last turn failed, replied while a reply waits to be read, and resting otherwise. */
+export function avatarStateOf(agent: AgentWithLatest): AvatarState {
+  if (agent.working) return "working";
+  if (agent.latest?.sender === "sidebots" && agent.latest.status === "failed") return "failed";
+  if (agent.unread > 0) return "replied";
+  return "resting";
+}
 /** A message found by a search, with the name of the agent whose chat it is in. */
 export type Found = { id: string; agent_id: string; agent: string; sender: Sender; body: string; created_at: number };
 /**
@@ -186,10 +194,11 @@ export type StreamEvent = { message: Message | null; agent: AgentWithLatest } | 
  */
 export type Paired = { key: string; notificationKey: string; machine: string };
 /**
- * Where Apple delivers a phone's notifications: its Apple device token, which
- * of Apple's push services issued it, and the bundle identifier of the app it
- * is for, which a development build has apart from the published app. A phone
- * that doesn't name its app is the published app.
+ * Where Apple delivers to a phone: a token, which of Apple's push services
+ * issued it, and the bundle identifier of the app it is for, which a
+ * development build has apart from the published app. A phone that doesn't
+ * name its app is the published app. The token is the phone's Apple device
+ * token, for its notifications, or the token of one Live Activity it shows.
  */
 export type PushToken = { token: string; environment: "sandbox" | "production"; app?: string };
 /**
@@ -227,15 +236,23 @@ export function readableColor(color: string): string {
 
 /**
  * An avatar's spritesheet. One row per state, in this order, with how many
- * frames the row has and how long the app shows each one. The avatar's 16 by 16
- * drawing sits in `art` inside every cell, with one drawing pixel of room
- * above it for a hop.
+ * frames the row has, how long the app shows each one, and `still`, the frame
+ * that stands for the state where nothing can move, as in a Live Activity.
+ * The avatar's 16 by 16 drawing sits in `art` inside every cell, with one
+ * drawing pixel of room above it for a hop.
  */
 export const AVATAR_STATES = {
-  resting: { frames: 6, frameMs: 450 },
-  working: { frames: 6, frameMs: 150 },
-  replied: { frames: 6, frameMs: 300 },
-  failed: { frames: 8, frameMs: 300 },
+  resting: { frames: 6, frameMs: 450, still: 0 },
+  working: { frames: 6, frameMs: 150, still: 2 },
+  replied: { frames: 6, frameMs: 300, still: 0 },
+  failed: { frames: 8, frameMs: 300, still: 0 },
 } as const;
 export type AvatarState = keyof typeof AVATAR_STATES;
 export const AVATAR_SHEET = { columns: 8, cellWidth: 192, cellHeight: 208, art: { left: 24, top: 48, size: 144, pixel: 9 } } as const;
+
+/** Where one frame of a state is in a spritesheet, in the sheet's pixels: the drawing, with the room above it for a hop. */
+export function avatarFrame(state: AvatarState, frame: number): { x: number; y: number; width: number; height: number } {
+  const { cellWidth, cellHeight, art } = AVATAR_SHEET;
+  const row = Object.keys(AVATAR_STATES).indexOf(state);
+  return { x: frame * cellWidth + art.left, y: row * cellHeight + art.top - art.pixel, width: art.size, height: art.size + art.pixel };
+}

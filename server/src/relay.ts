@@ -1,13 +1,13 @@
 // The relay gives this machine its address and tunnel, and passes the server's
-// notifications to Apple, under the push key of the developer account that
-// publishes the app. This is the only module that talks to it.
+// notifications and the ends of its Live Activities to Apple, under the push
+// key of the developer account that publishes the app. This is the only module that talks to it.
 // `relay/src/worker.ts` describes how a request is signed.
 
 import { createHash, createPrivateKey, generateKeyPairSync, sign, type KeyObject } from "node:crypto";
 import type { SendPush } from "./push.ts";
 import type { Machine, Store } from "./store.ts";
 
-/** The relay, as the server uses it: `register` brings the machine its id, address and tunnel token, and `notify` sends a notification. */
+/** The relay, as the server uses it: `register` brings the machine its id, address and tunnel token, and `notify` sends a notification or ends a Live Activity. */
 export type Relay = { register(): Promise<Required<Machine>>; notify: SendPush };
 
 /** Talks to the relay at `origin` for a server listening on `port`. `send` is how the server reaches the relay. */
@@ -57,8 +57,8 @@ export function relay(store: Store, origin: string, port: number, send: typeof f
   /** The machine's id with the relay, which the server registers for when it has none. */
   const machineId = async (): Promise<string> => store.machine()?.id ?? (await register()).id;
 
-  const notify: SendPush = async (to, notice) => {
-    const body = JSON.stringify({ token: to.token, environment: to.environment, app: to.app, ...notice });
+  const notify: SendPush = async (to, push) => {
+    const body = JSON.stringify({ token: to.token, environment: to.environment, app: to.app, ...push });
     try {
       let response = await call("/notifications", await machineId(), key(), body);
       // The relay removes a machine it hasn't heard from in 60 days. The machine registers again with the key it has.

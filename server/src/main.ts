@@ -191,6 +191,6 @@ if (relayOrigin !== "off") {
 // The machine's name as its owner knows it. macOS keeps one apart from the network's name for the machine.
 const machine = process.platform === "darwin" ? execFileSync("scutil", ["--get", "ComputerName"], { encoding: "utf8" }).trim() : hostname();
 // Local only. The tunnel, or `tailscale serve`, brings the phone's requests here.
-serve({ fetch: createApi(store, queue, machine).fetch, hostname: "127.0.0.1", port }, () => {
+serve({ fetch: createApi(store, queue, machine, relayOrigin !== "off").fetch, hostname: "127.0.0.1", port }, () => {
   console.log(`Sidebots is listening on http://127.0.0.1:${port}, with data in ${home}`);
 });

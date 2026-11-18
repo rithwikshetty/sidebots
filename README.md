@@ -1,6 +1,6 @@
 # Sidebots
 
-Sidebots is a messaging app for your agents. Each chat is an agent. You send it a message, it does the work on a machine you own, and the finished reply arrives like a text from a person, with a notification, and with any files or pages the agent made for you.
+Sidebots is a messaging app for your agents. Each chat is an agent. You send it a message, it does the work on a machine you own, and the finished reply arrives like a text from a person, with a notification, and with any files or pages the agent made for you. While it works, its avatar waits on your Lock Screen and in the Dynamic Island.
 
 You run Sidebots yourself. There is no hosted service: a small server runs on your machine, drives the program each agent runs on, and keeps every message in a folder on that machine. Sidebots calls those programs providers, and today it has one, Claude Code. [Providers](#providers) says how another is added. You build your own copy of the app and pair it with your server.
 
@@ -78,9 +78,9 @@ To keep the server running on a Mac, use a launchd agent with `RunAtLoad` and `K
 
 ### The relay
 
-The relay gives the machine its address and tunnel, and passes its notifications to Apple. Only the Apple Developer account that builds the app can notify it, so the relay holds that account's push key. The server registers with the relay when it starts, and again each day, with a key it makes and keeps in `machine.json`, and signs every request with it. The relay keeps the server's public key, its tunnel and its address, and nothing about people, agents or messages. A relay that hears nothing from a machine for 60 days removes it with its address, so after a longer break the machine gets a new address and each phone pairs again.
+The relay gives the machine its address and tunnel, and passes its notifications to Apple, along with the end of each Live Activity, which tells the phone's Lock Screen that an agent has replied or failed. Only the Apple Developer account that builds the app can notify it, so the relay holds that account's push key. The server registers with the relay when it starts, and again each day, with a key it makes and keeps in `machine.json`, and signs every request with it. The relay keeps the server's public key, its tunnel and its address, and nothing about people, agents or messages. A relay that hears nothing from a machine for 60 days removes it with its address, so after a longer break the machine gets a new address and each phone pairs again.
 
-The server uses the relay at `https://relay.sidebots.app`, which notifies the Sidebots app on the App Store. Your own build has its own identifier, so it needs your own relay: deploy the one in `relay/` to your Cloudflare account, as [relay/README.md](relay/README.md) explains, and start the server with `SIDEBOTS_RELAY` set to its address. `SIDEBOTS_RELAY=off` turns off the relay, the tunnel and notifications. The server then needs another way for phones to reach it, such as `tailscale serve --bg --https=443 http://127.0.0.1:4317`, and `pair` needs that address in `--host`.
+The server uses the relay at `https://relay.sidebots.app`, which notifies the Sidebots app on the App Store. Your own build has its own identifier, so it needs your own relay: deploy the one in `relay/` to your Cloudflare account, as [relay/README.md](relay/README.md) explains, and start the server with `SIDEBOTS_RELAY` set to its address. `SIDEBOTS_RELAY=off` turns off the relay, the tunnel, notifications and Live Activities. The server then needs another way for phones to reach it, such as `tailscale serve --bg --https=443 http://127.0.0.1:4317`, and `pair` needs that address in `--host`.
 
 ### New avatars
 

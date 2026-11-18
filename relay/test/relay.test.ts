@@ -173,6 +173,35 @@ test("a request that isn't signed by the machine, or was signed long ago, is ref
   assert.equal((await handle(new Request(signed.url, { method: "POST", headers: Object.fromEntries(signed.headers), body: NOTICE_BODY }), env, outside, Date.now() + 6 * 60_000)).status, 401);
 });
 
+test("the end of a Live Activity reaches Apple as the avatar's state and nothing else, and leaves the Lock Screen when there is nothing to show", async () => {
+  const { send, toApple, toRelay } = setup();
+  const ACTIVITY = { token: "d".repeat(256), environment: "sandbox" as const, app: "app.sidebots.dev" };
+  const before = Math.floor(Date.now() / 1000);
+
+  assert.equal(await send(ACTIVITY, { ended: "replied" }), "sent");
+  const [delivery] = toApple;
+  assert.equal(delivery.url, `https://api.sandbox.push.apple.com/3/device/${ACTIVITY.token}`);
+  assert.deepEqual(
+    ["apns-topic", "apns-push-type", "apns-priority", "apns-collapse-id"].map((header) => delivery.headers.get(header)),
+    ["app.sidebots.dev.push-type.liveactivity", "liveactivity", "10", null],
+  );
+  const { aps, ...beside } = (await delivery.json()) as { aps: { timestamp: number; "dismissal-date": number } };
+  assert.deepEqual(beside, {});
+  assert.ok(aps.timestamp >= before && aps.timestamp <= before + 5);
+  // A reply or a failure stays on the Lock Screen for a quarter of an hour.
+  assert.deepEqual(aps, { timestamp: aps.timestamp, event: "end", "content-state": { state: "replied" }, "dismissal-date": aps.timestamp + 15 * 60 });
+  assert.deepEqual(JSON.parse(await toRelay.at(-1)!.text()), { ...ACTIVITY, ended: "replied" });
+
+  assert.equal(await send(ACTIVITY, { ended: "resting" }), "sent");
+  const resting = ((await toApple[1].json()) as { aps: { timestamp: number; "dismissal-date": number } }).aps;
+  assert.equal(resting["dismissal-date"], resting.timestamp);
+
+  // The relay passes on one of the avatar's states, and never words of the server's choosing.
+  assert.equal(await send(ACTIVITY, { ended: "working" as "replied" }), "failed");
+  assert.equal(await send(ACTIVITY, { ended: "Scout found three flats" as "replied" }), "failed");
+  assert.equal(toApple.length, 2);
+});
+
 test("a token Apple has let go comes back as gone, and a machine stops at its daily share", async () => {
   const gone = setup(() => Response.json({ reason: "Unregistered" }, { status: 410 }));
   assert.equal(await gone.send(PHONE, NOTICE), "gone");

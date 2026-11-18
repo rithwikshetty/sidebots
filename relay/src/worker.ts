@@ -1,9 +1,11 @@
 // The relay gives each Sidebots server an address under the zone, through a
 // Cloudflare Tunnel, and passes the server's notifications to Apple, under the
 // push key of the developer account that publishes the app. Each notification
-// comes encrypted for the phone it goes to, so the relay can't read it. It knows
-// each server as a machine: a public key the server registered, an id, and its
-// tunnel. It keeps nothing about people, agents or messages.
+// comes encrypted for the phone it goes to, so the relay can't read it. It
+// also ends a Live Activity for the server, which says only the state the
+// avatar is left in. It knows each server as a machine: a public key the server
+// registered, an id, and its tunnel. It keeps nothing about people, agents or
+// messages.
 //
 // Every request is signed with the machine's private key, in the header
 //
@@ -13,7 +15,7 @@
 // it registers, `time` is milliseconds since 1970, and the Ed25519 signature
 // covers `<method> <path>\n<time>\n<sha256 of the body, in hex>`.
 
-import { notify, type PushKey } from "./apple.ts";
+import { ENDED, endActivity, notify, type Ended, type PushKey } from "./apple.ts";
 import { makeTunnel, removeTunnel, routeTunnel, type Tunnels } from "./cloudflare.ts";
 
 export type Env = {
@@ -43,8 +45,8 @@ const STALE_MS = 60 * 24 * 60 * 60_000;
 const DAY_MS = 24 * 60 * 60_000;
 const ID_LETTERS = "abcdefghijklmnopqrstuvwxyz0123456789";
 const PUBLIC_KEY = /^[\w-]{43}$/;
-// An Apple device token as the phone reports it: hex, 32 bytes today, with room for Apple to lengthen it.
-const DEVICE_TOKEN = /^[0-9a-f]{64,200}$/;
+// A token of Apple's as the phone reports it, in hex: 32 bytes for a phone today and 128 for a Live Activity, with room for Apple to lengthen either.
+const DEVICE_TOKEN = /^[0-9a-f]{64,512}$/;
 // An encrypted notice, in base64, small enough that Apple takes the notification it rides in, which is at most 4096 bytes.
 const SEALED = /^[A-Za-z0-9+/]{1,3800}={0,2}$/;
 const MESSAGE_ID = /^[\w-]{1,64}$/;
@@ -136,19 +138,22 @@ export async function handle(request: Request<unknown, unknown>, env: Env, send:
     return new Response(null, { status: 204 });
   }
 
-  const { token, environment, app, sealed, messageId } = JSON.parse(new TextDecoder().decode(body)) as Record<string, unknown>;
+  const { token, environment, app, sealed, messageId, ended } = JSON.parse(new TextDecoder().decode(body)) as Record<string, unknown>;
   const topics = env.APNS_TOPICS.split(" ");
+  // A notice is an encrypted notification with the message it is about, or the end of a Live Activity.
+  const notice = typeof sealed === "string" && SEALED.test(sealed) && typeof messageId === "string" && MESSAGE_ID.test(messageId) ? { sealed, messageId } : null;
+  const end = ENDED.includes(ended as Ended) ? (ended as Ended) : null;
   if (
     (app !== undefined && !topics.includes(app as string)) ||
     typeof token !== "string" ||
     !DEVICE_TOKEN.test(token) ||
     (environment !== "sandbox" && environment !== "production") ||
-    typeof sealed !== "string" ||
-    !SEALED.test(sealed) ||
-    typeof messageId !== "string" ||
-    !MESSAGE_ID.test(messageId)
+    (ended === undefined ? !notice : !end)
   ) {
-    return answer({ error: "A notice comes encrypted, with the phone's token, its push service, the message it is about, and one of the relay's apps if it names one." }, 400);
+    return answer(
+      { error: "A notice comes with the phone's token, its push service, and one of the relay's apps if it names one. It is encrypted, with the message it is about, or it ends a Live Activity on one of the avatar's states." },
+      400,
+    );
   }
   const day = Math.floor(now / DAY_MS);
   const { sent } = (await env.DB.prepare(
@@ -159,7 +164,8 @@ export async function handle(request: Request<unknown, unknown>, env: Env, send:
   if (sent > Number(env.NOTICES_PER_DAY)) return answer({ error: "This machine has sent all the notifications it may today." }, 429);
 
   const push: PushKey = { key: env.APNS_KEY, keyId: env.APNS_KEY_ID, teamId: env.APNS_TEAM_ID };
-  return answer({ result: await notify(push, (app as string | undefined) ?? topics[0], { token, environment }, { sealed, messageId }, send, now) });
+  const topic = (app as string | undefined) ?? topics[0];
+  return answer({ result: end ? await endActivity(push, topic, { token, environment }, end, send, now) : await notify(push, topic, { token, environment }, notice!, send, now) });
 }
 
 /** Removes the machines that have been quiet for 60 days, with their tunnels and addresses. One that Cloudflare fails to remove stays for the next day's run. */

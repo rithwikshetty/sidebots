@@ -20,7 +20,8 @@ const config: ExpoConfig = {
     supportsTablet: false,
     bundleIdentifier: identifier,
     appleTeamId: process.env.SIDEBOTS_APPLE_TEAM_ID,
-    infoPlist: { ITSAppUsesNonExemptEncryption: false },
+    // A working agent shows as a Live Activity, which the widget in targets/activity draws.
+    infoPlist: { ITSAppUsesNonExemptEncryption: false, NSSupportsLiveActivities: true },
     // The Keychain group the app shares with its notification extension, which reads the notification key from it.
     entitlements: { "keychain-access-groups": [`$(AppIdentifierPrefix)${identifier}`] },
   },
@@ -54,7 +55,7 @@ const config: ExpoConfig = {
     ["expo-audio", { microphonePermission: MICROPHONE_PERMISSION, recordAudioAndroid: false }],
     // Keeps the keys that prove this phone to its computer and open its notifications in the Keychain.
     "expo-secure-store",
-    // Builds the native targets in targets/, such as the extension that opens each notification as it arrives.
+    // Builds the native targets in targets/: the extension that opens each notification as it arrives, and the widget that draws a working agent's Live Activity.
     "@bacons/apple-targets",
     "expo-document-picker",
     "expo-web-browser",
