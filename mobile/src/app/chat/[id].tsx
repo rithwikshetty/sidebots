@@ -13,11 +13,11 @@ import { FadingText } from "@/components/FadingText";
 import { Glass } from "@/components/Glass";
 import { IconButton } from "@/components/IconButton";
 import { Markdown } from "@/components/Markdown";
-import { FileCard, MessagePhotos, type Shown } from "@/components/MessageAttachments";
+import { FileCard, MessagePage, MessagePhotos, type Shown } from "@/components/MessageAttachments";
 import { SwipeToReply } from "@/components/SwipeToReply";
 import { problem } from "@/lib/alerts";
 import { attachment } from "@/lib/api";
-import { fitsInMessage, isImage, MAX_FILES, pick, SIZE_LIMIT_NOTICE, type Picked, type PickSource } from "@/lib/files";
+import { fitsInMessage, isImage, isPage, MAX_FILES, pick, SIZE_LIMIT_NOTICE, type Picked, type PickSource } from "@/lib/files";
 import { haptics } from "@/lib/haptics";
 import { useWorkingLine } from "@/lib/lines";
 import { preview } from "@/lib/messages";
@@ -324,6 +324,8 @@ function Bubble({
   if (message.sender === "sidebots") return <Text style={[styles.note, { color: theme.ink2 }]}>{message.body}</Text>;
   const mine = message.sender === "person";
   const shown = message.attachments.map((path) => ({ ...attachment(message.agent_id, path), name: fileName(path) }));
+  // A page is the agent's to send. An HTML file from the person is a file, as it is to the agent.
+  const drawn = (item: Shown) => !mine && isPage(item.name);
   return (
     <SwipeToReply onReply={onReply}>
       <View style={mine ? styles.mine : styles.theirs}>
@@ -331,7 +333,8 @@ function Bubble({
           body={message.body}
           quote={message.reply_to ? (quoted ? preview(quoted) : "An earlier message") : undefined}
           photos={shown.filter((item) => isImage(item.name))}
-          files={shown.filter((item) => !isImage(item.name))}
+          pages={shown.filter(drawn)}
+          files={shown.filter((item) => !isImage(item.name) && !drawn(item))}
           mine={mine}
           theme={theme}
         />
@@ -362,14 +365,18 @@ function Receipt({ message, theme }: { message: Message; theme: Theme }) {
 
 /**
  * A message as the chat draws it: its photos and files above its bubble, as
- * Assist draws one, and the message it answers quoted at the bubble's top.
- * The agent's words are markdown; the person's are as they typed them.
+ * Assist draws one, its pages between them, as T3 Code draws one, and the
+ * message it answers quoted at the bubble's top. The agent's words are
+ * markdown; the person's are as they typed them.
  */
-function Sent({ body, quote, photos, files, mine, theme }: { body: string; quote?: string; photos: Shown[]; files: Shown[]; mine: boolean; theme: Theme }) {
+function Sent({ body, quote, photos, pages = [], files, mine, theme }: { body: string; quote?: string; photos: Shown[]; pages?: Shown[]; files: Shown[]; mine: boolean; theme: Theme }) {
   const quiet = mine ? theme.onTint : theme.ink2;
   return (
     <>
       {photos.length ? <MessagePhotos photos={photos} end={mine} /> : null}
+      {pages.map((page) => (
+        <MessagePage key={page.uri} page={page} />
+      ))}
       {files.map((file) => (
         <FileCard key={file.uri} file={file} />
       ))}
