@@ -21,6 +21,23 @@ export type Status = "queued" | "running" | "done" | "failed";
  * or the turn ended.
  */
 export type Ask = "waiting" | "allowed" | "refused" | "unanswered";
+/**
+ * What an agent asks to do, in the parts a person reads to decide. `kind` is
+ * what sort of thing it is, and `title` says that in words, as "Run a
+ * command". `what` is this one thing in plain words: for a command, the
+ * agent's own account of what it does. `facts` are the short details that
+ * matter, each a label and its value, as where a file is or who an email
+ * goes to. `detail` is the thing itself, such as the command or the change,
+ * which Allow lets happen in full. `why` is the provider's reason for not
+ * deciding this one by itself.
+ */
+export type Question = { kind: "command" | "page" | "file" | "tool"; title: string; what: string; facts: [label: string, value: string][]; detail: string; why?: string };
+
+/** Text as a markdown code block. The fence is longer than any run of backticks inside it, so nothing in the text can close it. */
+export function fenced(text: string): string {
+  const fence = "`".repeat((text.match(/`+/g) ?? []).reduce((longest, run) => Math.max(longest, run.length + 1), 3));
+  return `${fence}\n${text}\n${fence}`;
+}
 
 export type Message = {
   id: string;
@@ -47,6 +64,8 @@ export type Message = {
   interim: boolean;
   /** For a message in which the agent asks before it does something, where the ask stands. Null for every other message. */
   ask: Ask | null;
+  /** What an ask asks, which the phone draws as its card. The message's `body` says the same in words. Null for every other message. */
+  question: Question | null;
   created_at: number;
 };
 
@@ -179,6 +198,11 @@ export function plainText(markdown: string): string {
     .replace(/(?<!\w)(\*\*|__|~~|\*|_|`)(?=\S)([\s\S]*?\S)\1(?!\w)/g, "$2")
     .replace(/\s+/g, " ")
     .trim();
+}
+
+/** A message as one line, for a notification or a list: an ask's plain words, or its text without markdown's marks. */
+export function oneLine(message: Pick<Message, "body" | "question">): string {
+  return message.question ? `${message.question.title}: ${message.question.what}` : plainText(message.body);
 }
 
 /**

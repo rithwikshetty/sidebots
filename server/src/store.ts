@@ -7,7 +7,7 @@ import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
 
 import { COLOR, DEFAULT_PROVIDER, PROVIDERS, USAGE_DAYS, readableColor } from "./contract.ts";
-import type { About, Agent, AgentWithLatest, Ask, Avatar, Found, Job, Limit, Memory, Message, Provider, PushToken, Schedule, Sender, Status, TurnKind, Usage, Used } from "./contract.ts";
+import type { About, Agent, AgentWithLatest, Ask, Avatar, Found, Job, Limit, Memory, Message, Provider, PushToken, Question, Schedule, Sender, Status, TurnKind, Usage, Used } from "./contract.ts";
 
 export type Person = { id: string; name: string };
 /** How a person's agents sign in to a provider: the provider's config folder of the person's own, which holds their login, rules, skills and sessions. */
@@ -18,8 +18,8 @@ export type Device = { id: string; person_id: string; name: string; paired_at: n
 export type PushTarget = PushToken & { notificationKey: string };
 /** A file as it arrives with a message. */
 export type Upload = { name: string; bytes: Uint8Array };
-/** What a message can carry besides its text: files, the message it answers, the job that sent it, and where its ask stands when it is one. */
-export type Extras = { files?: Upload[]; replyTo?: string; jobId?: string; interim?: boolean; ask?: Ask };
+/** What a message can carry besides its text: files, the message it answers, the job that sent it, and, when it is an ask, where the ask stands and what it asks. */
+export type Extras = { files?: Upload[]; replyTo?: string; jobId?: string; interim?: boolean; ask?: Ask; question?: Question };
 /** What the person can change about an agent. */
 export type AgentChanges = Partial<Pick<Agent, "name" | "avatar_id" | "model" | "effort" | "muted" | "hidden" | "color">>;
 /** What the store tells its listeners about: a message that was added, changed status or had its ask closed, or an agent that was added or deleted. */
@@ -42,6 +42,7 @@ const TABLE_CHANGES = [
   "alter table people drop column claude_config_dir",
   "alter table agents add column provider text not null default 'claude'",
   "alter table messages add column ask text check (ask in ('waiting', 'allowed', 'refused', 'unanswered'))",
+  "alter table messages add column question text",
 ];
 
 const SCHEMA = `
@@ -82,6 +83,7 @@ create table if not exists messages (
   job_id      text,
   interim     integer not null default 0,
   ask         text check (ask in ('waiting', 'allowed', 'refused', 'unanswered')),
+  question    text,
   created_at  integer not null
 );
 create table if not exists jobs (
@@ -149,9 +151,14 @@ const secret = () => randomBytes(32).toString("base64url");
 /** What the database keeps of a secret, so that nobody who reads the database can use it. */
 const hashOf = (value: string) => createHash("sha256").update(value).digest("hex");
 
-/** A message as SQLite holds it, with its attachments as JSON text and yes and no as 1 and 0. */
-type Row = Omit<Message, "attachments" | "interim"> & { attachments: string; interim: number };
-const toMessage = (row: Row): Message => ({ ...row, attachments: JSON.parse(row.attachments) as string[], interim: row.interim === 1 });
+/** A message as SQLite holds it, with its attachments and its question as JSON text and yes and no as 1 and 0. */
+type Row = Omit<Message, "attachments" | "interim" | "question"> & { attachments: string; interim: number; question: string | null };
+const toMessage = (row: Row): Message => ({
+  ...row,
+  attachments: JSON.parse(row.attachments) as string[],
+  interim: row.interim === 1,
+  question: row.question === null ? null : (JSON.parse(row.question) as Question),
+});
 /** An agent as SQLite holds it, with yes and no as 1 and 0. */
 type AgentRow = Omit<Agent, "muted" | "hidden"> & { muted: number; hidden: number };
 const toAgent = (row: AgentRow): Agent => ({ ...row, muted: row.muted === 1, hidden: row.hidden === 1 });
@@ -530,7 +537,7 @@ export function openStore(home: string) {
      * agent back to the home screen, unless the agent is muted. An update while
      * the agent works doesn't.
      */
-    addMessage(agentId: string, sender: Sender, body: string, status: Status, { files = [], replyTo, jobId, interim = false, ask }: Extras = {}): Message {
+    addMessage(agentId: string, sender: Sender, body: string, status: Status, { files = [], replyTo, jobId, interim = false, ask, question }: Extras = {}): Message {
       const attachments = files.map((file) => {
         // A name keeps its letters, digits, dots and dashes. Anything else becomes a dash, as does a %20 the phone wrote for a space.
         const name = `${randomUUID().slice(0, 8)}-${basename(file.name).replace(/(?:%[0-9a-f]{2}|[^\w.-])+/gi, "-")}`;
@@ -549,9 +556,10 @@ export function openStore(home: string) {
         job_id: jobId ?? null,
         interim,
         ask: ask ?? null,
+        question: question ?? null,
         created_at: Date.now(),
       };
-      db.prepare("insert into messages (id, agent_id, sender, body, attachments, status, reply_to, job_id, interim, ask, created_at) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)").run(
+      db.prepare("insert into messages (id, agent_id, sender, body, attachments, status, reply_to, job_id, interim, ask, question, created_at) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)").run(
         message.id,
         message.agent_id,
         message.sender,
@@ -562,6 +570,7 @@ export function openStore(home: string) {
         message.job_id,
         Number(interim),
         message.ask,
+        question ? JSON.stringify(question) : null,
         message.created_at,
       );
       if ((sender === "agent" && !interim) || (sender === "sidebots" && status === "failed")) {
