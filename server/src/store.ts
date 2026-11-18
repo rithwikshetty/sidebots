@@ -6,8 +6,8 @@ import { basename, join } from "node:path";
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
 
-import { COLOR, DEFAULT_PROVIDER, PROVIDERS, readableColor } from "./contract.ts";
-import type { About, Agent, AgentWithLatest, Avatar, Found, Job, Memory, Message, Provider, PushToken, Schedule, Sender, Status } from "./contract.ts";
+import { COLOR, DEFAULT_PROVIDER, PROVIDERS, USAGE_DAYS, readableColor } from "./contract.ts";
+import type { About, Agent, AgentWithLatest, Avatar, Found, Job, Limit, Memory, Message, Provider, PushToken, Schedule, Sender, Status, TurnKind, Usage, Used } from "./contract.ts";
 
 export type Person = { id: string; name: string };
 /** How a person's agents sign in to a provider: the provider's config folder of the person's own, which holds their login, rules, skills and sessions. */
@@ -106,6 +106,23 @@ create table if not exists pairings (
   person_id  text not null references people(id),
   expires_at integer not null
 );
+create table if not exists usage (
+  agent_id     text not null references agents(id),
+  kind         text not null check (kind in ('reply', 'job', 'memory')),
+  cost         real not null,
+  session_id   text not null,
+  session_cost real not null,
+  at           integer not null
+);
+create table if not exists limits (
+  person_id  text not null references people(id),
+  provider   text not null,
+  name       text not null,
+  used       real,
+  resets_at  integer,
+  at         integer not null,
+  primary key (person_id, provider, name)
+);
 `;
 
 const PAGE = 50;
@@ -115,6 +132,7 @@ const AVATAR_ID = /^[a-z0-9-]+$/;
 const ATTACHMENT_NAME = /^[\w-][\w.-]*$/;
 // How long a pairing code works.
 const PAIRING_MS = 10 * 60_000;
+const DAY_MS = 24 * 60 * 60_000;
 
 /** A pairing code or a device key: 32 random bytes, as text that fits in a link. */
 const secret = () => randomBytes(32).toString("base64url");
@@ -370,8 +388,9 @@ export function openStore(home: string) {
       writeFileSync(path, text.replace(`# ${agent.name}\n`, `# ${changes.name}\n`).replace(`You are ${agent.name},`, `You are ${changes.name},`));
     },
 
-    /** Removes an agent and everything Sidebots kept for it: its messages, its jobs and its home folder. */
+    /** Removes an agent and everything Sidebots kept for it: its messages, its jobs, what it used and its home folder. */
     deleteAgent(agent: Agent): void {
+      db.prepare("delete from usage where agent_id = ?").run(agent.id);
       db.prepare("delete from jobs where agent_id = ?").run(agent.id);
       db.prepare("delete from messages where agent_id = ?").run(agent.id);
       db.prepare("delete from agents where id = ?").run(agent.id);
@@ -428,6 +447,62 @@ export function openStore(home: string) {
     agentsWithDueJobs(now: number): string[] {
       const rows = db.prepare("select distinct agent_id from jobs where next_at <= ?").all(now) as { agent_id: string }[];
       return rows.map((row) => row.agent_id);
+    },
+
+    /**
+     * Records a turn the agent ran, with what it cost. A provider says what a
+     * session has cost in all, so a turn costs what its session has cost since
+     * the turn before it there, or all of it once the session's count has
+     * started again. `resumed` says the session had turns before this one.
+     * When none of them is recorded, nobody can tell how much of the cost is
+     * this turn's, and the turn is recorded as costing nothing.
+     */
+    addUsage(agentId: string, kind: TurnKind, session: { sessionId: string; cost: number }, resumed: boolean): void {
+      const last = db.prepare("select session_cost from usage where agent_id = ? and session_id = ? order by rowid desc limit 1").get(agentId, session.sessionId) as
+        | { session_cost: number }
+        | undefined;
+      const before = last ? last.session_cost : resumed ? session.cost : 0;
+      db.prepare("insert into usage (agent_id, kind, cost, session_id, session_cost, at) values (?, ?, ?, ?, ?, ?)").run(
+        agentId,
+        kind,
+        session.cost >= before ? session.cost - before : session.cost,
+        session.sessionId,
+        session.cost,
+        Date.now(),
+      );
+    },
+
+    /** Keeps where limits of the person's plan with a provider stand, as the provider just said. */
+    setLimits(personId: string, provider: Provider, limits: Limit[]): void {
+      const keep = db.prepare("insert or replace into limits (person_id, provider, name, used, resets_at, at) values (?, ?, ?, ?, ?, ?)");
+      for (const limit of limits) keep.run(personId, provider, limit.name, limit.used, limit.resets_at, limit.at);
+    },
+
+    /**
+     * Where the person's plan or API credit goes: the turns their agents ran
+     * in the last days, and how they sign in to each provider. A limit whose
+     * time to reset has passed is left out, since nobody knows where it has
+     * stood since.
+     */
+    usage(personId: string): Usage {
+      const now = Date.now();
+      const used = db
+        .prepare(
+          `select usage.agent_id, usage.kind, count(*) as turns, sum(usage.cost) as cost
+           from usage join agents on agents.id = usage.agent_id
+           where agents.person_id = ? and usage.at > ?
+           group by usage.agent_id, usage.kind`,
+        )
+        .all(personId, now - USAGE_DAYS * DAY_MS) as Used[];
+      const limits = db.prepare(
+        "select name, used, resets_at, at from limits where person_id = ? and provider = ? and (resets_at is null or resets_at > ?) order by resets_at, name",
+      );
+      const providers = db.prepare("select provider from accounts where person_id = ? order by rowid").all(personId) as Pick<Account, "provider">[];
+      const accounts = providers.map(({ provider }) => {
+        const apiKey = apiKeys()[personId]?.[provider] !== undefined;
+        return { provider, apiKey, limits: apiKey ? [] : (limits.all(personId, provider, now) as Limit[]) };
+      });
+      return { used, accounts };
     },
 
     /** Records that the person has read everything in the chat so far. */

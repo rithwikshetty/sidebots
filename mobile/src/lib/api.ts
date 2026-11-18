@@ -163,14 +163,18 @@ export function attachment(agentId: string, path: string): Remote {
   return remote(`/agents/${agentId}/${path}`);
 }
 
-/** Calls the computer this phone has paired with. A `body` is sent as JSON, or as it is when it is a form. */
+/** Calls the computer this phone has paired with. A `body` is sent as JSON, or as it is when it is a form. It fails when the phone leaves that computer before the answer comes. */
 export async function request<T>(path: string, init: { method?: string; body?: unknown } = {}): Promise<T> {
   if (!pairing) throw new ApiError("This phone isn't paired with a computer.", 0);
+  const asked = pairing;
   const { uri, headers } = remote(path);
   try {
-    return await send<T>(uri, headers.Authorization, init);
+    const answer = await send<T>(uri, headers.Authorization, init);
+    // An answer from a computer the phone has left since it asked is kept by nobody.
+    if (pairing !== asked) throw new ApiError("This phone isn't paired with that computer.", 0);
+    return answer;
   } catch (failure) {
-    if (failure instanceof ApiError && failure.status === 401) unpair();
+    if (failure instanceof ApiError && failure.status === 401 && pairing === asked) unpair();
     throw failure;
   }
 }

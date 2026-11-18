@@ -4,7 +4,7 @@
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import { PROVIDERS, scheduleWords } from "./contract.ts";
-import type { Agent, Effort, Found, Job, Message, Model, Provider, Schedule } from "./contract.ts";
+import type { Agent, Effort, Found, Job, Limit, Message, Model, Provider, Schedule, TurnKind } from "./contract.ts";
 import type { Person, Store } from "./store.ts";
 
 /** A job as an agent asks for one: what to do on each run, and one of three ways to say when. */
@@ -48,9 +48,15 @@ export type Turn = {
   cancelJob: (id: string) => string;
   /** Sends the person a short update while the agent works, for a turn they are waiting on. Answers in words the agent reads. */
   sendUpdate?: (text: string) => string;
+  /** The provider says where limits of the person's plan stand. */
+  limits: (limits: Limit[]) => void;
 };
-/** `contextTokens` is how much the session held when the turn ended. */
-export type TurnResult = { sessionId: string; contextTokens: number };
+/**
+ * `contextTokens` is how much the session held when the turn ended. `cost` is
+ * what the session has cost since it began, in US dollars at the provider's
+ * prices.
+ */
+export type TurnResult = { sessionId: string; contextTokens: number; cost: number };
 export type RunTurn = (turn: Turn) => Promise<TurnResult>;
 
 /**
@@ -58,7 +64,8 @@ export type RunTurn = (turn: Turn) => Promise<TurnResult>;
  * runs on the person's API key for the provider when they have one, and
  * otherwise on the login in their config folder for it. It keeps the session
  * open while the turn runs, so that a message the person sends meanwhile goes
- * into it, and replies to every message it was sent. `failure` puts why a
+ * into it, and replies to every message it was sent. It passes on what the
+ * provider says of the person's plan as the turn runs. `failure` puts why a
  * turn failed in words for the person on their phone, from the provider's
  * own. `forget` removes the sessions the provider keeps for the agent that
  * works in `cwd`, once the agent is deleted.
@@ -242,21 +249,24 @@ export function createQueue(store: Store, drivers: Drivers, now: () => number = 
       const apiKey = store.apiKey(person.id, agent.provider);
       const message = store.nextQueued(agentId);
       const job = message ? undefined : store.dueJob(agentId, now());
-      const turn = async (text: string, rest: Pick<Turn, "followUps" | "seen" | "replied" | "sendUpdate"> & { id?: string; ofJob?: boolean }) => {
+      const turn = async (text: string, rest: Pick<Turn, "followUps" | "seen" | "replied" | "sendUpdate"> & { id?: string; kind: TurnKind }) => {
         if (!account) throw new Error(`${person.name} hasn't set up ${PROVIDERS[agent.provider].name} on this computer.`);
-        return driver.runTurn({
+        // A job's run is a session of its own, which nothing comes back to. Any other turn carries on the chat's session.
+        const sessionId = rest.kind === "job" ? null : agent.session_id;
+        const result = await driver.runTurn({
           prompt: { id: rest.id ?? randomUUID(), text },
           followUps: rest.followUps,
           seen: rest.seen,
           replied: rest.replied,
           sendUpdate: rest.sendUpdate,
+          limits: (limits) => store.setLimits(person.id, agent.provider, limits),
           cwd: store.agentHome(agent.id),
-          sessionId: rest.ofJob ? null : agent.session_id,
+          sessionId,
           configDir: account.config_dir,
           apiKey,
           model: agent.model,
           effort: agent.effort,
-          keepSession: !rest.ofJob,
+          keepSession: rest.kind !== "job",
           stop,
           searchHistory: (search) => found(store.searchMessages(person.id, search)),
           scheduleJob: (request) => {
@@ -272,6 +282,8 @@ export function createQueue(store: Store, drivers: Drivers, now: () => number = 
           },
           cancelJob: (id) => (store.removeJob(agent.id, id) ? "Removed." : "You have no job with that id."),
         });
+        store.addUsage(agent.id, rest.kind, result, sessionId !== null);
+        return result;
       };
       // Why a turn failed, as the chat says it. An error can quote what the turn ran with, and the person's API key never goes with it.
       const reason = (error: unknown) => {
@@ -282,7 +294,7 @@ export function createQueue(store: Store, drivers: Drivers, now: () => number = 
       if (job) {
         try {
           const replies: string[] = [];
-          await turn(jobPrompt(job, person), { ofJob: true, seen: () => undefined, replied: (reply) => replies.push(reply) });
+          await turn(jobPrompt(job, person), { kind: "job", seen: () => undefined, replied: (reply) => replies.push(reply) });
           const reply = replies.at(-1) ?? "";
           if (!silent(reply)) store.addMessage(agent.id, "agent", reply, "done", { jobId: job.id });
         } catch (error) {
@@ -303,7 +315,7 @@ export function createQueue(store: Store, drivers: Drivers, now: () => number = 
         // A fresh start. The session goes even when the agent couldn't save
         // first, since the chat itself is still there to search.
         store.setStatus(message.id, "running");
-        if (agent.session_id) await turn(remember(person), { seen: () => undefined, replied: () => undefined }).catch(() => undefined);
+        if (agent.session_id) await turn(remember(person), { kind: "memory", seen: () => undefined, replied: () => undefined }).catch(() => undefined);
         if (stop.signal.aborted) return;
         store.setSession(agent.id, null);
         store.setStatus(message.id, "done");
@@ -347,6 +359,7 @@ export function createQueue(store: Store, drivers: Drivers, now: () => number = 
             fromJobs: store.sentByJobsBefore(message.id),
           }),
           {
+            kind: "reply",
             id: message.id,
             followUps,
             sendUpdate,

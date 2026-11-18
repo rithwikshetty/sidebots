@@ -8,7 +8,7 @@ import { fetch as streamingFetch } from "expo/fetch";
 import { File } from "expo-file-system";
 import { Image } from "expo-image";
 import Storage from "expo-sqlite/kv-store";
-import type { About, Agent, AgentWithLatest, Avatar, AvatarState, Effort, Found, Message, Model, StreamEvent } from "@server/contract";
+import type { About, Agent, AgentWithLatest, Avatar, AvatarState, Effort, Found, Message, Model, StreamEvent, Usage } from "@server/contract";
 import { ApiError, avatarSheet, behind, isPaired, onPairing, remote, request, unpair, type Behind } from "./api";
 import type { Picked } from "./files";
 
@@ -18,6 +18,8 @@ type State = {
   avatars: Avatar[];
   /** What each agent's page shows, for the agents whose page has been opened. */
   about: Record<string, About>;
+  /** Where the person's plan or API credit goes, as the computer last said. Null until the phone has asked. */
+  usage: Usage | null;
   /**
    * Changes to agents that the server hasn't taken yet. The app shows them
    * at once and keeps them on the phone, over whatever the server says, until
@@ -45,7 +47,7 @@ function saved(): Partial<State> {
   }
 }
 
-const EMPTY = { agents: [], messages: {}, avatars: [], about: {}, pending: {} };
+const EMPTY = { agents: [], messages: {}, avatars: [], about: {}, usage: null, pending: {} };
 
 let state: State = { ...EMPTY, ...saved(), online: true, behind: null };
 const listeners = new Set<() => void>();
@@ -91,6 +93,10 @@ export function useChatColor(agent: Pick<Agent, "avatar_id" | "color"> | undefin
 
 export function useAbout(agentId: string): About | undefined {
   return useSyncExternalStore(subscribe, () => state.about[agentId]);
+}
+
+export function useUsage(): Usage | null {
+  return useSyncExternalStore(subscribe, () => state.usage);
 }
 
 export function useOnline(): boolean {
@@ -282,6 +288,11 @@ export async function deleteAgent(agentId: string): Promise<void> {
 export async function loadAbout(agentId: string): Promise<void> {
   const about = await request<About>(`/agents/${agentId}/about`);
   set({ about: { ...state.about, [agentId]: about } });
+}
+
+/** Fetches where the person's plan or API credit goes: what their agents used lately, and what is left of their plan. */
+export async function loadUsage(): Promise<void> {
+  set({ usage: await request<Usage>("/usage") });
 }
 
 export async function removeJob(agentId: string, jobId: string): Promise<void> {

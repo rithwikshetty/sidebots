@@ -196,6 +196,8 @@ export function createApi(store: Store, queue: Queue, machine: string) {
     return c.json(text ? store.searchMessages(c.var.person.id, text) : []);
   });
 
+  app.get("/usage", (c) => c.json(store.usage(c.var.person.id)));
+
   /** The phone says where Apple delivers its notifications, once it allows them. */
   app.put("/push-token", async (c) => {
     const { token, environment, app } = await c.req.json<Partial<PushToken>>();
