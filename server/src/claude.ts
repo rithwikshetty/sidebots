@@ -5,13 +5,43 @@
 import { rmSync } from "node:fs";
 import { join } from "node:path";
 import { stripVTControlCharacters } from "node:util";
-import { createSdkMcpServer, query, tool, type SDKMessage, type SDKUserMessage } from "@anthropic-ai/claude-agent-sdk";
+import { createSdkMcpServer, query, tool, type SDKMessage, type SDKRateLimitInfo, type SDKUserMessage } from "@anthropic-ai/claude-agent-sdk";
+import type { Limit } from "./contract.ts";
 import { toolsFor, type Driver, type Prompt, type Question, type RunTurn } from "./runner.ts";
 
 // The longest a session stays open, after its replies are in, for background work the agent started.
 const BACKGROUND_WAIT_MS = 30 * 60_000;
 
+// Claude Code's names for the limits of a plan, and what it calls them in its own messages. Credit bought beyond the plan is no limit of the plan's, and has no name here.
+const LIMITS: Record<string, string> = {
+  five_hour: "5-hour limit",
+  seven_day: "Weekly limit",
+  seven_day_opus: "Opus limit",
+  seven_day_sonnet: "Sonnet limit",
+  seven_day_overage_included: "Fable limit",
+};
+
 const text = (words: string) => ({ content: [{ type: "text" as const, text: words }] });
+
+/**
+ * Where limits of the person's plan stand, from what Claude Code says of them
+ * at `at`, as a turn runs: the part of each that is used and, in seconds,
+ * when it resets. It names one limit, the one the turn is nearest or has
+ * reached, and lists the plan's main limits in `unifiedWindows`, which the
+ * SDK's types leave out. A limit that refuses the turn is all used.
+ */
+export function limitsIn(info: SDKRateLimitInfo, at: number): Limit[] {
+  type Window = Pick<SDKRateLimitInfo, "status" | "utilization" | "resetsAt">;
+  const windows: Record<string, Partial<Window>> = {
+    ...(info.rateLimitType && { [info.rateLimitType]: info }),
+    ...(info as { unifiedWindows?: Record<string, Partial<Window>> }).unifiedWindows,
+  };
+  return Object.entries(windows).flatMap(([window, { status, utilization, resetsAt }]) =>
+    Object.hasOwn(LIMITS, window)
+      ? [{ name: LIMITS[window], used: utilization ?? (status === "rejected" ? 1 : null), resets_at: resetsAt === undefined ? null : resetsAt * 1000, at }]
+      : [],
+  );
+}
 
 /** The messages a frame from Claude Code says it has read, by the ids they were sent with. */
 const readIds = (message: SDKMessage): string[] => ("user_message_uuids" in message && message.user_message_uuids) || [];
@@ -75,7 +105,7 @@ function question(toolName: string, input: Record<string, unknown>, connection: 
  * session waits for that work for half an hour at most.
  */
 const runTurn: RunTurn = async (turn) => {
-  const { prompt, followUps, seen, replied, ask, cwd, sessionId, configDir, apiKey, model, effort, keepSession, stop } = turn;
+  const { prompt, followUps, seen, replied, ask, limits, cwd, sessionId, configDir, apiKey, model, effort, keepSession, stop } = turn;
   const tools = toolsFor(turn);
   const sidebots = createSdkMcpServer({
     name: "sidebots",
@@ -145,6 +175,7 @@ const runTurn: RunTurn = async (turn) => {
     },
   });
   let contextTokens = 0;
+  let cost = 0;
   try {
     for await (const message of run) {
       const read = readIds(message).filter((id) => unanswered.has(id));
@@ -158,6 +189,7 @@ const runTurn: RunTurn = async (turn) => {
         background = message.tasks.filter((task) => !task.ambient).length;
         settle();
       }
+      if (message.type === "rate_limit_event") limits(limitsIn(message.rate_limit_info, Date.now()));
       if (message.type !== "result") continue;
       if (message.subtype !== "success") throw new Error(message.errors.join("; ") || message.subtype);
       if (message.is_error) throw new Error(message.result || "Claude Code returned an error");
@@ -165,6 +197,8 @@ const runTurn: RunTurn = async (turn) => {
       read.forEach((id) => unanswered.delete(id));
       replied(message.result, read);
       session = message.session_id;
+      // Each result carries what the session has cost so far, the turns before this one included.
+      cost = message.total_cost_usd;
       settle();
     }
   } finally {
@@ -173,7 +207,7 @@ const runTurn: RunTurn = async (turn) => {
     stopListening?.();
     input.end();
   }
-  if (session !== null && unanswered.size === 0) return { sessionId: session, contextTokens };
+  if (session !== null && unanswered.size === 0) return { sessionId: session, contextTokens, cost };
   throw new Error("Claude Code stopped without a reply");
 };
 

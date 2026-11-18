@@ -82,9 +82,10 @@ export default function Layout() {
                     <Stack.Screen name="index" />
                     <Stack.Screen name="chat/[id]" />
                     <Stack.Screen name="new-agent" options={{ presentation: "formSheet", sheetAllowedDetents: [0.62], sheetGrabberVisible: true }} />
-                    {/* An agent's page, and a note opened from it, each a sheet over what is behind. */}
+                    {/* An agent's page, a note opened from it, and usage, each a sheet over what is behind. */}
                     <Stack.Screen name="agent/[id]" options={{ presentation: "modal" }} />
                     <Stack.Screen name="note" options={{ presentation: "modal" }} />
+                    <Stack.Screen name="usage" options={{ presentation: "modal" }} />
                     <Stack.Screen
                       name="camera"
                       // Full screen and a quick fade, so the camera is up the moment it's chosen. The status bar is light on its black.

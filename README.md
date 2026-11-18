@@ -125,6 +125,8 @@ Each person pays for their own agents, in one of two ways:
 - **A Claude subscription.** The agents run through the person's own Claude Code sign-in and use that subscription's limits. Sidebots never reads, stores or passes on a sign-in.
 - **An Anthropic API key.** Anthropic bills the key's account for what the agents use. The key is from the [Claude Console](https://platform.claude.com), and Sidebots keeps it in `~/.sidebots` on your machine.
 
+Usage, in the app's side menu, shows where either one goes: what is left of a subscription's limits and when they reset, as Claude Code last said while an agent ran, and what each agent used in the last seven days, with its jobs apart from its replies. A cost there is Claude Code's own estimate at API prices. On an API key it is about what Anthropic bills. On a subscription it is no bill, and only measures where the limits go. Anthropic charges a subscription for use past its limits only where usage credits are turned on.
+
 Anthropic's terms decide which you may use. A subscription is for the subscriber's own use. For a product built on the Agent SDK, as Sidebots is, Anthropic [asks for API keys](https://code.claude.com/docs/en/agent-sdk/overview) and doesn't allow Claude sign-ins to be offered to its users without its approval. So read the terms before you set Sidebots up for anyone but yourself, and when in doubt give each person an API key.
 
 ## Providers
@@ -132,7 +134,7 @@ Anthropic's terms decide which you may use. A subscription is for the subscriber
 A provider is a program that runs agents, such as Claude Code. Each agent runs on one, and each person signs in to each provider their agents use with a config folder of their own. Adding a provider takes two things:
 
 - An entry in `PROVIDERS` in `server/src/contract.ts`, with the name the apps show, its models and levels of effort, and the file its agents read their instructions from. The phone shows an agent's models from there.
-- A driver, the module that runs a turn on the program: `server/src/claude.ts` is Claude Code's. It hands the program the agent's tools from `toolsFor` in `server/src/runner.ts`, puts the program's failures in words for the person, and removes the program's sessions when an agent is deleted. `server/src/main.ts` passes each driver to the queue.
+- A driver, the module that runs a turn on the program: `server/src/claude.ts` is Claude Code's. It hands the program the agent's tools from `toolsFor` in `server/src/runner.ts`, says what the session has cost and where the limits of the person's plan stand, puts the program's failures in words for the person, and removes the program's sessions when an agent is deleted. `server/src/main.ts` passes each driver to the queue.
 
 The Mac app sets up Claude Code only, so a person's other providers are set up with `pnpm add-person` and `pnpm api-key` for now.
 

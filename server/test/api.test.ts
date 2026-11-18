@@ -69,7 +69,7 @@ function setup(answer: (turn: Turn) => Promise<Answer>, now: () => number = Date
   return { home, store, queue, call, say, app, phoneOf, pair, open };
 }
 
-const reply = (text: string, sessionId = "session-1", contextTokens = 0): Answer => ({ reply: text, sessionId, contextTokens });
+const reply = (text: string, sessionId = "session-1", contextTokens = 0, cost = 0): Answer => ({ reply: text, sessionId, contextTokens, cost });
 
 const ME = "Alex";
 const HER = "Robin";
@@ -606,7 +606,7 @@ test("an agent's chat takes its avatar's colour until the person picks one, and 
   for (const color of ["teal", "#0B7A6", 7]) assert.equal((await call(ME, "PATCH", `/agents/${agent.id}`, { color })).status, 400);
 });
 
-test("deleting an agent removes its messages, its jobs, its folder and its Claude Code sessions", async () => {
+test("deleting an agent removes its messages, its jobs, what it used, its folder and its Claude Code sessions", async () => {
   const { home, store, queue, call, say } = setup(async (turn) => {
     turn.scheduleJob({ what: "check", every_minutes: 5 });
     return reply("ok");
@@ -627,8 +627,113 @@ test("deleting an agent removes its messages, its jobs, its folder and its Claud
   assert.deepEqual((await call("Sam", "GET", "/agents")).json, []);
   assert.equal((await call("Sam", "GET", `/agents/${agent.id}/messages`)).status, 404);
   assert.deepEqual(store.jobs(agent.id), []);
+  assert.deepEqual((await call("Sam", "GET", "/usage")).json.used, []);
   assert.equal(existsSync(folder), false);
   assert.equal(existsSync(sessions), false);
+});
+
+test("each agent's turns are counted with what they cost, a job's runs apart from its replies, for seven days and for their owner alone", async (t) => {
+  t.mock.timers.enable({ apis: ["Date"], now: new Date(2026, 10, 16, 9, 0) });
+  // Claude Code says what a session has cost in all. The chat's session goes on from turn to turn, and each of a job's runs is a session of its own.
+  let chat = 0;
+  let runs = 0;
+  const { queue, call, say } = setup(async (turn) => {
+    if (turn.prompt.text === "watch the price") turn.scheduleJob({ what: "Check the price.", every_minutes: 5 });
+    if (turn.prompt.text.startsWith("This is a run of one of your jobs")) return reply("SILENT", `run-${++runs}`, 0, 0.125);
+    return reply("ok", "chat", 0, (chat += turn.prompt.text === "watch the price" ? 0.5 : 0.25));
+  }, () => Date.now());
+  const agent = (await call(ME, "POST", "/agents", { name: "Scout", avatarId: "moss" })).json;
+  const used = async (who: string) =>
+    (await call(who, "GET", "/usage")).json.used.map((each: { agent_id: string; kind: string; turns: number; cost: number }) => [each.agent_id, each.kind, each.turns, each.cost]).sort();
+
+  await say(ME, agent.id, "watch the price");
+  await queue.kick(agent.id);
+  for (let run = 0; run < 2; run++) {
+    t.mock.timers.tick(5 * 60_000);
+    await queue.kick(agent.id);
+  }
+  await say(ME, agent.id, "buy it");
+  await queue.kick(agent.id);
+  await call(ME, "POST", `/agents/${agent.id}/fresh-start`);
+  await queue.kick(agent.id);
+
+  assert.deepEqual(await used(ME), [
+    [agent.id, "job", 2, 0.25],
+    [agent.id, "memory", 1, 0.25],
+    [agent.id, "reply", 2, 0.75],
+  ]);
+  assert.deepEqual(await used(HER), []);
+
+  // A week after the first reply only the later turns count, and then none.
+  t.mock.timers.tick(7 * 24 * 60 * 60_000 - 10 * 60_000);
+  assert.deepEqual(await used(ME), [
+    [agent.id, "job", 2, 0.25],
+    [agent.id, "memory", 1, 0.25],
+    [agent.id, "reply", 1, 0.25],
+  ]);
+  t.mock.timers.tick(10 * 60_000);
+  assert.deepEqual(await used(ME), []);
+});
+
+test("a session that ran turns before they were counted costs nothing on its first counted turn, and one whose count starts again costs all of it", async () => {
+  const costs = [5, 6, 0.5];
+  const { store, queue, call, say } = setup(async () => reply("ok", "old", 0, costs.shift()));
+  const agent = (await call(ME, "POST", "/agents", { name: "Money", avatarId: "cog" })).json;
+  store.setSession(agent.id, "old");
+  const cost = async () => (await call(ME, "GET", "/usage")).json.used[0].cost;
+
+  await say(ME, agent.id, "budget");
+  await queue.kick(agent.id);
+  assert.equal(await cost(), 0);
+  await say(ME, agent.id, "and savings");
+  await queue.kick(agent.id);
+  assert.equal(await cost(), 1);
+  await say(ME, agent.id, "and the deposit");
+  await queue.kick(agent.id);
+  assert.equal(await cost(), 1.5);
+});
+
+test("a plan's limits stand as the provider last said while a turn ran, even one that failed, until they reset; an API key has none", async (t) => {
+  const start = new Date(2026, 10, 16, 9, 0).getTime();
+  t.mock.timers.enable({ apis: ["Date"], now: start });
+  const HOUR = 60 * 60_000;
+  const { store, queue, call, say } = setup(async (turn) => {
+    turn.limits([
+      { name: "Weekly limit", used: turn.prompt.text === "hello" ? 0.32 : 0.4, resets_at: start + 48 * HOUR, at: Date.now() },
+      ...(turn.prompt.text === "hello" ? [{ name: "5-hour limit", used: 1.02, resets_at: start + 2 * HOUR, at: Date.now() }] : []),
+    ]);
+    if (turn.prompt.text === "hello") throw new Error("You've hit your limit · resets 11am");
+    return reply("ok");
+  });
+  const agent = (await call(ME, "POST", "/agents", { name: "Gym", avatarId: "hop" })).json;
+  const accounts = async (who: string) => (await call(who, "GET", "/usage")).json.accounts;
+  assert.deepEqual(await accounts(ME), [{ provider: "claude", apiKey: false, limits: [] }]);
+
+  await say(ME, agent.id, "hello");
+  await queue.kick(agent.id);
+  assert.deepEqual(await accounts(ME), [
+    {
+      provider: "claude",
+      apiKey: false,
+      limits: [
+        { name: "5-hour limit", used: 1.02, resets_at: start + 2 * HOUR, at: start },
+        { name: "Weekly limit", used: 0.32, resets_at: start + 48 * HOUR, at: start },
+      ],
+    },
+  ]);
+  assert.deepEqual(await accounts(HER), [{ provider: "claude", apiKey: false, limits: [] }]);
+
+  // A later turn says where one limit stands now. The other keeps what was last said of it, and goes once it has reset.
+  t.mock.timers.tick(HOUR);
+  await say(ME, agent.id, "hello again");
+  await queue.kick(agent.id);
+  const weekly = { name: "Weekly limit", used: 0.4, resets_at: start + 48 * HOUR, at: start + HOUR };
+  assert.deepEqual((await accounts(ME))[0].limits, [{ name: "5-hour limit", used: 1.02, resets_at: start + 2 * HOUR, at: start }, weekly]);
+  t.mock.timers.tick(HOUR);
+  assert.deepEqual((await accounts(ME))[0].limits, [weekly]);
+
+  store.setApiKey(store.personByName(ME)!.id, "claude", "sk-ant-alexs-key");
+  assert.deepEqual(await accounts(ME), [{ provider: "claude", apiKey: true, limits: [] }]);
 });
 
 test("a job runs when its time comes, in a session of its own, and only a run with something to say sends a message", async () => {
@@ -780,7 +885,7 @@ test("a message sent while the agent works goes into the turn it is running, and
     prompts.push(later.text);
     turn.seen([later.id]);
     turn.replied("Booked the band and the florist.", [turn.prompt.id, later.id]);
-    return { sessionId: "session-1", contextTokens: 0 };
+    return { sessionId: "session-1", contextTokens: 0, cost: 0 };
   });
   const agent = (await call(ME, "POST", "/agents", { name: "Wedding", avatarId: "mochi" })).json;
   await say(ME, agent.id, "book the band");
@@ -983,7 +1088,7 @@ test("an ask closes unanswered when the person sends a message instead, takes to
     answers.push(answer.allowed ? "allowed" : answer.words);
     turn.seen(later);
     turn.replied("Done.", [turn.prompt.id, ...later]);
-    return { sessionId: "session-1", contextTokens: 0 };
+    return { sessionId: "session-1", contextTokens: 0, cost: 0 };
   });
   const agent = (await call(ME, "POST", "/agents", { name: "Tidy", avatarId: "mochi" })).json;
   const chat = async () => (await call(ME, "GET", `/agents/${agent.id}/messages`)).json as { id: string; ask: string | null }[];

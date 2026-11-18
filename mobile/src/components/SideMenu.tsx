@@ -1,10 +1,11 @@
 import { createContext, useContext, useRef, type ComponentType, type ReactNode } from "react";
 import { Pressable, StyleSheet, Text, View } from "react-native";
 import * as Application from "expo-application";
+import { useRouter } from "expo-router";
 import { useDrawerProgress } from "react-native-drawer-layout";
 import Animated, { interpolate, useAnimatedStyle } from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { ArrowUpRight, Laptop, ShieldCheck, Unplug } from "lucide-react-native";
+import { ArrowUpRight, ChartNoAxesColumn, ChevronRight, Laptop, ShieldCheck, Unplug } from "lucide-react-native";
 import { FadingText } from "@/components/FadingText";
 import { confirmDisconnect } from "@/lib/alerts";
 import { UPDATE, useMachine } from "@/lib/api";
@@ -31,13 +32,15 @@ export function useSideMenu() {
 
 /**
  * The side menu the home screen slides aside to uncover: the computer this
- * phone has paired with and whether the phone reaches it, then, at its foot,
+ * phone has paired with and whether the phone reaches it, with Usage under
+ * it, which opens what the agents on that computer used. At its foot are
  * the privacy policy, Disconnect and the app's version. Disconnect asks
  * first, has the computer forget the phone, and leaves the phone on the
  * welcome screen. The menu fades up from faint as the screens slide off it.
  */
 export function SideMenu() {
   const theme = useTheme();
+  const router = useRouter();
   const insets = useSafeAreaInsets();
   const progress = useDrawerProgress();
   const fade = useAnimatedStyle(() => ({ opacity: interpolate(progress.value, [0, 1], [0.3, 1], "clamp") }));
@@ -67,6 +70,9 @@ export function SideMenu() {
           </View>
         </View>
       </View>
+      <Row icon={ChartNoAxesColumn} label="Usage" color={theme.ink} onPress={() => router.push("/usage")}>
+        <ChevronRight size={18} strokeWidth={2} color={theme.ink2} />
+      </Row>
       <View style={styles.flex} />
       <Row icon={ShieldCheck} label="Privacy" color={theme.ink} onPress={() => void openLink(PRIVACY, theme)}>
         <ArrowUpRight size={18} strokeWidth={2} color={theme.ink2} />
