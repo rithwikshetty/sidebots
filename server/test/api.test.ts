@@ -8,7 +8,7 @@ import { openStore } from "../src/store.ts";
 import { createQueue, type Turn, type TurnResult } from "../src/runner.ts";
 import { claude } from "../src/claude.ts";
 import { createApi } from "../src/api.ts";
-import { CONTRACT_VERSION, MESSAGE_BYTES } from "../src/contract.ts";
+import { CONTRACT_VERSION, MESSAGE_BYTES, type Message, type Question } from "../src/contract.ts";
 import { startPush, type Ended, type Notice, type Sealed } from "../src/push.ts";
 
 /** A turn's reply, as a fake provider gives it. No reply means the fake gave its replies itself. */
@@ -71,6 +71,9 @@ function setup(answer: (turn: Turn) => Promise<Answer>, now: () => number = Date
 }
 
 const reply = (text: string, sessionId = "session-1", contextTokens = 0, cost = 0): Answer => ({ reply: text, sessionId, contextTokens, cost });
+
+/** An ask to run a command, as a driver hands the runner one. */
+const command = (detail: string, why?: string): Question => ({ kind: "command", title: "Run a command", what: "Clear the old folder", facts: [], detail, ...(why ? { why } : {}) });
 
 const ME = "Alex";
 const HER = "Robin";
@@ -573,7 +576,7 @@ test("the Live Activity a phone shows for a working agent ends with the agent's 
   let finish = () => {};
   const { store, queue, call, say, phoneOf } = setup(async (turn) => {
     // A prompt that starts a session comes with the chat so far, so the newest message is looked for first.
-    if (turn.prompt.text.includes("clear the old folder")) await turn.ask({ what: "run this command", detail: "rm -rf ~/old" }, new AbortController().signal);
+    if (turn.prompt.text.includes("clear the old folder")) await turn.ask(command("rm -rf ~/old"), new AbortController().signal);
     else if (turn.prompt.text.includes("wait there")) return untilStopped(turn);
     else await new Promise<void>((resolve) => (finish = resolve));
     if (fail) throw new Error("Signed out.");
@@ -1107,7 +1110,7 @@ test("an agent asks before it does what its provider won't decide, waits for the
   const long = `echo ${"a".repeat(3000)} && rm -rf ~/Downloads`;
   const answers: string[] = [];
   const { store, queue, call, say, phoneOf, open } = setup(async (turn) => {
-    const question = turn.prompt.text === "and the downloads" ? { what: "run this command", detail: long } : { what: "run this command", detail: "rm -rf ~/old", why: "It deletes\na folder." };
+    const question = turn.prompt.text === "and the downloads" ? command(long) : command("rm -rf ~/old", "It deletes\na folder.");
     const answer = await turn.ask(question, new AbortController().signal);
     answers.push(answer.allowed ? "allowed" : answer.words);
     return reply(answer.allowed ? "Deleted." : "Left it.");
@@ -1120,11 +1123,13 @@ test("an agent asks before it does what its provider won't decide, waits for the
   await call(ME, "PUT", "/push-token", { token: "a".repeat(64), environment: "production" });
   const agent = (await call(ME, "POST", "/agents", { name: "Tidy", avatarId: "mochi" })).json;
   await new Promise((resolve) => setTimeout(resolve, 1));
-  const chat = async () => (await call(ME, "GET", `/agents/${agent.id}/messages`)).json as { id: string; sender: string; body: string; ask: string | null }[];
+  const chat = async () => (await call(ME, "GET", `/agents/${agent.id}/messages`)).json as Message[];
 
   await say(ME, agent.id, "clear out the old folder");
   const first = (await chat()).at(-1)!;
-  assert.deepEqual([first.sender, first.ask, first.body], ["agent", "waiting", "Can I run this command?\n\n```\nrm -rf ~/old\n```\n\n> It deletes a folder."]);
+  assert.deepEqual([first.sender, first.ask, first.body], ["agent", "waiting", "Run a command: Clear the old folder\n\n```\nrm -rf ~/old\n```\n\n> It deletes a folder."]);
+  // The phone draws the card from the question's parts.
+  assert.deepEqual(first.question, command("rm -rf ~/old", "It deletes\na folder."));
   // The agent is still at work, and its ask is something to read.
   const [row] = (await call(ME, "GET", "/agents")).json;
   assert.deepEqual([row.working, row.unread], [true, 1]);
@@ -1139,7 +1144,7 @@ test("an agent asks before it does what its provider won't decide, waits for the
   await say(ME, agent.id, "and the downloads");
   const second = (await chat()).at(-1)!;
   // The chat shows all of what Allow would let happen.
-  assert.equal(second.body, `Can I run this command?\n\n\`\`\`\n${long}\n\`\`\``);
+  assert.equal(second.body, `Run a command: Clear the old folder\n\n\`\`\`\n${long}\n\`\`\``);
   assert.equal((await call(ME, "POST", `/agents/${agent.id}/asks/${second.id}`, { allow: false })).json.ask, "refused");
   await queue.kick(agent.id);
 
@@ -1149,15 +1154,15 @@ test("an agent asks before it does what its provider won't decide, waits for the
     (await chat()).map((message) => [message.sender, message.body.split("\n")[0], message.ask]),
     [
       ["person", "clear out the old folder", null],
-      ["agent", "Can I run this command?", "allowed"],
+      ["agent", "Run a command: Clear the old folder", "allowed"],
       ["agent", "Deleted.", null],
       ["person", "and the downloads", null],
-      ["agent", "Can I run this command?", "refused"],
+      ["agent", "Run a command: Clear the old folder", "refused"],
       ["agent", "Left it.", null],
     ],
   );
-  // The ask notifies the phone as a reply does. Its answer notifies nobody.
-  assert.deepEqual(sent.map((notice) => notice.body.slice(0, 60)), ["Can I run this command? rm -rf ~/old It deletes a folder.", "Deleted.", `Can I run this command? echo ${"a".repeat(31)}`, "Left it."]);
+  // The ask notifies the phone as a reply does, in its plain words. Its answer notifies nobody.
+  assert.deepEqual(sent.map((notice) => notice.body.slice(0, 60)), ["Run a command: Clear the old folder", "Deleted.", "Run a command: Clear the old folder", "Left it."]);
 });
 
 test("an ask closes unanswered when the person sends a message instead, takes too long, or the turn ends, and a restart closes the ones it left", async (t) => {
@@ -1167,7 +1172,7 @@ test("an ask closes unanswered when the person sends a message instead, takes to
   const { store, queue, call, say } = setup(async (turn) => {
     const later: string[] = [];
     turn.followUps!.onArrival(() => later.push(...turn.followUps!.take().map((each) => each.id)));
-    const asking = turn.ask({ what: "run this command", detail: "make clean" }, withdrawn.signal);
+    const asking = turn.ask(command("make clean"), withdrawn.signal);
     if (turn.prompt.text === "and crash") throw new Error("Claude Code stopped.");
     const answer = await asking;
     answers.push(answer.allowed ? "allowed" : answer.words);
@@ -1465,7 +1470,7 @@ test("a stop that lands as the last reply comes in says nothing, unless a messag
 test("stopping a turn that waits on an ask closes the ask, and the turn is counted with what it cost", async () => {
   const answers: string[] = [];
   const { queue, call, say } = setup(async (turn) => {
-    void turn.ask({ what: "run this command", detail: "rm -rf ~/old" }, new AbortController().signal).then((answer) => answers.push(answer.allowed ? "allowed" : answer.words));
+    void turn.ask(command("rm -rf ~/old"), new AbortController().signal).then((answer) => answers.push(answer.allowed ? "allowed" : answer.words));
     return { ...(await untilStopped(turn)), cost: 0.5 };
   });
   const agent = (await call(ME, "POST", "/agents", { name: "Tidy", avatarId: "mochi" })).json;
@@ -1481,7 +1486,7 @@ test("stopping a turn that waits on an ask closes the ask, and the turn is count
     (await chat()).map((message) => [message.sender, message.body.split("\n")[0], message.status, message.ask]),
     [
       ["person", "clear out the old folder", "done", null],
-      ["agent", "Can I run this command?", "done", "unanswered"],
+      ["agent", "Run a command: Clear the old folder", "done", "unanswered"],
       ["sidebots", "Stopped", "done", null],
     ],
   );

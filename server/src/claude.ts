@@ -3,7 +3,8 @@
 // imports the SDK.
 
 import { rmSync } from "node:fs";
-import { join } from "node:path";
+import { homedir } from "node:os";
+import { basename, dirname, join } from "node:path";
 import { stripVTControlCharacters } from "node:util";
 import {
   createSdkMcpServer,
@@ -15,8 +16,8 @@ import {
   type SDKResultMessage,
   type SDKUserMessage,
 } from "@anthropic-ai/claude-agent-sdk";
-import type { Limit } from "./contract.ts";
-import { toolsFor, type Driver, type Prompt, type Question, type RunTurn } from "./runner.ts";
+import type { Limit, Question } from "./contract.ts";
+import { toolsFor, type Driver, type Prompt, type RunTurn } from "./runner.ts";
 
 // The longest a session stays open, after its replies are in, for background work the agent started.
 const BACKGROUND_WAIT_MS = 30 * 60_000;
@@ -93,27 +94,60 @@ function inbox() {
 }
 
 /**
- * What a call to one of Claude Code's tools would do, for the person to say
- * yes or no to: the command, the page, or the file with what would be written
- * to it. Any other tool is named, with what it was given. `connection` is the
- * person's connection the tool comes from, when it comes from one.
+ * What a call to one of Claude Code's tools would do, in the parts the person
+ * reads to say yes or no. A command leads with the agent's own account of it,
+ * which Claude Code has the agent write for a person who won't see the
+ * command. A page leads with its site, a file with its name, and a
+ * connection's tool with what it is called. `connection` is the person's
+ * connection the tool comes from, when it comes from one.
  */
-function question(toolName: string, input: Record<string, unknown>, connection: string | undefined, why: string | undefined): Question {
+export function question(toolName: string, input: Record<string, unknown>, connection: string | undefined, why: string | undefined): Question {
   const given = (name: string) => (typeof input[name] === "string" ? input[name] : "");
-  const file = given("file_path");
   // Claude Code's reason can carry a terminal's colour codes.
-  const ask = (what: string, detail: string): Question => ({ what, detail, why: why && stripVTControlCharacters(why) });
+  const ask = (kind: Question["kind"], title: string, what: string, detail: string, facts: Question["facts"] = []): Question => ({
+    kind,
+    title,
+    what,
+    facts: facts.filter(([, value]) => value),
+    detail,
+    ...(why ? { why: stripVTControlCharacters(why) } : {}),
+  });
+  const path = given("file_path");
+  const folder = dirname(path).replace(homedir(), "~");
+  const where: [string, string] = ["In", path.includes("/") ? folder : ""];
   const lines = (mark: string, text: string) => text.split("\n").map((line) => `${mark} ${line}`).join("\n");
-  if (toolName === "Bash") return ask("run this command", given("command"));
-  if (toolName === "WebFetch") return ask("open this page", given("url"));
-  if (toolName === "Read") return ask("read this file", file);
-  if (toolName === "Write") return ask("write this file", `${file}\n\n${given("content")}`);
-  if (toolName === "Edit") {
-    return ask(input.replace_all === true ? "change every match in this file" : "change this file", `${file}\n\n${lines("-", given("old_string"))}\n${lines("+", given("new_string"))}`);
+  const count = (text: string) => `${text.split("\n").length} ${text.includes("\n") ? "lines" : "line"}`;
+  if (toolName === "Bash") {
+    const command = given("command");
+    return ask("command", "Run a command", given("description").trim() || short(command.split("\n")[0]), command);
   }
-  // A connection's tool is named mcp__<connection>__<tool>.
-  return ask(connection ? `use ${toolName.split("__").slice(2).join("__")} from ${connection}` : `use ${toolName}`, JSON.stringify(input, null, 2));
+  if (toolName === "WebFetch") {
+    const url = given("url");
+    return ask("page", "Open a page", URL.parse(url)?.host || url, url, [["Looking for", short(given("prompt"))]]);
+  }
+  if (toolName === "Read") return ask("file", "Read a file", basename(path), path, [where]);
+  if (toolName === "Write") return ask("file", "Write a file", basename(path), `${path}\n\n${given("content")}`, [where, ["Size", count(given("content"))]]);
+  if (toolName === "Edit") {
+    const [before, after] = [given("old_string"), given("new_string")];
+    const title = input.replace_all === true ? "Change every match in a file" : "Change a file";
+    return ask("file", title, basename(path), `${path}\n\n${lines("-", before)}\n${lines("+", after)}`, [where, ["Changes", count(before.length > after.length ? before : after)]]);
+  }
+  // A connection's tool is named mcp__<connection>__<tool>. What it was given in a few words is its facts, and all of it is its detail.
+  const name = connection ? toolName.split("__").slice(2).join("__") : toolName;
+  const brief = Object.entries(input).flatMap(([key, value]): Question["facts"] => {
+    const text = typeof value === "string" ? value : typeof value === "number" || typeof value === "boolean" ? String(value) : "";
+    return text && text.length <= FACT_CHARS && !text.includes("\n") ? [[words(key), text]] : [];
+  });
+  return ask("tool", connection ? `Use ${connection}` : "Use a tool", words(name), JSON.stringify(input, null, 2), brief.slice(0, FACTS));
 }
+
+// The most facts a tool's ask lists from what it was given, and the longest a value among them can be.
+const FACTS = 4;
+const FACT_CHARS = 80;
+/** A name as code writes one, as words: `send_email` is "Send email". */
+const words = (name: string) => name.replace(/[_-]+/g, " ").trim().replace(/^./, (first) => first.toUpperCase());
+/** Text cut to a line a card can lead with. */
+const short = (text: string) => (text.length > 120 ? `${text.slice(0, 119)}…` : text);
 
 /**
  * Runs a turn through Claude Code. A message the person sends while the turn

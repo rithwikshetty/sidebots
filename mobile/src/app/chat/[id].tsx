@@ -5,7 +5,8 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { KeyboardChatScrollView, KeyboardController, KeyboardEvents, KeyboardStickyView } from "react-native-keyboard-controller";
 import Animated, { useSharedValue } from "react-native-reanimated";
 import { Reply, X } from "lucide-react-native";
-import { avatarStateOf, type AgentWithLatest, type Ask, type Message } from "@server/contract";
+import { avatarStateOf, type AgentWithLatest, type Ask, type Message, type Question } from "@server/contract";
+import { AskCard } from "@/components/AskCard";
 import { AvatarView } from "@/components/AvatarView";
 import { BAR_HEIGHT, ChatHeader, HEADER_CLEARANCE, HEADER_OVERHANG } from "@/components/ChatHeader";
 import { Composer } from "@/components/Composer";
@@ -348,6 +349,7 @@ function Bubble({
           files={shown.filter((item) => !isImage(item.name) && !drawn(item))}
           mine={mine}
           theme={theme}
+          asked={message.question ?? undefined}
           foot={message.ask ? <AskAnswer message={message} ask={message.ask} theme={theme} /> : undefined}
         />
         {mine && message.status === "failed" ? (
@@ -407,10 +409,11 @@ function AskAnswer({ message, ask, theme }: { message: Message; ask: Ask; theme:
  * A message as the chat draws it: its photos and files above its bubble, as
  * Assist draws one, its pages between them, as T3 Code draws one, and the
  * message it answers quoted at the bubble's top. The agent's words are
- * markdown; the person's are as they typed them. `foot` sits under the words,
+ * markdown; the person's are as they typed them. An ask shows what is
+ * `asked` as its card, in place of the words. `foot` sits under either,
  * inside the bubble.
  */
-function Sent({ body, quote, photos, pages = [], files, mine, theme, foot }: { body: string; quote?: string; photos: Shown[]; pages?: Shown[]; files: Shown[]; mine: boolean; theme: Theme; foot?: ReactNode }) {
+function Sent({ body, quote, photos, pages = [], files, mine, theme, asked, foot }: { body: string; quote?: string; photos: Shown[]; pages?: Shown[]; files: Shown[]; mine: boolean; theme: Theme; asked?: Question; foot?: ReactNode }) {
   const quiet = mine ? theme.onTint : theme.ink2;
   return (
     <>
@@ -430,7 +433,9 @@ function Sent({ body, quote, photos, pages = [], files, mine, theme, foot }: { b
               </Text>
             </View>
           ) : null}
-          {body && mine ? (
+          {asked ? (
+            <AskCard question={asked} />
+          ) : body && mine ? (
             <Text selectable style={[styles.text, { color: theme.onTint }]}>
               {body}
             </Text>

@@ -3,8 +3,8 @@
 
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
-import { MESSAGE_BYTES, PROVIDERS, scheduleWords } from "./contract.ts";
-import type { Agent, Ask, Effort, Found, Job, Limit, Message, Model, Provider, Schedule, TurnKind } from "./contract.ts";
+import { MESSAGE_BYTES, PROVIDERS, fenced, scheduleWords } from "./contract.ts";
+import type { Agent, Ask, Effort, Found, Job, Limit, Message, Model, Provider, Question, Schedule, TurnKind } from "./contract.ts";
 import type { Person, Store, Upload } from "./store.ts";
 
 /** A job as an agent asks for one: what to do on each run, and one of three ways to say when. */
@@ -20,12 +20,6 @@ export type Prompt = { id: string; text: string };
  */
 export type FollowUps = { take: () => Prompt[]; onArrival: (listener: () => void) => () => void };
 
-/**
- * What an agent asks the person before it does something: what it wants to
- * do, as the words that follow "Can I", the thing itself, such as the command
- * or the file, and why its provider won't decide this one by itself.
- */
-export type Question = { what: string; detail: string; why?: string };
 /** The person's answer to an ask. When it isn't yes, `words` tell the agent what to do instead. */
 export type Answer = { allowed: true } | { allowed: false; words: string };
 
@@ -189,15 +183,15 @@ function found(messages: Found[]): string {
     .join("\n\n");
 }
 
+
 /**
- * An ask as the chat shows it: the question, what it is about set apart as
- * code, and why it is asked. The detail is shown whole, since Allow lets all
- * of it happen.
+ * An ask in words, for a search and for an app that doesn't draw its card:
+ * what it is, its facts, the thing itself set apart as code, and the
+ * provider's reason. The detail is whole, since Allow lets all of it happen.
  */
-function asking({ what, detail, why }: Question): string {
-  // The fence is longer than any run of backticks inside it, so nothing in the detail can close it.
-  const fence = "`".repeat((detail.match(/`+/g) ?? []).reduce((longest, run) => Math.max(longest, run.length + 1), 3));
-  return [`Can I ${what}?`, detail.trim() && `${fence}\n${detail}\n${fence}`, why?.trim() && `> ${why.trim().replace(/\s+/g, " ")}`].filter(Boolean).join("\n\n");
+function asking({ title, what, facts, detail, why }: Question): string {
+  const lines = facts.map(([label, value]) => `${label}: ${value}`).join("\n");
+  return [`${title}: ${what}`, lines, detail.trim() && fenced(detail), why?.trim() && `> ${why.trim().replace(/\s+/g, " ")}`].filter(Boolean).join("\n\n");
 }
 
 /** What the agent is asked before its session is replaced. */
@@ -321,7 +315,7 @@ export function createQueue(store: Store, drivers: Drivers, now: () => number = 
         if (!account) throw new Error(`${person.name} hasn't set up ${PROVIDERS[agent.provider].name} on this computer.`);
         const ask = (question: Question, withdrawn: AbortSignal) =>
           new Promise<Answer>((resolve) => {
-            const message = store.addMessage(agent.id, "agent", asking(question), "done", { ask: "waiting", jobId: job?.id });
+            const message = store.addMessage(agent.id, "agent", asking(question), "done", { ask: "waiting", question, jobId: job?.id });
             const settle = (answer: Exclude<Ask, "waiting">, words: string) => {
               clearTimeout(timer);
               withdrawn.removeEventListener("abort", late);
