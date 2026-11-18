@@ -67,7 +67,7 @@ mobile/testflight.sh
 
 It archives the published app, uploads it, and then asks App Store Connect about the build until Apple has processed it. It takes several minutes, so run it in the background with its output in a log.
 
-The step is done only at its last line, `TestFlight has build <number>: <state> for internal testers, <state> for external testers`. `Uploaded Sidebots <version>, build <number>` comes before it and proves nothing: Apple can refuse a build it has taken. Report both states as the script gives them. `IN_BETA_TESTING` means the TestFlight app offers the build to those testers.
+The step is done only at its last line, `TestFlight has build <number>: <state> for internal testers, <state> for external testers`. `Uploaded Sidebots <version>, build <number>` comes before it and proves nothing: Apple can refuse a build it has taken. Report both states as the script gives them. `IN_BETA_TESTING` means the TestFlight app offers the build to those testers. `READY_FOR_BETA_TESTING` means Apple has processed it and hasn't handed it to them yet, which takes a few minutes more for internal testers: run `node testflight-build.mjs` from `mobile/` again, with the four values its first lines name, until it says `IN_BETA_TESTING`.
 
 - `Error Downloading App Information` is Apple's servers failing. Run `mobile/testflight.sh upload`, which sends the same archive again and waits.
 - A signing or provisioning error means Xcode isn't signed in with an Apple ID on the team in `mobile/.env.local`, which only the user can fix.
