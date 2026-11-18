@@ -1,14 +1,14 @@
 import { useEffect, useRef, useState } from "react";
 import { PixelRatio, Pressable, StyleSheet, Text, TextInput, View, type TextInputInstance, type TextStyle } from "react-native";
 import Animated, { FadeIn, LayoutAnimationConfig, useAnimatedStyle, useReducedMotion, withTiming } from "react-native-reanimated";
-import { ArrowUp, Mic, Plus } from "lucide-react-native";
+import { ArrowUp, Mic, Plus, Square } from "lucide-react-native";
 import { MessageMenuView, type MessageMenuAction } from "../../modules/message-menu/src";
 import { AttachmentTray, TRAY_HEIGHT, TRAY_TILE_EXIT_MS } from "@/components/AttachmentTray";
 import { BUTTONS_ENTERING, BUTTONS_EXITING, DICTATION_ENTERING, DICTATION_EXITING, DictationBar, useFlipAway } from "@/components/DictationBar";
 import { IconButton } from "@/components/IconButton";
 import { canDictate, useDictation } from "@/lib/dictation";
 import type { Picked, PickSource } from "@/lib/files";
-import { EASE, MOVE } from "@/lib/motion";
+import { EASE, HIDE, MOVE, SHOW } from "@/lib/motion";
 import { useTheme } from "@/lib/theme";
 
 const FONT_SIZE = 16;
@@ -46,13 +46,16 @@ const ATTACH_ACTIONS: (MessageMenuAction & { id: PickSource })[] = [
  * attached, it opens into a card with the text above the buttons, growing
  * with the text up to about six lines, then scrolling; picked photos and
  * files sit in a tray above the text. A message can go with only photos or
- * files. A tap on the microphone turns the buttons away for the dictation
- * row, whose ✓ adds what the person said to the end of the text.
+ * files. While the agent works and there is nothing to send, Send is Stop,
+ * so stopping is one tap on the button the person already uses. A tap on the
+ * microphone turns the buttons away for the dictation row, whose ✓ adds what
+ * the person said to the end of the text.
  */
 export function Composer({
   value,
   onChangeText,
   onSend,
+  onStop,
   placeholder,
   attachments,
   onAttach,
@@ -62,6 +65,8 @@ export function Composer({
   value: string;
   onChangeText: (text: string) => void;
   onSend: () => void;
+  /** Stops the agent's work. Given while the agent works. */
+  onStop?: () => void;
   placeholder: string;
   attachments: readonly Picked[];
   /** Opens a picker from the + menu; settles once the picks are in the tray. */
@@ -92,8 +97,10 @@ export function Composer({
   const lineHeight = LINE_HEIGHT * Math.min(PixelRatio.getFontScale(), FIELD_MAX_SCALE);
   const maxHeight = lineHeight * MAX_LINES;
   const canSend = value.trim().length > 0 || attachments.length > 0;
-  // Send brightens as there comes to be something to send, and dims as the field empties.
-  const sendStyle = useAnimatedStyle(() => ({ opacity: withTiming(canSend ? 1 : 0.4, EASE) }));
+  // With nothing to send, the button stops the agent's work instead.
+  const stops = !canSend && onStop !== undefined;
+  // Send brightens as there comes to be something to send, and dims as the field empties. Stop is bright.
+  const sendStyle = useAnimatedStyle(() => ({ opacity: withTiming(canSend || stops ? 1 : 0.4, EASE) }));
   const dictation = useDictation();
   const dictating = dictation.state !== "idle";
   // At rest the line of text shares the row the dictation row takes, so it turns away with the buttons.
@@ -212,14 +219,23 @@ export function Composer({
               {canDictate ? <IconButton icon={Mic} label="Dictate" iconSize={19} color={theme.ink2} onPress={() => void dictation.start()} /> : null}
               <Animated.View style={sendStyle}>
                 <Pressable
-                  onPress={() => canSend && onSend()}
-                  disabled={!canSend}
+                  onPress={() => (stops ? onStop() : canSend && onSend())}
+                  disabled={!canSend && !stops}
                   accessibilityRole="button"
-                  accessibilityLabel="Send message"
-                  accessibilityState={{ disabled: !canSend }}
+                  accessibilityLabel={stops ? "Stop" : "Send message"}
+                  accessibilityState={{ disabled: !canSend && !stops }}
                   hitSlop={8}
                   style={({ pressed }) => [styles.round, { backgroundColor: theme.tint, opacity: pressed ? 0.75 : 1 }]}>
-                  <ArrowUp size={18} strokeWidth={2.5} color={theme.onTint} />
+                  {/* The arrow and the square fade through each other as the button changes what it does. */}
+                  {stops ? (
+                    <Animated.View key="stop" entering={SHOW} exiting={HIDE} style={styles.glyph}>
+                      <Square size={13} strokeWidth={2.5} color={theme.onTint} fill={theme.onTint} />
+                    </Animated.View>
+                  ) : (
+                    <Animated.View key="send" entering={SHOW} exiting={HIDE} style={styles.glyph}>
+                      <ArrowUp size={18} strokeWidth={2.5} color={theme.onTint} />
+                    </Animated.View>
+                  )}
                 </Pressable>
               </Animated.View>
             </Animated.View>
@@ -261,4 +277,5 @@ const styles = StyleSheet.create({
   trailing: { right: INSET, gap: 4 },
   dictation: { position: "absolute", left: INSET, right: INSET, bottom: INSET },
   round: { width: BUTTON, height: BUTTON, borderRadius: BUTTON / 2, alignItems: "center", justifyContent: "center" },
+  glyph: { position: "absolute" },
 });

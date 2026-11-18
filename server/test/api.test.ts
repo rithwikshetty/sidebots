@@ -858,3 +858,185 @@ test("a job's run can't send updates", async () => {
   await queue.kick(agent.id);
   assert.deepEqual(updates, [false]);
 });
+
+/** A turn that works until it is stopped, as a provider's does: it then ends with no reply, in the session it had. */
+const untilStopped = (turn: Turn, sessionId = "session-1") =>
+  new Promise<Answer>((resolve) => turn.stop.signal.addEventListener("abort", () => resolve({ sessionId, contextTokens: 0 })));
+
+/** Waits until `ready` holds, as for a turn to start. */
+const until = async (ready: () => boolean) => {
+  while (!ready()) await new Promise((resolve) => setTimeout(resolve, 1));
+};
+
+test("stopping an agent ends the turn it is running, says so in the chat, and the next message carries on in the same session", async () => {
+  const turns: Turn[] = [];
+  const { store, queue, call, say, phoneOf, open } = setup(async (turn) => {
+    turns.push(turn);
+    return turn.prompt.text === "book the band" ? untilStopped(turn) : reply("Carrying on.");
+  });
+  const sent: Notice[] = [];
+  startPush(store, async (_device, notice) => {
+    sent.push(open(phoneOf(ME), notice));
+    return "sent";
+  });
+  await call(ME, "PUT", "/push-token", { token: "a".repeat(64), environment: "production" });
+  const agent = (await call(ME, "POST", "/agents", { name: "Wedding", avatarId: "mochi" })).json;
+  const shown = async () => (await call(ME, "GET", `/agents/${agent.id}/messages`)).json.map((m: { sender: string; body: string; status: string }) => [m.sender, m.body, m.status]);
+
+  // With nothing running there is nothing to stop, and nothing is said.
+  assert.equal((await call(ME, "POST", `/agents/${agent.id}/stop`)).status, 200);
+  assert.deepEqual(await shown(), []);
+
+  await say(ME, agent.id, "book the band");
+  const working = queue.kick(agent.id);
+  await until(() => turns.length === 1);
+  assert.equal((await call(HER, "POST", `/agents/${agent.id}/stop`)).status, 404);
+  assert.equal(turns[0].stop.signal.aborted, false);
+  assert.equal((await call(ME, "POST", `/agents/${agent.id}/stop`)).status, 200);
+  await working;
+
+  assert.deepEqual(await shown(), [
+    ["person", "book the band", "done"],
+    ["sidebots", "Stopped", "done"],
+  ]);
+  // The agent rests, with the session the stopped turn was in. Stopping it is nothing to read or be told of.
+  const [stopped] = (await call(ME, "GET", "/agents")).json;
+  assert.deepEqual([stopped.working, stopped.session_id, stopped.unread], [false, "session-1", 0]);
+  assert.deepEqual(sent, []);
+
+  await say(ME, agent.id, "carry on");
+  await queue.kick(agent.id);
+  assert.deepEqual([turns[1].sessionId, turns[1].prompt.text], ["session-1", "carry on"]);
+  assert.deepEqual((await shown()).slice(-2), [
+    ["person", "carry on", "done"],
+    ["agent", "Carrying on.", "done"],
+  ]);
+});
+
+test("a stopped turn leaves what the agent hadn't read to send again, and a message sent after the stop gets its own turn", async () => {
+  const turns: Turn[] = [];
+  let read: (() => void) | undefined;
+  let end: (() => void) | undefined;
+  const { queue, call, say } = setup(async (turn) => {
+    turns.push(turn);
+    if (turns.length > 1) return reply("On it.");
+    // The agent reads the first follow-up at a pause, then works on. Like a provider, the turn takes what is sent into it until it is stopped, and then takes a moment to end.
+    await new Promise<void>((resolve) => (read = resolve));
+    turn.seen(turn.followUps!.take().map((each) => each.id));
+    const stopTaking = turn.followUps!.onArrival(() => turn.followUps!.take());
+    await new Promise<void>((resolve) => turn.stop.signal.addEventListener("abort", () => resolve()));
+    stopTaking();
+    await new Promise<void>((resolve) => (end = resolve));
+    return { sessionId: "session-1", contextTokens: 0 };
+  });
+  const agent = (await call(ME, "POST", "/agents", { name: "Wedding", avatarId: "mochi" })).json;
+  await say(ME, agent.id, "book the band");
+  const working = queue.kick(agent.id);
+  await until(() => read !== undefined);
+  await say(ME, agent.id, "and the florist");
+  read!();
+  await say(ME, agent.id, "and a cake");
+  await call(ME, "POST", `/agents/${agent.id}/stop`);
+  await say(ME, agent.id, "only the band, after all");
+  end!();
+  await working;
+
+  const messages = (await call(ME, "GET", `/agents/${agent.id}/messages`)).json;
+  assert.deepEqual(
+    messages.map((m: { sender: string; body: string; status: string }) => [m.sender, m.body, m.status]),
+    [
+      ["person", "book the band", "done"],
+      ["person", "and the florist", "done"],
+      ["person", "and a cake", "failed"],
+      ["person", "only the band, after all", "done"],
+      ["sidebots", "Stopped", "done"],
+      ["agent", "On it.", "done"],
+    ],
+  );
+  assert.deepEqual([turns.length, turns[1].prompt.text, turns[1].sessionId], [2, "only the band, after all", "session-1"]);
+});
+
+test("stopping a job's run ends it with nothing sent, and the job keeps to its schedule", async () => {
+  let time = new Date(2026, 10, 16, 9, 0).getTime();
+  const runs: Turn[] = [];
+  const { store, queue, call, say } = setup(async (turn) => {
+    if (turn.prompt.text === "watch the price") {
+      turn.scheduleJob({ what: "Check the price.", every_minutes: 5 });
+      return reply("Watching.");
+    }
+    runs.push(turn);
+    return untilStopped(turn, "job-session");
+  }, () => time);
+  const agent = (await call(ME, "POST", "/agents", { name: "Scout", avatarId: "moss" })).json;
+  await say(ME, agent.id, "watch the price");
+  await queue.kick(agent.id);
+
+  time += 5 * 60_000;
+  const running = queue.kick(agent.id);
+  await until(() => runs.length === 1);
+  time += 60_000;
+  await call(ME, "POST", `/agents/${agent.id}/stop`);
+  await running;
+
+  const messages = (await call(ME, "GET", `/agents/${agent.id}/messages`)).json;
+  assert.deepEqual(messages.map((m: { sender: string; body: string }) => [m.sender, m.body]), [
+    ["person", "watch the price"],
+    ["agent", "Watching."],
+    ["sidebots", "Stopped"],
+  ]);
+  // The next run counts from when this one was stopped, and the chat's session is the one it had.
+  assert.equal(store.jobs(agent.id)[0].next_at, time + 5 * 60_000);
+  assert.equal((await call(ME, "GET", "/agents")).json[0].session_id, "session-1");
+});
+
+test("stopping a fresh start calls it off, and the agent keeps its session", async () => {
+  const turns: Turn[] = [];
+  const { queue, call, say } = setup(async (turn) => {
+    turns.push(turn);
+    return turn.prompt.text.startsWith("This session is about to be replaced") ? untilStopped(turn) : reply("sure");
+  });
+  const agent = (await call(ME, "POST", "/agents", { name: "Wedding", avatarId: "mochi" })).json;
+  await say(ME, agent.id, "book the band");
+  await queue.kick(agent.id);
+
+  await call(ME, "POST", `/agents/${agent.id}/fresh-start`);
+  await until(() => turns.length === 2);
+  await call(ME, "POST", `/agents/${agent.id}/stop`);
+  await say(ME, agent.id, "any news?");
+  await queue.kick(agent.id);
+
+  const messages = (await call(ME, "GET", `/agents/${agent.id}/messages`)).json;
+  assert.deepEqual(
+    messages.map((m: { sender: string; body: string; status: string }) => [m.sender, m.body, m.status]),
+    [
+      ["person", "book the band", "done"],
+      ["agent", "sure", "done"],
+      ["sidebots", "Fresh start", "done"],
+      ["sidebots", "Stopped", "done"],
+      ["person", "any news?", "done"],
+      ["agent", "sure", "done"],
+    ],
+  );
+  assert.deepEqual([turns[2].sessionId, turns[2].prompt.text], ["session-1", "any news?"]);
+});
+
+test("deleting an agent stops the turn it is running, and runs nothing that waited for it", async () => {
+  const turns: Turn[] = [];
+  const { store, queue, call, say } = setup(async (turn) => {
+    turns.push(turn);
+    return untilStopped(turn);
+  });
+  const agent = (await call(ME, "POST", "/agents", { name: "Scout", avatarId: "moss" })).json;
+  await call(ME, "POST", `/agents/${agent.id}/fresh-start`);
+  const working = queue.kick(agent.id);
+  await say(ME, agent.id, "find me a flat");
+  await until(() => turns.length === 1);
+  const said: string[] = [];
+  store.onChange((change) => "message" in change && said.push(change.message.body));
+
+  assert.equal((await call(ME, "DELETE", `/agents/${agent.id}`)).status, 200);
+  await working;
+  assert.equal(turns[0].stop.signal.aborted, true);
+  assert.deepEqual([turns.length, said], [1, []]);
+  assert.deepEqual((await call(ME, "GET", "/agents")).json, []);
+});

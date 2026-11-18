@@ -4,16 +4,28 @@
 
 import { rmSync } from "node:fs";
 import { join } from "node:path";
-import { createSdkMcpServer, query, tool, type SDKMessage, type SDKUserMessage } from "@anthropic-ai/claude-agent-sdk";
+import { createSdkMcpServer, query, tool, type SDKControlInterruptResponse, type SDKMessage, type SDKResultMessage, type SDKUserMessage } from "@anthropic-ai/claude-agent-sdk";
 import { toolsFor, type Driver, type Prompt, type RunTurn } from "./runner.ts";
 
 // The longest a session stays open, after its replies are in, for background work the agent started.
 const BACKGROUND_WAIT_MS = 30 * 60_000;
+// The longest Claude Code is given to end a turn it was told to stop, before its process is ended for it.
+const STOP_WAIT_MS = 10_000;
 
 const text = (words: string) => ({ content: [{ type: "text" as const, text: words }] });
 
 /** The messages a frame from Claude Code says it has read, by the ids they were sent with. */
 const readIds = (message: SDKMessage): string[] => ("user_message_uuids" in message && message.user_message_uuids) || [];
+
+/** Whether a result ends a turn that was stopped part way. It carries no reply. */
+const stoppedPartWay = (result: SDKResultMessage) => result.terminal_reason === "aborted_streaming" || result.terminal_reason === "aborted_tools";
+
+/**
+ * A query whose `interrupt` also drops the messages queued behind the turn.
+ * The option is the interrupt request's `cancel_queued`, which the SDK's own
+ * type for the method leaves out.
+ */
+type Interruptible = { interrupt(options: { cancelQueued: true }): Promise<SDKControlInterruptResponse | undefined> };
 
 /** Messages for Claude Code, handed over as they come, until `end`. */
 function inbox() {
@@ -49,6 +61,14 @@ function inbox() {
  * such as a long command, is still running. When such work finishes, Claude
  * Code wakes the agent by itself, and what it says then is a reply too. The
  * session waits for that work for half an hour at most.
+ *
+ * A turn that is stopped ends through Claude Code's own interrupt, which ends
+ * the command it was running and writes into the session that the person
+ * interrupted it. The session stays whole, so the next turn resumes it and
+ * the agent knows it was stopped. Ending the process instead would leave the
+ * command looking as if it had failed. A message that was sent into the turn
+ * and not yet read is dropped from it unread, and one that comes after the
+ * stop is left for the next turn.
  */
 const runTurn: RunTurn = async (turn) => {
   const { prompt, followUps, seen, replied, cwd, sessionId, configDir, apiKey, model, effort, keepSession, stop } = turn;
@@ -89,6 +109,9 @@ const runTurn: RunTurn = async (turn) => {
   takeFollowUps();
   const stopListening = followUps?.onArrival(takeFollowUps);
 
+  // Ends Claude Code's process, for a turn that was told to stop and hasn't.
+  const end = new AbortController();
+  let endLate: ReturnType<typeof setTimeout> | null = null;
   const run = query({
     prompt: input.messages(),
     options: {
@@ -97,7 +120,7 @@ const runTurn: RunTurn = async (turn) => {
       persistSession: keepSession,
       model,
       effort,
-      abortController: stop,
+      abortController: end,
       // Claude Code uses a key in its environment ahead of a login in the config folder.
       env: { ...process.env, CLAUDE_CONFIG_DIR: configDir, ...(apiKey && { ANTHROPIC_API_KEY: apiKey }) },
       settingSources: ["user", "project"],
@@ -119,6 +142,20 @@ const runTurn: RunTurn = async (turn) => {
       }),
     },
   });
+  const onStop = () => {
+    open = false;
+    endLate = setTimeout(() => end.abort(), STOP_WAIT_MS);
+    void (run as Interruptible)
+      .interrupt({ cancelQueued: true })
+      .then((interrupted) => {
+        // With every message dropped before Claude Code read it, there is no turn to end, and Claude Code would wait on for one.
+        const dropped = new Set(interrupted?.cancelled);
+        if ([...unanswered].every((id) => dropped.has(id))) end.abort();
+      })
+      .catch(() => undefined)
+      .finally(close);
+  };
+  stop.signal.addEventListener("abort", onStop);
   let contextTokens = 0;
   try {
     for await (const message of run) {
@@ -134,6 +171,10 @@ const runTurn: RunTurn = async (turn) => {
         settle();
       }
       if (message.type !== "result") continue;
+      if (stoppedPartWay(message)) {
+        session = message.session_id;
+        continue;
+      }
       if (message.subtype !== "success") throw new Error(message.errors.join("; ") || message.subtype);
       if (message.is_error) throw new Error(message.result || "Claude Code returned an error");
       // A result names the messages it answers. One for finished background work names none.
@@ -142,13 +183,18 @@ const runTurn: RunTurn = async (turn) => {
       session = message.session_id;
       settle();
     }
+  } catch (error) {
+    // Claude Code exits with an error after a turn it was told to stop.
+    if (!stop.signal.aborted) throw error;
   } finally {
     if (waitForBackground) clearTimeout(waitForBackground);
+    if (endLate) clearTimeout(endLate);
+    stop.signal.removeEventListener("abort", onStop);
     open = false;
     stopListening?.();
     input.end();
   }
-  if (session !== null && unanswered.size === 0) return { sessionId: session, contextTokens };
+  if (session !== null && (unanswered.size === 0 || stop.signal.aborted)) return { sessionId: session, contextTokens };
   throw new Error("Claude Code stopped without a reply");
 };
 

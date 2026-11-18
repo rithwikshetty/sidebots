@@ -38,7 +38,7 @@ export type Turn = {
   effort: Effort;
   /** False for a job's run, whose session nothing comes back to. */
   keepSession: boolean;
-  /** Stops the turn part way, as when its agent is deleted. */
+  /** Stops the turn part way, when the person stops it or its agent is deleted. */
   stop: AbortController;
   /** Finds messages in any of the person's chats, for the agent's `search_history` tool. */
   searchHistory: (text: string) => string;
@@ -58,10 +58,12 @@ export type RunTurn = (turn: Turn) => Promise<TurnResult>;
  * runs on the person's API key for the provider when they have one, and
  * otherwise on the login in their config folder for it. It keeps the session
  * open while the turn runs, so that a message the person sends meanwhile goes
- * into it, and replies to every message it was sent. `failure` puts why a
- * turn failed in words for the person on their phone, from the provider's
- * own. `forget` removes the sessions the provider keeps for the agent that
- * works in `cwd`, once the agent is deleted.
+ * into it, and replies to every message it was sent. A turn whose `stop` is
+ * aborted ends soon after, with no reply, and still names its session when it
+ * has one, kept so that the next turn carries on from where this one stopped.
+ * `failure` puts why a turn failed in words for the person on their phone,
+ * from the provider's own. `forget` removes the sessions the provider keeps
+ * for the agent that works in `cwd`, once the agent is deleted.
  */
 export type Driver = {
   runTurn: RunTurn;
@@ -127,6 +129,8 @@ export function toolsFor(turn: Turn): Tool[] {
 
 /** What a fresh start shows in the chat. */
 const FRESH_START = "Fresh start";
+/** What a stopped turn shows in the chat. */
+const STOPPED = "Stopped";
 // A session this large gets a fresh start once its reply is in.
 const FRESH_START_TOKENS = 120_000;
 // How much of the chat a new session is shown before its first message.
@@ -228,15 +232,30 @@ function promptFor(message: Message, person: Person, unseen: { recent: Message[]
  */
 export function createQueue(store: Store, drivers: Drivers, now: () => number = Date.now) {
   const busy = new Map<string, Promise<void>>();
+  // What stops the turn each working agent is running.
   const stops = new Map<string, AbortController>();
+  // The agents being deleted, whose queues end with the turn they are running.
+  const removed = new Set<string>();
   // For an agent running a turn the person can talk to, what to call when they send another message.
   const arrivals = new Map<string, () => void>();
 
-  async function drain(agentId: string, stop: AbortController): Promise<void> {
-    while (!stop.signal.aborted) {
+  async function drain(agentId: string): Promise<void> {
+    while (!removed.has(agentId)) {
       const agent = store.agent(agentId);
       const person = agent && store.person(agent.person_id);
       if (!agent || !person) return;
+      const stop = new AbortController();
+      stops.set(agentId, stop);
+      // A turn the person stopped says so in the chat. Of the messages sent into it, those the agent had read are done with, and those it hadn't can be sent again.
+      const stopped = (ids: Iterable<string> = []) => {
+        if (removed.has(agentId)) return;
+        store.addMessage(agent.id, "sidebots", STOPPED, "done");
+        for (const id of ids) {
+          const status = store.message(agent.id, id)?.status;
+          if (status === "running") store.setStatus(id, "done");
+          if (status === "queued") store.setStatus(id, "failed");
+        }
+      };
       const driver = drivers[agent.provider];
       const account = store.account(person.id, agent.provider);
       const apiKey = store.apiKey(person.id, agent.provider);
@@ -286,11 +305,11 @@ export function createQueue(store: Store, drivers: Drivers, now: () => number = 
           const reply = replies.at(-1) ?? "";
           if (!silent(reply)) store.addMessage(agent.id, "agent", reply, "done", { jobId: job.id });
         } catch (error) {
-          if (stop.signal.aborted) return;
           // A job that keeps failing says so once, not on every run.
           const latest = store.agentWithLatest(agent.id)?.latest;
-          if (latest?.sender !== "sidebots" || latest.status !== "failed") store.addMessage(agent.id, "sidebots", `Sidebots couldn't run a job. ${reason(error)}`, "failed");
+          if (!stop.signal.aborted && (latest?.sender !== "sidebots" || latest.status !== "failed")) store.addMessage(agent.id, "sidebots", `Sidebots couldn't run a job. ${reason(error)}`, "failed");
         }
+        if (stop.signal.aborted) stopped();
         // The next run counts from the end of this one. A job that ran its one time is done.
         const next = nextRun(job.schedule, now());
         if (next === null) store.removeJob(agent.id, job.id);
@@ -304,7 +323,11 @@ export function createQueue(store: Store, drivers: Drivers, now: () => number = 
         // first, since the chat itself is still there to search.
         store.setStatus(message.id, "running");
         if (agent.session_id) await turn(remember(person), { seen: () => undefined, replied: () => undefined }).catch(() => undefined);
-        if (stop.signal.aborted) return;
+        if (stop.signal.aborted) {
+          // Stopped, a fresh start is called off, and the session stays.
+          stopped([message.id]);
+          continue;
+        }
         store.setSession(agent.id, null);
         store.setStatus(message.id, "done");
         continue;
@@ -359,12 +382,14 @@ export function createQueue(store: Store, drivers: Drivers, now: () => number = 
           },
         );
         store.setSession(agent.id, result.sessionId);
-        if (result.contextTokens > FRESH_START_TOKENS) store.addMessage(agent.id, "sidebots", FRESH_START, "queued");
+        if (!stop.signal.aborted && result.contextTokens > FRESH_START_TOKENS) store.addMessage(agent.id, "sidebots", FRESH_START, "queued");
       } catch (error) {
-        if (stop.signal.aborted) return;
-        store.addMessage(agent.id, "sidebots", `Sidebots couldn't finish this. ${reason(error)}`, "failed");
-        for (const id of sent) if (store.message(agent.id, id)?.status !== "done") store.setStatus(id, "failed");
+        if (!stop.signal.aborted) {
+          store.addMessage(agent.id, "sidebots", `Sidebots couldn't finish this. ${reason(error)}`, "failed");
+          for (const id of sent) if (store.message(agent.id, id)?.status !== "done") store.setStatus(id, "failed");
+        }
       }
+      if (stop.signal.aborted) stopped(sent);
     }
   }
 
@@ -375,13 +400,11 @@ export function createQueue(store: Store, drivers: Drivers, now: () => number = 
       arrivals.get(agentId)?.();
       return running;
     }
-    const stop = new AbortController();
-    const done = drain(agentId, stop).finally(() => {
+    const done = drain(agentId).finally(() => {
       busy.delete(agentId);
       stops.delete(agentId);
     });
     busy.set(agentId, done);
-    stops.set(agentId, stop);
     return done;
   }
 
@@ -398,10 +421,22 @@ export function createQueue(store: Store, drivers: Drivers, now: () => number = 
       return message;
     },
 
+    /**
+     * Stops the turn the agent is running: its work on the person's messages,
+     * a job's run or a fresh start. The chat says "Stopped" once the turn has
+     * ended. The agent keeps its session, so its next turn carries on from
+     * there, and whatever waited for the turn to end runs next.
+     */
+    stop(agentId: string): void {
+      stops.get(agentId)?.abort();
+    },
+
     /** Stops whatever the agent is running, waits for it to end, and removes the sessions its provider keeps for it, as the agent is deleted. */
     async remove(agent: Agent): Promise<void> {
+      removed.add(agent.id);
       stops.get(agent.id)?.abort();
       await busy.get(agent.id)?.catch(() => undefined);
+      removed.delete(agent.id);
       const account = store.account(agent.person_id, agent.provider);
       if (account) drivers[agent.provider].forget(store.agentHome(agent.id), account.config_dir);
     },

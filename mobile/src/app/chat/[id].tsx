@@ -23,7 +23,7 @@ import { useWorkingLine } from "@/lib/lines";
 import { preview } from "@/lib/messages";
 import { HIDE, MOVE, SHOW, arrive } from "@/lib/motion";
 import { askForPush, showChatOnScreen } from "@/lib/push";
-import { avatarStateOf, freshStart, loadMessages, loadOlder, markRead, send, useAgent, useChatColor, useMessages, useOnline } from "@/lib/state";
+import { avatarStateOf, freshStart, loadMessages, loadOlder, markRead, send, stop, useAgent, useChatColor, useMessages, useOnline } from "@/lib/state";
 import { ChatColor, type Theme, useTheme } from "@/lib/theme";
 import { dayLabel, listTime, sameDay } from "@/lib/time";
 
@@ -121,6 +121,11 @@ function ChatWith({ agent }: { agent: AgentWithLatest }) {
     } finally {
       setOutgoing(null);
     }
+  }
+
+  function onStop() {
+    haptics.stop();
+    stop(agent.id).catch((failure) => problem("Couldn't stop", failure));
   }
 
   async function onAttach(source: PickSource) {
@@ -258,6 +263,7 @@ function ChatWith({ agent }: { agent: AgentWithLatest }) {
               value={draft}
               onChangeText={setDraft}
               onSend={() => void onSend(draft, picked, replyTo)}
+              onStop={agent.working && online ? onStop : undefined}
               placeholder={`Message ${agent.name}`}
               attachments={picked}
               onAttach={onAttach}

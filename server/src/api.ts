@@ -190,6 +190,14 @@ export function createApi(store: Store, queue: Queue, machine: string) {
     return c.json(queue.freshStart(agent.id), 201);
   });
 
+  /** Stops the turn the agent is running. The chat says so once the turn has ended. */
+  app.post("/agents/:id/stop", (c) => {
+    const agent = ownAgent(c.var.person, c.req.param("id"));
+    if (!agent) return c.json({ error: "No such agent." }, 404);
+    queue.stop(agent.id);
+    return c.json({});
+  });
+
   /** The messages that contain `text`, in any of the person's chats. */
   app.get("/search", (c) => {
     const text = c.req.query("text")?.trim();

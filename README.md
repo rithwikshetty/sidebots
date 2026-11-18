@@ -132,7 +132,7 @@ Anthropic's terms decide which you may use. A subscription is for the subscriber
 A provider is a program that runs agents, such as Claude Code. Each agent runs on one, and each person signs in to each provider their agents use with a config folder of their own. Adding a provider takes two things:
 
 - An entry in `PROVIDERS` in `server/src/contract.ts`, with the name the apps show, its models and levels of effort, and the file its agents read their instructions from. The phone shows an agent's models from there.
-- A driver, the module that runs a turn on the program: `server/src/claude.ts` is Claude Code's. It hands the program the agent's tools from `toolsFor` in `server/src/runner.ts`, puts the program's failures in words for the person, and removes the program's sessions when an agent is deleted. `server/src/main.ts` passes each driver to the queue.
+- A driver, the module that runs a turn on the program: `server/src/claude.ts` is Claude Code's. It hands the program the agent's tools from `toolsFor` in `server/src/runner.ts`, ends a turn the person stops with its session kept, puts the program's failures in words for the person, and removes the program's sessions when an agent is deleted. `server/src/main.ts` passes each driver to the queue.
 
 The Mac app sets up Claude Code only, so a person's other providers are set up with `pnpm add-person` and `pnpm api-key` for now.
 
