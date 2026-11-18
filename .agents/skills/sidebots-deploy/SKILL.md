@@ -65,12 +65,14 @@ Then `curl -s https://sidebots.app/appcast.xml` must name the new version. From 
 mobile/testflight.sh
 ```
 
-It archives the published app and uploads it, and ends with `Uploaded Sidebots <version>, build <number>`. It takes several minutes, so run it in the background with its output in a log.
+It archives the published app, uploads it, and then asks App Store Connect about the build until Apple has processed it. It takes several minutes, so run it in the background with its output in a log.
 
-- `Error Downloading App Information` is Apple's servers failing. Run `mobile/testflight.sh upload`, which sends the same archive again.
+The step is done only at its last line, `TestFlight has build <number>: <state> for internal testers, <state> for external testers`. `Uploaded Sidebots <version>, build <number>` comes before it and proves nothing: Apple can refuse a build it has taken. Report both states as the script gives them. `IN_BETA_TESTING` means the TestFlight app offers the build to those testers.
+
+- `Error Downloading App Information` is Apple's servers failing. Run `mobile/testflight.sh upload`, which sends the same archive again and waits.
 - A signing or provisioning error means Xcode isn't signed in with an Apple ID on the team in `mobile/.env.local`, which only the user can fix.
-
-Apple processes an upload for a few minutes before TestFlight offers it.
+- `Apple refused build <number>` means the upload arrived and Apple turned it down. The reason is in Apple's email to the account holder, so ask the user for it.
+- A wait that fails to read its key or is refused by App Store Connect means `SIDEBOTS_ASC_KEY_ID` or `SIDEBOTS_ASC_ISSUER_ID` in `mobile/.env.local` is missing or wrong. The build is uploaded by then, so fix the setting and run `node testflight-build.mjs` from `mobile/` with the four values its first lines name.
 
 ## 5. This Mac's server
 
@@ -85,4 +87,6 @@ A turn cut off by the restart is queued again when the server starts. It is up o
 
 ## Handing over
 
-Report the version and the link to its GitHub release, the phone app's build number, and what the last release didn't have, in plain words. Say what is left for the user: update Sidebots from TestFlight once Apple has processed the build. Name any step that failed and what it needs.
+Report the version and the link to its GitHub release, the phone app's build number with the two states TestFlight gave it, and what the last release didn't have, in plain words. Say what is left for the user: update Sidebots from TestFlight. Name any step that failed and what it needs.
+
+Say a place is updated only when its own check in the step above passed: the download's length, the live feed's version, the script's `TestFlight has build` line, and the server's status.
