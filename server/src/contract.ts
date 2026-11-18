@@ -13,6 +13,14 @@ export const CONTRACT_HEADER = "Sidebots-Contract";
 
 export type Sender = "person" | "agent" | "sidebots";
 export type Status = "queued" | "running" | "done" | "failed";
+/**
+ * Where an ask stands. An agent asks before it does something its provider's
+ * safety check won't decide by itself. The ask is `waiting` until the person
+ * answers, then `allowed` or `refused`. It is `unanswered` when the agent
+ * stopped waiting first: the person took too long or sent a message instead,
+ * or the turn ended.
+ */
+export type Ask = "waiting" | "allowed" | "refused" | "unanswered";
 
 export type Message = {
   id: string;
@@ -23,8 +31,10 @@ export type Message = {
   attachments: string[];
   /**
    * For a message from a person: `queued` until the agent reads it, `running`
-   * once it has, then `done` when it has answered, or `failed`. For a fresh
-   * start, the state of replacing the session. A failure notice is `failed`.
+   * once it has, then `done` when it has answered or the person stopped it.
+   * `failed` when its turn failed, or was stopped before the agent read it.
+   * For a fresh start, the state of replacing the session. A failure notice
+   * is `failed`.
    */
   status: Status;
   /** When the agent read a message from the person, or null before it has. */
@@ -35,8 +45,17 @@ export type Message = {
   job_id: string | null;
   /** An update the agent sent while still working. It notifies nobody and doesn't count as unread; the reply that follows does. */
   interim: boolean;
+  /** For a message in which the agent asks before it does something, where the ask stands. Null for every other message. */
+  ask: Ask | null;
   created_at: number;
 };
+
+/**
+ * The most one message carries in files, in bytes, whoever sends it. It is
+ * under the 100 MB Cloudflare takes in one request, which is how the
+ * person's files reach the server.
+ */
+export const MESSAGE_BYTES = 95 * 1024 * 1024;
 
 /**
  * The programs an agent can run on, by id. Each has the name the apps show,
@@ -86,8 +105,8 @@ export type Agent = {
 };
 /**
  * An agent as the home screen shows it. `working` is true while it has a turn
- * queued or running. `unread` counts the replies and failure notices the
- * person hasn't read.
+ * queued or running. `unread` counts the replies, asks and failure notices
+ * the person hasn't read.
  */
 export type AgentWithLatest = Agent & { latest: Message | null; working: boolean; unread: number };
 
@@ -111,6 +130,28 @@ export type Job = { id: string; agent_id: string; what: string; schedule: Schedu
 export type Memory = { name: string; description: string; body: string };
 /** What an agent's page shows about it: the instructions it follows, what it remembers and its jobs. */
 export type About = { instructions: string; memories: Memory[]; jobs: Job[] };
+
+/** What a turn was for: a reply to the person, a run of one of the agent's jobs, or the memory save before a fresh start. */
+export type TurnKind = "reply" | "job" | "memory";
+/** The turns of one kind that an agent ran: how many, and what they cost in US dollars at its provider's prices. */
+export type Used = { agent_id: string; kind: TurnKind; turns: number; cost: number };
+/**
+ * One limit of a person's plan with a provider, as the provider last said it
+ * stood: what the provider calls it, how much of it is used, as a fraction that
+ * passes 1 when the plan lets use run over, when it resets, and when the
+ * provider said so. The provider counts what the person uses outside Sidebots
+ * too.
+ */
+export type Limit = { name: string; used: number | null; resets_at: number | null; at: number };
+/** How many days of turns `Usage` counts. */
+export const USAGE_DAYS = 7;
+/**
+ * Where a person's plan or API credit goes: the turns their agents ran in the
+ * last `USAGE_DAYS` days, and how they sign in to each provider. An account on
+ * an API key is billed for what its turns cost. One on a plan has the plan's
+ * limits once the provider has said where they stand.
+ */
+export type Usage = { used: Used[]; accounts: { provider: Provider; apiKey: boolean; limits: Limit[] }[] };
 
 const WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 
@@ -141,9 +182,9 @@ export function plainText(markdown: string): string {
 }
 
 /**
- * What the event stream sends. A message that was added or changed status
- * comes with its agent as the home screen shows it. A new agent comes the same
- * way, with no message. A deleted agent comes as its id.
+ * What the event stream sends. A message that was added, changed status or
+ * had its ask closed comes with its agent as the home screen shows it. A new
+ * agent comes the same way, with no message. A deleted agent comes as its id.
  */
 export type StreamEvent = { message: Message | null; agent: AgentWithLatest } | { deleted: string };
 /**

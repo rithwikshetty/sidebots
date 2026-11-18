@@ -1,21 +1,23 @@
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useState } from "react";
 import { Alert, Keyboard, Pressable, ScrollView, StyleSheet, Switch, Text, TextInput, View } from "react-native";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import Animated, { LayoutAnimationConfig } from "react-native-reanimated";
 import { ChevronRight, Trash2 } from "lucide-react-native";
-import { PROVIDERS, scheduleWords, type AgentWithLatest, type Job } from "@server/contract";
+import { PROVIDERS, USAGE_DAYS, scheduleWords, type AgentWithLatest, type Job } from "@server/contract";
 import { AvatarPicker } from "@/components/AvatarPicker";
 import { AvatarView } from "@/components/AvatarView";
 import { Choices } from "@/components/Choices";
 import { ColorPicker } from "@/components/ColorPicker";
 import { FadingText } from "@/components/FadingText";
 import { IconButton } from "@/components/IconButton";
+import { Rule, Section, SectionTitle } from "@/components/Section";
 import { confirmDelete, problem } from "@/lib/alerts";
 import { HIDE, MOVE, POP_IN, SHOW } from "@/lib/motion";
-import { changeAgent, loadAbout, removeJob, useAbout, useAgent, useChatColor, type AgentChanges } from "@/lib/state";
+import { changeAgent, loadAbout, loadUsage, removeJob, useAbout, useAgent, useChatColor, useUsage, type AgentChanges } from "@/lib/state";
 import { useTheme } from "@/lib/theme";
 import { nextTime } from "@/lib/time";
+import { COST_NOTE, KINDS, dollars, usedBy } from "@/lib/usage";
 
 const TABS = { settings: "Settings", work: "Jobs & memory" } as const;
 type Tab = keyof typeof TABS;
@@ -31,7 +33,7 @@ export default function AgentPage() {
  * the agent's avatar, large, with its name and the model it answers with. Edit
  * turns the name into a field and brings up the avatars and the colours of its
  * chat to choose from, and Save keeps them. Below are two tabs. Settings holds the model and effort,
- * Mute and Hide, and Delete. Jobs & memory holds what the agent works from:
+ * what the agent used in the last days, Mute and Hide, and Delete. Jobs & memory holds what the agent works from:
  * its jobs, which can be removed here, the instructions it follows and what
  * it remembers. The agent writes those three itself, as it is told things
  * in its chat. What loads after the page opens fades in, and the sections
@@ -51,6 +53,7 @@ function AgentAbout({ agent }: { agent: AgentWithLatest }) {
 
   useEffect(() => {
     loadAbout(agent.id).catch(() => {});
+    loadUsage().catch(() => {});
   }, [agent.id]);
 
   const change = (changes: AgentChanges) => void changeAgent(agent.id, changes).catch((failure) => problem("Couldn't change that", failure));
@@ -118,9 +121,9 @@ function AgentAbout({ agent }: { agent: AgentWithLatest }) {
 
           {editing ? (
             <Animated.View key="editing" entering={SHOW} exiting={HIDE} style={styles.section}>
-              <Text style={[styles.sectionTitle, { color: theme.ink2 }]}>Avatar</Text>
+              <SectionTitle>Avatar</SectionTitle>
               <AvatarPicker value={avatarId} onChange={setAvatarId} />
-              <Text style={[styles.sectionTitle, styles.later, { color: theme.ink2 }]}>Chat colour</Text>
+              <SectionTitle style={styles.later}>Chat colour</SectionTitle>
               <ColorPicker value={color} avatarColor={avatarColor} onChange={setColor} />
             </Animated.View>
           ) : (
@@ -161,6 +164,8 @@ function SettingsTab({ agent, change }: { agent: AgentWithLatest; change: (chang
         <Choices options={provider.efforts} value={agent.effort} onChange={(effort) => change({ effort })} />
       </Section>
 
+      <UsedSection agentId={agent.id} />
+
       <Section>
         <Toggle title="Mute" note="No notifications from it" value={agent.muted} onChange={(muted) => change({ muted })} />
         <Rule />
@@ -173,6 +178,32 @@ function SettingsTab({ agent, change }: { agent: AgentWithLatest; change: (chang
         </Pressable>
       </Section>
     </>
+  );
+}
+
+/** What the agent used in the last days, a kind of turn to a row: how many it ran and what they cost. It fades in once the computer has said. */
+function UsedSection({ agentId }: { agentId: string }) {
+  const theme = useTheme();
+  const usage = useUsage();
+  if (!usage) return null;
+  const used = usedBy(usage, agentId);
+  return (
+    <Animated.View entering={SHOW} layout={MOVE}>
+      <Section title={`Usage, last ${USAGE_DAYS} days`} note={used.length ? COST_NOTE : "It hasn't run a turn."}>
+        {used.map((each, index) => (
+          <Animated.View key={each.kind} entering={SHOW} exiting={HIDE} layout={MOVE}>
+            {index > 0 ? <Rule /> : null}
+            <View style={styles.row}>
+              <View style={styles.rowText}>
+                <Text style={[styles.rowTitle, { color: theme.ink }]}>{KINDS[each.kind]}</Text>
+                <FadingText style={[styles.rowNote, { color: theme.ink2 }]}>{each.turns === 1 ? "1 turn" : `${each.turns} turns`}</FadingText>
+              </View>
+              <FadingText style={[styles.rowTitle, { color: theme.ink2 }]}>{dollars(each.cost)}</FadingText>
+            </View>
+          </Animated.View>
+        ))}
+      </Section>
+    </Animated.View>
   );
 }
 
@@ -241,27 +272,6 @@ function BarButton({ label, strong = false, disabled = false, onPress }: { label
   );
 }
 
-/**
- * A group of rows on a card, under its title, with a line of help below. A
- * group with no rows shows only its title and help. The card and the help
- * fade in and out as rows come and go, and the group slides as it changes size.
- */
-function Section({ title, note, children }: { title?: string; note?: string; children?: ReactNode }) {
-  const theme = useTheme();
-  const rows = Array.isArray(children) ? children.some(Boolean) : Boolean(children);
-  return (
-    <Animated.View layout={MOVE} style={styles.section}>
-      {title ? <Text style={[styles.sectionTitle, { color: theme.ink2 }]}>{title}</Text> : null}
-      {rows ? (
-        <Animated.View entering={SHOW} exiting={HIDE} layout={MOVE} style={[styles.card, { backgroundColor: theme.field }]}>
-          {children}
-        </Animated.View>
-      ) : null}
-      {note ? <FadingText style={[styles.sectionNote, { color: theme.ink2 }]}>{note}</FadingText> : null}
-    </Animated.View>
-  );
-}
-
 function Toggle({ title, note, value, onChange }: { title: string; note: string; value: boolean; onChange: (value: boolean) => void }) {
   const theme = useTheme();
   return (
@@ -273,11 +283,6 @@ function Toggle({ title, note, value, onChange }: { title: string; note: string;
       <Switch value={value} onValueChange={onChange} trackColor={{ true: theme.tint }} accessibilityLabel={title} />
     </View>
   );
-}
-
-function Rule() {
-  const theme = useTheme();
-  return <View style={[styles.rule, { backgroundColor: theme.line }]} />;
 }
 
 const HALO = 132;
@@ -296,15 +301,12 @@ const styles = StyleSheet.create({
   caption: { fontSize: 15 },
   nameField: { alignSelf: "stretch", height: 50, borderRadius: 14, borderCurve: "continuous", paddingHorizontal: 16, fontSize: 22, fontWeight: "600", textAlign: "center" },
   tabs: { marginTop: 24, borderRadius: 16, borderCurve: "continuous" },
+  // The avatars and colours to choose from, set out as a section is.
   section: { marginTop: 24, gap: 8 },
-  sectionTitle: { fontSize: 13, fontWeight: "600", textTransform: "uppercase", letterSpacing: 0.4, paddingHorizontal: 4 },
   // A second title in one section, set apart from what is above it.
   later: { marginTop: 16 },
-  sectionNote: { fontSize: 13, lineHeight: 18, paddingHorizontal: 4 },
-  card: { borderRadius: 16, borderCurve: "continuous", overflow: "hidden" },
   row: { flexDirection: "row", alignItems: "center", gap: 12, paddingHorizontal: 16, paddingVertical: 12, minHeight: 50 },
   rowText: { flex: 1, gap: 2 },
   rowTitle: { fontSize: 16, lineHeight: 21 },
   rowNote: { fontSize: 14, lineHeight: 19 },
-  rule: { height: StyleSheet.hairlineWidth, marginLeft: 16 },
 });

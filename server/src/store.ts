@@ -2,12 +2,12 @@
 // SQLite or ~/.sidebots.
 
 import { cpSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
-import { basename, join } from "node:path";
+import { basename, join, resolve } from "node:path";
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
 
-import { COLOR, DEFAULT_PROVIDER, PROVIDERS, readableColor } from "./contract.ts";
-import type { About, Agent, AgentWithLatest, Avatar, Found, Job, Memory, Message, Provider, PushToken, Schedule, Sender, Status } from "./contract.ts";
+import { COLOR, DEFAULT_PROVIDER, PROVIDERS, USAGE_DAYS, readableColor } from "./contract.ts";
+import type { About, Agent, AgentWithLatest, Ask, Avatar, Found, Job, Limit, Memory, Message, Provider, PushToken, Schedule, Sender, Status, TurnKind, Usage, Used } from "./contract.ts";
 
 export type Person = { id: string; name: string };
 /** How a person's agents sign in to a provider: the provider's config folder of the person's own, which holds their login, rules, skills and sessions. */
@@ -18,11 +18,11 @@ export type Device = { id: string; person_id: string; name: string; paired_at: n
 export type PushTarget = PushToken & { notificationKey: string };
 /** A file as it arrives with a message. */
 export type Upload = { name: string; bytes: Uint8Array };
-/** What a message can carry besides its text: files, the message it answers, and the job that sent it. */
-export type Extras = { files?: Upload[]; replyTo?: string; jobId?: string; interim?: boolean };
+/** What a message can carry besides its text: files, the message it answers, the job that sent it, and where its ask stands when it is one. */
+export type Extras = { files?: Upload[]; replyTo?: string; jobId?: string; interim?: boolean; ask?: Ask };
 /** What the person can change about an agent. */
 export type AgentChanges = Partial<Pick<Agent, "name" | "avatar_id" | "model" | "effort" | "muted" | "hidden" | "color">>;
-/** What the store tells its listeners about: a message that was added or changed status, or an agent that was added or deleted. */
+/** What the store tells its listeners about: a message that was added, changed status or had its ask closed, or an agent that was added or deleted. */
 export type Change = { message: Message } | { agent: Agent; deleted: boolean };
 /** How this server is known to the relay: its signing key, and the id, the address phones reach it at and the token its tunnel runs with, which the relay gives it once it has registered. */
 export type Machine = { privateKey: string; id?: string; address?: string; tunnelToken?: string };
@@ -41,6 +41,7 @@ const TABLE_CHANGES = [
   "insert into accounts (person_id, provider, config_dir) select id, 'claude', claude_config_dir from people",
   "alter table people drop column claude_config_dir",
   "alter table agents add column provider text not null default 'claude'",
+  "alter table messages add column ask text check (ask in ('waiting', 'allowed', 'refused', 'unanswered'))",
 ];
 
 const SCHEMA = `
@@ -80,6 +81,7 @@ create table if not exists messages (
   reply_to    text,
   job_id      text,
   interim     integer not null default 0,
+  ask         text check (ask in ('waiting', 'allowed', 'refused', 'unanswered')),
   created_at  integer not null
 );
 create table if not exists jobs (
@@ -106,6 +108,23 @@ create table if not exists pairings (
   person_id  text not null references people(id),
   expires_at integer not null
 );
+create table if not exists usage (
+  agent_id     text not null references agents(id),
+  kind         text not null check (kind in ('reply', 'job', 'memory')),
+  cost         real not null,
+  session_id   text not null,
+  session_cost real not null,
+  at           integer not null
+);
+create table if not exists limits (
+  person_id  text not null references people(id),
+  provider   text not null,
+  name       text not null,
+  used       real,
+  resets_at  integer,
+  at         integer not null,
+  primary key (person_id, provider, name)
+);
 create table if not exists activities (
   device_id   text not null references devices(id) on delete cascade,
   agent_id    text not null references agents(id) on delete cascade,
@@ -123,6 +142,7 @@ const AVATAR_ID = /^[a-z0-9-]+$/;
 const ATTACHMENT_NAME = /^[\w-][\w.-]*$/;
 // How long a pairing code works.
 const PAIRING_MS = 10 * 60_000;
+const DAY_MS = 24 * 60 * 60_000;
 
 /** A pairing code or a device key: 32 random bytes, as text that fits in a link. */
 const secret = () => randomBytes(32).toString("base64url");
@@ -152,7 +172,7 @@ You are ${agentName}, one of ${personName}'s agents in Sidebots. Sidebots is a m
 
 ${personName} only sees your final reply, as a text message on their phone. They never see your tool calls or working steps. Write the way a capable person texts: short, plain sentences, no headings or tables unless they ask for them.
 
-Your home folder is where you run. Files ${personName} sends you are in \`attachments/\`.
+Your home folder is where you run. Files ${personName} sends you are in \`attachments/\`. To send ${personName} a file, use your \`send_files\` tool.
 
 You don't know what you're for yet. If this is a new chat, ask what ${personName} wants you to help with, then write what you're for into this file. What you learn along the way goes in your memory.
 `;
@@ -195,7 +215,7 @@ export function openStore(home: string) {
   const many = (sql: string, ...values: (string | number)[]): Message[] => (db.prepare(sql).all(...values) as Row[]).map(toMessage);
 
   const pendingTurn = db.prepare("select 1 from messages where agent_id = ? and status in ('queued', 'running') limit 1");
-  // What waits to be read: the agent's replies and Sidebots' failure notices.
+  // What waits to be read: the agent's replies and asks, and Sidebots' failure notices.
   const unread = db.prepare(
     "select count(*) as unread from messages where agent_id = ? and created_at > ? and ((sender = 'agent' and interim = 0) or (sender = 'sidebots' and status = 'failed'))",
   );
@@ -215,7 +235,7 @@ export function openStore(home: string) {
   return {
     agentHome,
 
-    /** Calls `listener` with every message that is added or changes status, and every agent that is added or deleted. Returns a function that stops it. */
+    /** Calls `listener` with every message that is added, changes status or has its ask closed, and every agent that is added or deleted. Returns a function that stops it. */
     onChange(listener: (change: Change) => void): () => void {
       listeners.add(listener);
       return () => listeners.delete(listener);
@@ -378,8 +398,9 @@ export function openStore(home: string) {
       writeFileSync(path, text.replace(`# ${agent.name}\n`, `# ${changes.name}\n`).replace(`You are ${agent.name},`, `You are ${changes.name},`));
     },
 
-    /** Removes an agent and everything Sidebots kept for it: its messages, its jobs and its home folder. */
+    /** Removes an agent and everything Sidebots kept for it: its messages, its jobs, what it used and its home folder. */
     deleteAgent(agent: Agent): void {
+      db.prepare("delete from usage where agent_id = ?").run(agent.id);
       db.prepare("delete from jobs where agent_id = ?").run(agent.id);
       db.prepare("delete from messages where agent_id = ?").run(agent.id);
       db.prepare("delete from agents where id = ?").run(agent.id);
@@ -438,6 +459,62 @@ export function openStore(home: string) {
       return rows.map((row) => row.agent_id);
     },
 
+    /**
+     * Records a turn the agent ran, with what it cost. A provider says what a
+     * session has cost in all, so a turn costs what its session has cost since
+     * the turn before it there, or all of it once the session's count has
+     * started again. `resumed` says the session had turns before this one.
+     * When none of them is recorded, nobody can tell how much of the cost is
+     * this turn's, and the turn is recorded as costing nothing.
+     */
+    addUsage(agentId: string, kind: TurnKind, session: { sessionId: string; cost: number }, resumed: boolean): void {
+      const last = db.prepare("select session_cost from usage where agent_id = ? and session_id = ? order by rowid desc limit 1").get(agentId, session.sessionId) as
+        | { session_cost: number }
+        | undefined;
+      const before = last ? last.session_cost : resumed ? session.cost : 0;
+      db.prepare("insert into usage (agent_id, kind, cost, session_id, session_cost, at) values (?, ?, ?, ?, ?, ?)").run(
+        agentId,
+        kind,
+        session.cost >= before ? session.cost - before : session.cost,
+        session.sessionId,
+        session.cost,
+        Date.now(),
+      );
+    },
+
+    /** Keeps where limits of the person's plan with a provider stand, as the provider just said. */
+    setLimits(personId: string, provider: Provider, limits: Limit[]): void {
+      const keep = db.prepare("insert or replace into limits (person_id, provider, name, used, resets_at, at) values (?, ?, ?, ?, ?, ?)");
+      for (const limit of limits) keep.run(personId, provider, limit.name, limit.used, limit.resets_at, limit.at);
+    },
+
+    /**
+     * Where the person's plan or API credit goes: the turns their agents ran
+     * in the last days, and how they sign in to each provider. A limit whose
+     * time to reset has passed is left out, since nobody knows where it has
+     * stood since.
+     */
+    usage(personId: string): Usage {
+      const now = Date.now();
+      const used = db
+        .prepare(
+          `select usage.agent_id, usage.kind, count(*) as turns, sum(usage.cost) as cost
+           from usage join agents on agents.id = usage.agent_id
+           where agents.person_id = ? and usage.at > ?
+           group by usage.agent_id, usage.kind`,
+        )
+        .all(personId, now - USAGE_DAYS * DAY_MS) as Used[];
+      const limits = db.prepare(
+        "select name, used, resets_at, at from limits where person_id = ? and provider = ? and (resets_at is null or resets_at > ?) order by resets_at, name",
+      );
+      const providers = db.prepare("select provider from accounts where person_id = ? order by rowid").all(personId) as Pick<Account, "provider">[];
+      const accounts = providers.map(({ provider }) => {
+        const apiKey = apiKeys()[personId]?.[provider] !== undefined;
+        return { provider, apiKey, limits: apiKey ? [] : (limits.all(personId, provider, now) as Limit[]) };
+      });
+      return { used, accounts };
+    },
+
     /** Records that the person has read everything in the chat so far. */
     markRead(agentId: string): void {
       db.prepare("update agents set read_at = ? where id = ?").run(Date.now(), agentId);
@@ -449,11 +526,11 @@ export function openStore(home: string) {
 
     /**
      * Saves a message, with any files sent with it written into the agent's
-     * `attachments/` folder. A reply or a failure notice brings a hidden agent
-     * back to the home screen, unless the agent is muted. An update while the
-     * agent works doesn't.
+     * `attachments/` folder. A reply, an ask or a failure notice brings a hidden
+     * agent back to the home screen, unless the agent is muted. An update while
+     * the agent works doesn't.
      */
-    addMessage(agentId: string, sender: Sender, body: string, status: Status, { files = [], replyTo, jobId, interim = false }: Extras = {}): Message {
+    addMessage(agentId: string, sender: Sender, body: string, status: Status, { files = [], replyTo, jobId, interim = false, ask }: Extras = {}): Message {
       const attachments = files.map((file) => {
         // A name keeps its letters, digits, dots and dashes. Anything else becomes a dash, as does a %20 the phone wrote for a space.
         const name = `${randomUUID().slice(0, 8)}-${basename(file.name).replace(/(?:%[0-9a-f]{2}|[^\w.-])+/gi, "-")}`;
@@ -471,9 +548,10 @@ export function openStore(home: string) {
         reply_to: replyTo ?? null,
         job_id: jobId ?? null,
         interim,
+        ask: ask ?? null,
         created_at: Date.now(),
       };
-      db.prepare("insert into messages (id, agent_id, sender, body, attachments, status, reply_to, job_id, interim, created_at) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)").run(
+      db.prepare("insert into messages (id, agent_id, sender, body, attachments, status, reply_to, job_id, interim, ask, created_at) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)").run(
         message.id,
         message.agent_id,
         message.sender,
@@ -483,6 +561,7 @@ export function openStore(home: string) {
         message.reply_to,
         message.job_id,
         Number(interim),
+        message.ask,
         message.created_at,
       );
       if ((sender === "agent" && !interim) || (sender === "sidebots" && status === "failed")) {
@@ -490,6 +569,15 @@ export function openStore(home: string) {
       }
       changed({ message });
       return message;
+    },
+
+    /**
+     * A file the agent names to send with a message, by its path in full or
+     * from the agent's home folder, as it is now. Nothing when no file is there.
+     */
+    fileToSend(agentId: string, path: string): Upload | undefined {
+      const full = resolve(agentHome(agentId), path);
+      return statSync(full, { throwIfNoEntry: false })?.isFile() ? { name: basename(full), bytes: readFileSync(full) } : undefined;
     },
 
     /** The path of a file in the agent's `attachments/` folder, if it is there. */
@@ -512,6 +600,13 @@ export function openStore(home: string) {
     setStatus(messageId: string, status: Status): void {
       db.prepare("update messages set status = ? where id = ?").run(status, messageId);
       const message = one("select * from messages where id = ?", messageId);
+      if (message) changed({ message });
+    },
+
+    /** Records where an ask that was waiting now stands. */
+    answerAsk(messageId: string, answer: Exclude<Ask, "waiting">): void {
+      const answered = db.prepare("update messages set ask = ? where id = ? and ask = 'waiting'").run(answer, messageId).changes > 0;
+      const message = answered ? one("select * from messages where id = ?", messageId) : undefined;
       if (message) changed({ message });
     },
 
@@ -587,9 +682,10 @@ export function openStore(home: string) {
       return one("select * from messages where agent_id = ? and status = 'queued' order by rowid limit 1", agentId);
     },
 
-    /** Puts turns that a stopped server left running back in the queue, and lists the agents with queued turns. */
+    /** Puts turns that a stopped server left running back in the queue, with the asks they left waiting closed, and lists the agents with queued turns. */
     requeueInterrupted(): string[] {
       db.prepare("update messages set status = 'queued' where status = 'running'").run();
+      db.prepare("update messages set ask = 'unanswered' where ask = 'waiting'").run();
       const rows = db.prepare("select distinct agent_id from messages where status = 'queued'").all() as { agent_id: string }[];
       return rows.map((row) => row.agent_id);
     },

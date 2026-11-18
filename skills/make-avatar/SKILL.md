@@ -14,7 +14,7 @@ An avatar is a 16 by 16 pixel character. You draw it once as a grid of letters. 
 3. Write `design.json` in that folder, following the format below.
 4. Run `node <this skill's folder>/render.ts ~/.sidebots/avatars/<id>`. Fix any error it prints and run it again.
 5. Open `spritesheet.png` and look at it. Check that the avatar reads as one clear character, that the eyes sit on the face in every row, and that nothing is cut off at the top. Redraw and render again until it does.
-6. Reply that the avatar is ready, using its name, and the chat colour it suggests.
+6. Send the person `spritesheet.png` with your `send_files` tool, so they see the avatar. Reply that it is ready, using its name, and the chat colour it suggests.
 
 ## design.json
 

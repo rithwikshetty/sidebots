@@ -4,16 +4,68 @@
 
 import { rmSync } from "node:fs";
 import { join } from "node:path";
-import { createSdkMcpServer, query, tool, type SDKMessage, type SDKUserMessage } from "@anthropic-ai/claude-agent-sdk";
-import { toolsFor, type Driver, type Prompt, type RunTurn } from "./runner.ts";
+import { stripVTControlCharacters } from "node:util";
+import {
+  createSdkMcpServer,
+  query,
+  tool,
+  type SDKControlInterruptResponse,
+  type SDKMessage,
+  type SDKRateLimitInfo,
+  type SDKResultMessage,
+  type SDKUserMessage,
+} from "@anthropic-ai/claude-agent-sdk";
+import type { Limit } from "./contract.ts";
+import { toolsFor, type Driver, type Prompt, type Question, type RunTurn } from "./runner.ts";
 
 // The longest a session stays open, after its replies are in, for background work the agent started.
 const BACKGROUND_WAIT_MS = 30 * 60_000;
+// The longest Claude Code is given to end a turn it was told to stop, before its process is ended for it.
+const STOP_WAIT_MS = 10_000;
+
+// Claude Code's names for the limits of a plan, and what it calls them in its own messages. Credit bought beyond the plan is no limit of the plan's, and has no name here.
+const LIMITS: Record<string, string> = {
+  five_hour: "5-hour limit",
+  seven_day: "Weekly limit",
+  seven_day_opus: "Opus limit",
+  seven_day_sonnet: "Sonnet limit",
+  seven_day_overage_included: "Fable limit",
+};
 
 const text = (words: string) => ({ content: [{ type: "text" as const, text: words }] });
 
+/**
+ * Where limits of the person's plan stand, from what Claude Code says of them
+ * at `at`, as a turn runs: the part of each that is used and, in seconds,
+ * when it resets. It names one limit, the one the turn is nearest or has
+ * reached, and lists the plan's main limits in `unifiedWindows`, which the
+ * SDK's types leave out. A limit that refuses the turn is all used.
+ */
+export function limitsIn(info: SDKRateLimitInfo, at: number): Limit[] {
+  type Window = Pick<SDKRateLimitInfo, "status" | "utilization" | "resetsAt">;
+  const windows: Record<string, Partial<Window>> = {
+    ...(info.rateLimitType && { [info.rateLimitType]: info }),
+    ...(info as { unifiedWindows?: Record<string, Partial<Window>> }).unifiedWindows,
+  };
+  return Object.entries(windows).flatMap(([window, { status, utilization, resetsAt }]) =>
+    Object.hasOwn(LIMITS, window)
+      ? [{ name: LIMITS[window], used: utilization ?? (status === "rejected" ? 1 : null), resets_at: resetsAt === undefined ? null : resetsAt * 1000, at }]
+      : [],
+  );
+}
+
 /** The messages a frame from Claude Code says it has read, by the ids they were sent with. */
 const readIds = (message: SDKMessage): string[] => ("user_message_uuids" in message && message.user_message_uuids) || [];
+
+/** Whether a result ends a turn that was stopped part way. It carries no reply. */
+const stoppedPartWay = (result: SDKResultMessage) => result.terminal_reason === "aborted_streaming" || result.terminal_reason === "aborted_tools";
+
+/**
+ * A query whose `interrupt` also drops the messages queued behind the turn.
+ * The option is the interrupt request's `cancel_queued`, which the SDK's own
+ * type for the method leaves out.
+ */
+type Interruptible = { interrupt(options: { cancelQueued: true }): Promise<SDKControlInterruptResponse | undefined> };
 
 /** Messages for Claude Code, handed over as they come, until `end`. */
 function inbox() {
@@ -41,6 +93,29 @@ function inbox() {
 }
 
 /**
+ * What a call to one of Claude Code's tools would do, for the person to say
+ * yes or no to: the command, the page, or the file with what would be written
+ * to it. Any other tool is named, with what it was given. `connection` is the
+ * person's connection the tool comes from, when it comes from one.
+ */
+function question(toolName: string, input: Record<string, unknown>, connection: string | undefined, why: string | undefined): Question {
+  const given = (name: string) => (typeof input[name] === "string" ? input[name] : "");
+  const file = given("file_path");
+  // Claude Code's reason can carry a terminal's colour codes.
+  const ask = (what: string, detail: string): Question => ({ what, detail, why: why && stripVTControlCharacters(why) });
+  const lines = (mark: string, text: string) => text.split("\n").map((line) => `${mark} ${line}`).join("\n");
+  if (toolName === "Bash") return ask("run this command", given("command"));
+  if (toolName === "WebFetch") return ask("open this page", given("url"));
+  if (toolName === "Read") return ask("read this file", file);
+  if (toolName === "Write") return ask("write this file", `${file}\n\n${given("content")}`);
+  if (toolName === "Edit") {
+    return ask(input.replace_all === true ? "change every match in this file" : "change this file", `${file}\n\n${lines("-", given("old_string"))}\n${lines("+", given("new_string"))}`);
+  }
+  // A connection's tool is named mcp__<connection>__<tool>.
+  return ask(connection ? `use ${toolName.split("__").slice(2).join("__")} from ${connection}` : `use ${toolName}`, JSON.stringify(input, null, 2));
+}
+
+/**
  * Runs a turn through Claude Code. A message the person sends while the turn
  * runs goes into its session: Claude Code reads it at its next pause between
  * steps, and its reply answers both. One that arrives as the turn is finishing
@@ -49,9 +124,16 @@ function inbox() {
  * such as a long command, is still running. When such work finishes, Claude
  * Code wakes the agent by itself, and what it says then is a reply too. The
  * session waits for that work for half an hour at most.
+ *
+ * A turn that is stopped ends through Claude Code's own interrupt, which ends
+ * the command it was running and writes into the session that the person
+ * interrupted it. The session stays whole, so the next turn resumes it and
+ * the agent knows it was stopped. A message that was sent into the turn and
+ * not yet read is dropped from it unread, and one that comes after the stop
+ * is left for the next turn.
  */
 const runTurn: RunTurn = async (turn) => {
-  const { prompt, followUps, seen, replied, cwd, sessionId, configDir, apiKey, model, effort, keepSession, stop } = turn;
+  const { prompt, followUps, seen, replied, ask, limits, cwd, sessionId, configDir, apiKey, model, effort, keepSession, stop } = turn;
   const tools = toolsFor(turn);
   const sidebots = createSdkMcpServer({
     name: "sidebots",
@@ -89,6 +171,9 @@ const runTurn: RunTurn = async (turn) => {
   takeFollowUps();
   const stopListening = followUps?.onArrival(takeFollowUps);
 
+  // Ends Claude Code's process, for a turn that was told to stop and hasn't.
+  const end = new AbortController();
+  let endLate: ReturnType<typeof setTimeout> | null = null;
   const run = query({
     prompt: input.messages(),
     options: {
@@ -97,7 +182,7 @@ const runTurn: RunTurn = async (turn) => {
       persistSession: keepSession,
       model,
       effort,
-      abortController: stop,
+      abortController: end,
       // Claude Code uses a key in its environment ahead of a login in the config folder.
       env: { ...process.env, CLAUDE_CONFIG_DIR: configDir, ...(apiKey && { ANTHROPIC_API_KEY: apiKey }) },
       settingSources: ["user", "project"],
@@ -109,17 +194,33 @@ const runTurn: RunTurn = async (turn) => {
       settings: { autoMemoryEnabled: true, autoMemoryDirectory: join(cwd, "memory"), env: { CLAUDE_CODE_DISABLE_AUTO_MEMORY: "0" } },
       skills: "all",
       mcpServers: { sidebots },
-      allowedTools: tools.map((each) => `mcp__sidebots__${each.name}`),
+      allowedTools: tools.filter((each) => !each.checked).map((each) => `mcp__sidebots__${each.name}`),
       permissionMode: "auto",
-      // Auto mode asks here when its classifier can't decide. Nobody is at
-      // the keyboard, so the agent carries on without the action.
-      canUseTool: async () => ({
-        behavior: "deny",
-        message: "Nobody is available to approve this. Skip it, finish the rest, and say in your reply what you couldn't do.",
-      }),
+      // The agent asks the person in its reply, as anyone does in a chat.
+      disallowedTools: ["AskUserQuestion"],
+      // Auto mode asks here when its classifier can't decide, and the person answers on their phone.
+      canUseTool: async (toolName, input, { signal, mcpServer, decisionReason }) => {
+        const answer = await ask(question(toolName, input, mcpServer?.name, decisionReason), signal);
+        return answer.allowed ? { behavior: "allow", updatedInput: input } : { behavior: "deny", message: answer.words };
+      },
     },
   });
+  const onStop = () => {
+    open = false;
+    endLate = setTimeout(() => end.abort(), STOP_WAIT_MS);
+    void (run as Interruptible)
+      .interrupt({ cancelQueued: true })
+      .then((interrupted) => {
+        // With no message left that Claude Code read and hasn't answered, there is no turn to end, and Claude Code would wait on for one.
+        const dropped = new Set(interrupted?.cancelled);
+        if ([...unanswered].every((id) => dropped.has(id))) end.abort();
+      })
+      .catch(() => undefined)
+      .finally(close);
+  };
+  stop.signal.addEventListener("abort", onStop);
   let contextTokens = 0;
+  let cost = 0;
   try {
     for await (const message of run) {
       const read = readIds(message).filter((id) => unanswered.has(id));
@@ -133,22 +234,35 @@ const runTurn: RunTurn = async (turn) => {
         background = message.tasks.filter((task) => !task.ambient).length;
         settle();
       }
+      if (message.type === "rate_limit_event") limits(limitsIn(message.rate_limit_info, Date.now()));
       if (message.type !== "result") continue;
+      if (stoppedPartWay(message)) {
+        session = message.session_id;
+        cost = message.total_cost_usd;
+        continue;
+      }
       if (message.subtype !== "success") throw new Error(message.errors.join("; ") || message.subtype);
       if (message.is_error) throw new Error(message.result || "Claude Code returned an error");
       // A result names the messages it answers. One for finished background work names none.
       read.forEach((id) => unanswered.delete(id));
       replied(message.result, read);
       session = message.session_id;
+      // Each result carries what the session has cost so far, the turns before this one included.
+      cost = message.total_cost_usd;
       settle();
     }
+  } catch (error) {
+    // Claude Code exits with an error after a turn it was told to stop.
+    if (!stop.signal.aborted) throw error;
   } finally {
     if (waitForBackground) clearTimeout(waitForBackground);
+    if (endLate) clearTimeout(endLate);
+    stop.signal.removeEventListener("abort", onStop);
     open = false;
     stopListening?.();
     input.end();
   }
-  if (session !== null && unanswered.size === 0) return { sessionId: session, contextTokens };
+  if (session !== null && (unanswered.size === 0 || stop.signal.aborted)) return { sessionId: session, contextTokens, cost };
   throw new Error("Claude Code stopped without a reply");
 };
 

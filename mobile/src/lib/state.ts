@@ -8,7 +8,7 @@ import { fetch as streamingFetch } from "expo/fetch";
 import { File } from "expo-file-system";
 import { Image } from "expo-image";
 import Storage from "expo-sqlite/kv-store";
-import type { About, Agent, AgentWithLatest, Avatar, Effort, Found, Message, Model, StreamEvent } from "@server/contract";
+import type { About, Agent, AgentWithLatest, Avatar, Effort, Found, Message, Model, StreamEvent, Usage } from "@server/contract";
 import { ApiError, avatarSheet, behind, isPaired, onPairing, remote, request, unpair, type Behind } from "./api";
 import type { Picked } from "./files";
 
@@ -18,6 +18,8 @@ type State = {
   avatars: Avatar[];
   /** What each agent's page shows, for the agents whose page has been opened. */
   about: Record<string, About>;
+  /** Where the person's plan or API credit goes, as the computer last said. Null until the phone has asked. */
+  usage: Usage | null;
   /**
    * Changes to agents that the server hasn't taken yet. The app shows them
    * at once and keeps them on the phone, over whatever the server says, until
@@ -45,7 +47,7 @@ function saved(): Partial<State> {
   }
 }
 
-const EMPTY = { agents: [], messages: {}, avatars: [], about: {}, pending: {} };
+const EMPTY = { agents: [], messages: {}, avatars: [], about: {}, usage: null, pending: {} };
 
 let state: State = { ...EMPTY, ...saved(), online: true, behind: null };
 const listeners = new Set<() => void>();
@@ -91,6 +93,10 @@ export function useChatColor(agent: Pick<Agent, "avatar_id" | "color"> | undefin
 
 export function useAbout(agentId: string): About | undefined {
   return useSyncExternalStore(subscribe, () => state.about[agentId]);
+}
+
+export function useUsage(): Usage | null {
+  return useSyncExternalStore(subscribe, () => state.usage);
 }
 
 export function useOnline(): boolean {
@@ -152,12 +158,16 @@ function forget(agentId: string): void {
 /**
  * Fetches the newest page of a chat. It joins onto the older messages already
  * saved when they run up to it. When the chat has moved on by more than a
- * page, the page stands alone and the chat pages back from there.
+ * page, the page stands alone and the chat pages back from there. An ask
+ * never goes back to waiting, so one the phone knows has closed stays closed
+ * when the page was fetched before it did.
  */
 export async function loadMessages(agentId: string): Promise<void> {
-  const page = await request<Message[]>(`/agents/${agentId}/messages`);
-  if (page.length === 0) return;
+  const fetched = await request<Message[]>(`/agents/${agentId}/messages`);
+  if (fetched.length === 0) return;
   const known = state.messages[agentId] ?? NO_MESSAGES;
+  const closed = (message: Message) => known.find((had) => had.id === message.id && had.ask && had.ask !== "waiting");
+  const page = fetched.map((message) => (message.ask === "waiting" ? (closed(message) ?? message) : message));
   const joins = known.findIndex((message) => message.id === page[0].id);
   set({ messages: { ...state.messages, [agentId]: joins < 0 ? page : [...known.slice(0, joins), ...page] } });
 }
@@ -218,9 +228,30 @@ export async function send(agentId: string, body: string, files: Picked[] = [], 
   keep(await request<Message>(`/agents/${agentId}/messages`, { method: "POST", body: form }));
 }
 
+/** Answers an agent's ask: whether it may do what it asked about. It fails when the agent has stopped waiting. */
+export async function answerAsk(ask: Message, allow: boolean): Promise<void> {
+  const answered = await request<Message>(`/agents/${ask.agent_id}/asks/${ask.id}`, { method: "POST", body: { allow } });
+  const known = state.messages[ask.agent_id];
+  if (known) set({ messages: { ...state.messages, [ask.agent_id]: upsert(known, answered) } });
+}
+
 /** Replaces the agent's session. The chat stays, and the agent saves what is worth keeping first. */
 export async function freshStart(agentId: string): Promise<void> {
   keep(await request<Message>(`/agents/${agentId}/fresh-start`, { method: "POST" }));
+}
+
+/** Sends again a message the agent never answered, as it was sent, with its files and the message it answers. */
+export async function resend(message: Message): Promise<void> {
+  await request(`/agents/${message.agent_id}/messages/${message.id}/resend`, { method: "POST" });
+}
+
+/**
+ * Stops the turn the agent is running. The chat says "Stopped" once it has
+ * ended, and the agent keeps what it had in mind. Unlike a change to an
+ * agent, a stop doesn't wait on the phone for a server that is out of reach.
+ */
+export async function stop(agentId: string): Promise<void> {
+  await request(`/agents/${agentId}/stop`, { method: "POST" });
 }
 
 export async function createAgent(name: string, avatarId: string): Promise<Agent> {
@@ -291,6 +322,11 @@ export async function deleteAgent(agentId: string): Promise<void> {
 export async function loadAbout(agentId: string): Promise<void> {
   const about = await request<About>(`/agents/${agentId}/about`);
   set({ about: { ...state.about, [agentId]: about } });
+}
+
+/** Fetches where the person's plan or API credit goes: what their agents used lately, and what is left of their plan. */
+export async function loadUsage(): Promise<void> {
+  set({ usage: await request<Usage>("/usage") });
 }
 
 export async function removeJob(agentId: string, jobId: string): Promise<void> {

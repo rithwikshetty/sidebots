@@ -210,7 +210,7 @@ It updates itself with Sparkle, from an update feed at `sidebots.app`, and waits
 
 ### The site
 
-`sidebots.app` is a static page served by Cloudflare: what Sidebots is, the warning that agents act without asking, the computer download, the App Store link, the privacy policy the App Store asks for, and the update feed.
+`sidebots.app` is a static page served by Cloudflare: what Sidebots is, the warning that agents act on their own, the computer download, the App Store link, the privacy policy the App Store asks for, and the update feed.
 
 ## Testing
 

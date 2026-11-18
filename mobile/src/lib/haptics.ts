@@ -6,6 +6,8 @@ const quietly = (feedback: Promise<void>) => void feedback.catch(() => {});
 export const haptics = {
   /** A message left the composer. */
   send: () => quietly(Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light)),
+  /** The agent was told to stop. */
+  stop: () => quietly(Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light)),
   /** The microphone started or stopped listening. */
   listen: () => quietly(Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light)),
   /** The camera's shutter was pressed. */

@@ -1,14 +1,14 @@
 import { test } from "node:test";
 import { createDecipheriv } from "node:crypto";
 import assert from "node:assert/strict";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, statSync, truncateSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { openStore } from "../src/store.ts";
 import { createQueue, type Turn, type TurnResult } from "../src/runner.ts";
 import { claude } from "../src/claude.ts";
 import { createApi } from "../src/api.ts";
-import { CONTRACT_VERSION } from "../src/contract.ts";
+import { CONTRACT_VERSION, MESSAGE_BYTES } from "../src/contract.ts";
 import { startPush, type Ended, type Notice, type Sealed } from "../src/push.ts";
 
 /** A turn's reply, as a fake provider gives it. No reply means the fake gave its replies itself. */
@@ -70,7 +70,7 @@ function setup(answer: (turn: Turn) => Promise<Answer>, now: () => number = Date
   return { home, store, queue, call, say, app, phoneOf, pair, open };
 }
 
-const reply = (text: string, sessionId = "session-1", contextTokens = 0): Answer => ({ reply: text, sessionId, contextTokens });
+const reply = (text: string, sessionId = "session-1", contextTokens = 0, cost = 0): Answer => ({ reply: text, sessionId, contextTokens, cost });
 
 const ME = "Alex";
 const HER = "Robin";
@@ -571,8 +571,11 @@ test("a reply or a failed turn notifies the person's phones, and a phone Apple h
 test("the Live Activity a phone shows for a working agent ends with the agent's work, on the state its avatar is left in", async () => {
   let fail = false;
   let finish = () => {};
-  const { store, queue, call, say, phoneOf } = setup(async () => {
-    await new Promise<void>((resolve) => (finish = resolve));
+  const { store, queue, call, say, phoneOf } = setup(async (turn) => {
+    // A prompt that starts a session comes with the chat so far, so the newest message is looked for first.
+    if (turn.prompt.text.includes("clear the old folder")) await turn.ask({ what: "run this command", detail: "rm -rf ~/old" }, new AbortController().signal);
+    else if (turn.prompt.text.includes("wait there")) return untilStopped(turn);
+    else await new Promise<void>((resolve) => (finish = resolve));
     if (fail) throw new Error("Signed out.");
     return reply("Booked.");
   });
@@ -626,6 +629,27 @@ test("the Live Activity a phone shows for a working agent ends with the agent's 
   await work(() => call(ME, "POST", `/agents/${agent.id}/fresh-start`));
   assert.deepEqual(ended.at(-1), [activity, { ended: "resting" }]);
   assert.equal(ended.length, 3);
+
+  // A turn the person stops leaves the agent resting too.
+  await say(ME, agent.id, "wait there");
+  await new Promise((resolve) => setTimeout(resolve, 1));
+  assert.equal((await token(ME)).status, 200);
+  await call(ME, "POST", `/agents/${agent.id}/stop`);
+  await queue.kick(agent.id);
+  assert.deepEqual(ended.at(-1), [activity, { ended: "resting" }]);
+  assert.equal(ended.length, 4);
+
+  // An agent that waits on an ask is still at work, so its activity stays until the turn the answer lets go on has ended.
+  await say(ME, agent.id, "clear the old folder");
+  await new Promise((resolve) => setTimeout(resolve, 1));
+  assert.equal((await token(ME)).status, 200);
+  const asked = ((await call(ME, "GET", `/agents/${agent.id}/messages`)).json as { id: string; ask: string | null }[]).at(-1)!;
+  assert.equal(asked.ask, "waiting");
+  assert.equal(ended.length, 4);
+  await call(ME, "POST", `/agents/${agent.id}/asks/${asked.id}`, { allow: true });
+  await queue.kick(agent.id);
+  assert.deepEqual(ended.at(-1), [activity, { ended: "replied" }]);
+  assert.equal(ended.length, 5);
 });
 
 test("an agent's name, avatar, model and effort can be changed, and its turns run on its model at its effort", async () => {
@@ -667,7 +691,7 @@ test("an agent's chat takes its avatar's colour until the person picks one, and 
   for (const color of ["teal", "#0B7A6", 7]) assert.equal((await call(ME, "PATCH", `/agents/${agent.id}`, { color })).status, 400);
 });
 
-test("deleting an agent removes its messages, its jobs, its folder and its Claude Code sessions", async () => {
+test("deleting an agent removes its messages, its jobs, what it used, its folder and its Claude Code sessions", async () => {
   const { home, store, queue, call, say } = setup(async (turn) => {
     turn.scheduleJob({ what: "check", every_minutes: 5 });
     return reply("ok");
@@ -688,8 +712,113 @@ test("deleting an agent removes its messages, its jobs, its folder and its Claud
   assert.deepEqual((await call("Sam", "GET", "/agents")).json, []);
   assert.equal((await call("Sam", "GET", `/agents/${agent.id}/messages`)).status, 404);
   assert.deepEqual(store.jobs(agent.id), []);
+  assert.deepEqual((await call("Sam", "GET", "/usage")).json.used, []);
   assert.equal(existsSync(folder), false);
   assert.equal(existsSync(sessions), false);
+});
+
+test("each agent's turns are counted with what they cost, a job's runs apart from its replies, for seven days and for their owner alone", async (t) => {
+  t.mock.timers.enable({ apis: ["Date"], now: new Date(2026, 10, 16, 9, 0) });
+  // Claude Code says what a session has cost in all. The chat's session goes on from turn to turn, and each of a job's runs is a session of its own.
+  let chat = 0;
+  let runs = 0;
+  const { queue, call, say } = setup(async (turn) => {
+    if (turn.prompt.text === "watch the price") turn.scheduleJob({ what: "Check the price.", every_minutes: 5 });
+    if (turn.prompt.text.startsWith("This is a run of one of your jobs")) return reply("SILENT", `run-${++runs}`, 0, 0.125);
+    return reply("ok", "chat", 0, (chat += turn.prompt.text === "watch the price" ? 0.5 : 0.25));
+  }, () => Date.now());
+  const agent = (await call(ME, "POST", "/agents", { name: "Scout", avatarId: "moss" })).json;
+  const used = async (who: string) =>
+    (await call(who, "GET", "/usage")).json.used.map((each: { agent_id: string; kind: string; turns: number; cost: number }) => [each.agent_id, each.kind, each.turns, each.cost]).sort();
+
+  await say(ME, agent.id, "watch the price");
+  await queue.kick(agent.id);
+  for (let run = 0; run < 2; run++) {
+    t.mock.timers.tick(5 * 60_000);
+    await queue.kick(agent.id);
+  }
+  await say(ME, agent.id, "buy it");
+  await queue.kick(agent.id);
+  await call(ME, "POST", `/agents/${agent.id}/fresh-start`);
+  await queue.kick(agent.id);
+
+  assert.deepEqual(await used(ME), [
+    [agent.id, "job", 2, 0.25],
+    [agent.id, "memory", 1, 0.25],
+    [agent.id, "reply", 2, 0.75],
+  ]);
+  assert.deepEqual(await used(HER), []);
+
+  // A week after the first reply only the later turns count, and then none.
+  t.mock.timers.tick(7 * 24 * 60 * 60_000 - 10 * 60_000);
+  assert.deepEqual(await used(ME), [
+    [agent.id, "job", 2, 0.25],
+    [agent.id, "memory", 1, 0.25],
+    [agent.id, "reply", 1, 0.25],
+  ]);
+  t.mock.timers.tick(10 * 60_000);
+  assert.deepEqual(await used(ME), []);
+});
+
+test("a session that ran turns before they were counted costs nothing on its first counted turn, and one whose count starts again costs all of it", async () => {
+  const costs = [5, 6, 0.5];
+  const { store, queue, call, say } = setup(async () => reply("ok", "old", 0, costs.shift()));
+  const agent = (await call(ME, "POST", "/agents", { name: "Money", avatarId: "cog" })).json;
+  store.setSession(agent.id, "old");
+  const cost = async () => (await call(ME, "GET", "/usage")).json.used[0].cost;
+
+  await say(ME, agent.id, "budget");
+  await queue.kick(agent.id);
+  assert.equal(await cost(), 0);
+  await say(ME, agent.id, "and savings");
+  await queue.kick(agent.id);
+  assert.equal(await cost(), 1);
+  await say(ME, agent.id, "and the deposit");
+  await queue.kick(agent.id);
+  assert.equal(await cost(), 1.5);
+});
+
+test("a plan's limits stand as the provider last said while a turn ran, even one that failed, until they reset; an API key has none", async (t) => {
+  const start = new Date(2026, 10, 16, 9, 0).getTime();
+  t.mock.timers.enable({ apis: ["Date"], now: start });
+  const HOUR = 60 * 60_000;
+  const { store, queue, call, say } = setup(async (turn) => {
+    turn.limits([
+      { name: "Weekly limit", used: turn.prompt.text === "hello" ? 0.32 : 0.4, resets_at: start + 48 * HOUR, at: Date.now() },
+      ...(turn.prompt.text === "hello" ? [{ name: "5-hour limit", used: 1.02, resets_at: start + 2 * HOUR, at: Date.now() }] : []),
+    ]);
+    if (turn.prompt.text === "hello") throw new Error("You've hit your limit · resets 11am");
+    return reply("ok");
+  });
+  const agent = (await call(ME, "POST", "/agents", { name: "Gym", avatarId: "hop" })).json;
+  const accounts = async (who: string) => (await call(who, "GET", "/usage")).json.accounts;
+  assert.deepEqual(await accounts(ME), [{ provider: "claude", apiKey: false, limits: [] }]);
+
+  await say(ME, agent.id, "hello");
+  await queue.kick(agent.id);
+  assert.deepEqual(await accounts(ME), [
+    {
+      provider: "claude",
+      apiKey: false,
+      limits: [
+        { name: "5-hour limit", used: 1.02, resets_at: start + 2 * HOUR, at: start },
+        { name: "Weekly limit", used: 0.32, resets_at: start + 48 * HOUR, at: start },
+      ],
+    },
+  ]);
+  assert.deepEqual(await accounts(HER), [{ provider: "claude", apiKey: false, limits: [] }]);
+
+  // A later turn says where one limit stands now. The other keeps what was last said of it, and goes once it has reset.
+  t.mock.timers.tick(HOUR);
+  await say(ME, agent.id, "hello again");
+  await queue.kick(agent.id);
+  const weekly = { name: "Weekly limit", used: 0.4, resets_at: start + 48 * HOUR, at: start + HOUR };
+  assert.deepEqual((await accounts(ME))[0].limits, [{ name: "5-hour limit", used: 1.02, resets_at: start + 2 * HOUR, at: start }, weekly]);
+  t.mock.timers.tick(HOUR);
+  assert.deepEqual((await accounts(ME))[0].limits, [weekly]);
+
+  store.setApiKey(store.personByName(ME)!.id, "claude", "sk-ant-alexs-key");
+  assert.deepEqual(await accounts(ME), [{ provider: "claude", apiKey: true, limits: [] }]);
 });
 
 test("a job runs when its time comes, in a session of its own, and only a run with something to say sends a message", async () => {
@@ -841,7 +970,7 @@ test("a message sent while the agent works goes into the turn it is running, and
     prompts.push(later.text);
     turn.seen([later.id]);
     turn.replied("Booked the band and the florist.", [turn.prompt.id, later.id]);
-    return { sessionId: "session-1", contextTokens: 0 };
+    return { sessionId: "session-1", contextTokens: 0, cost: 0 };
   });
   const agent = (await call(ME, "POST", "/agents", { name: "Wedding", avatarId: "mochi" })).json;
   await say(ME, agent.id, "book the band");
@@ -904,6 +1033,59 @@ test("an agent's updates while it works wait a minute, then come no more than ev
   assert.deepEqual(sent.map((notice) => [notice.body, notice.badge]), [["Here are the three flats.", 1]]);
 });
 
+test("an agent's files go with its next message, an update or its reply, and open as the person's own do", async () => {
+  let time = new Date(2026, 10, 16, 9, 0).getTime();
+  const answers: string[] = [];
+  const { home, queue, call, say, app, phoneOf } = setup(async (turn) => {
+    if (turn.prompt.text !== "chart my week") {
+      // A run of the job: a file sent with nothing to say goes nowhere, and one sent with a reply goes with it.
+      writeFileSync(join(turn.cwd, "week.png"), "this week");
+      turn.sendFiles(["week.png"]);
+      return reply(time > new Date(2026, 10, 16, 9, 10).getTime() ? "Your week so far." : "SILENT");
+    }
+    turn.scheduleJob({ what: "Chart the week.", every_minutes: 5 });
+    writeFileSync(join(turn.cwd, "chart.png"), "first draft");
+    writeFileSync(join(home, "Week 47 report.pdf"), "the report");
+    answers.push(turn.sendFiles(["chart.png", "missing.png"]));
+    answers.push(turn.sendFiles(["chart.png"]));
+    // What is sent is the file as it was when the agent named it, whatever becomes of it after.
+    writeFileSync(join(turn.cwd, "chart.png"), "final");
+    time += 2 * 60_000;
+    turn.sendUpdate!("Here is the chart so far.");
+    answers.push(turn.sendFiles(["chart.png", join(home, "Week 47 report.pdf")]));
+    // Files that would take the message past what it can carry are left out, and the ones already added stay.
+    writeFileSync(join(turn.cwd, "film.mov"), "");
+    truncateSync(join(turn.cwd, "film.mov"), MESSAGE_BYTES);
+    answers.push(turn.sendFiles(["film.mov"]));
+    return reply("Both are here.");
+  }, () => time);
+  const agent = (await call(ME, "POST", "/agents", { name: "Scout", avatarId: "moss" })).json;
+  await say(ME, agent.id, "chart my week");
+  await queue.kick(agent.id);
+  for (const minutes of [5, 10]) {
+    time += minutes * 60_000;
+    await queue.kick(agent.id);
+  }
+
+  assert.deepEqual(answers, [
+    "There is no file at missing.png. Nothing was added, so give the paths again.",
+    "Added. They go with the next message you send.",
+    "Added. They go with the next message you send.",
+    "A message carries up to 95 MB of files. Nothing was added, so send fewer or smaller ones.",
+  ]);
+  const [, update, answer, fromJob, ...rest] = (await call(ME, "GET", `/agents/${agent.id}/messages`)).json as { body: string; attachments: string[] }[];
+  assert.deepEqual(rest, []);
+  const names = (message: { attachments: string[] }) => message.attachments.map((path) => path.replace(/^attachments\/[0-9a-f]{8}-/, ""));
+  assert.deepEqual([update.body, names(update)], ["Here is the chart so far.", ["chart.png"]]);
+  assert.deepEqual([answer.body, names(answer)], ["Both are here.", ["chart.png", "Week-47-report.pdf"]]);
+  assert.deepEqual([fromJob.body, names(fromJob)], ["Your week so far.", ["week.png"]]);
+
+  const open = async (path: string) => app.request(`/agents/${agent.id}/${path}`, { headers: phoneOf(ME) });
+  assert.equal(await (await open(update.attachments[0])).text(), "first draft");
+  assert.equal(await (await open(answer.attachments[0])).text(), "final");
+  assert.equal(await (await open(answer.attachments[1])).text(), "the report");
+});
+
 test("a job's run can't send updates", async () => {
   let time = new Date(2026, 10, 16, 9, 0).getTime();
   const updates: boolean[] = [];
@@ -918,4 +1100,394 @@ test("a job's run can't send updates", async () => {
   time += 5 * 60_000;
   await queue.kick(agent.id);
   assert.deepEqual(updates, [false]);
+});
+
+test("an agent asks before it does what its provider won't decide, waits for the person's answer, and goes on by it", async () => {
+  // Longer than a notification shows, with its end the part that matters.
+  const long = `echo ${"a".repeat(3000)} && rm -rf ~/Downloads`;
+  const answers: string[] = [];
+  const { store, queue, call, say, phoneOf, open } = setup(async (turn) => {
+    const question = turn.prompt.text === "and the downloads" ? { what: "run this command", detail: long } : { what: "run this command", detail: "rm -rf ~/old", why: "It deletes\na folder." };
+    const answer = await turn.ask(question, new AbortController().signal);
+    answers.push(answer.allowed ? "allowed" : answer.words);
+    return reply(answer.allowed ? "Deleted." : "Left it.");
+  });
+  const sent: Notice[] = [];
+  startPush(store, async (_device, notice) => {
+    sent.push(open(phoneOf(ME), notice));
+    return "sent";
+  });
+  await call(ME, "PUT", "/push-token", { token: "a".repeat(64), environment: "production" });
+  const agent = (await call(ME, "POST", "/agents", { name: "Tidy", avatarId: "mochi" })).json;
+  await new Promise((resolve) => setTimeout(resolve, 1));
+  const chat = async () => (await call(ME, "GET", `/agents/${agent.id}/messages`)).json as { id: string; sender: string; body: string; ask: string | null }[];
+
+  await say(ME, agent.id, "clear out the old folder");
+  const first = (await chat()).at(-1)!;
+  assert.deepEqual([first.sender, first.ask, first.body], ["agent", "waiting", "Can I run this command?\n\n```\nrm -rf ~/old\n```\n\n> It deletes a folder."]);
+  // The agent is still at work, and its ask is something to read.
+  const [row] = (await call(ME, "GET", "/agents")).json;
+  assert.deepEqual([row.working, row.unread], [true, 1]);
+  assert.equal((await call(HER, "POST", `/agents/${agent.id}/asks/${first.id}`, { allow: true })).status, 404);
+  assert.equal((await call(ME, "POST", `/agents/${agent.id}/asks/${first.id}`, {})).status, 400);
+  const allowed = await call(ME, "POST", `/agents/${agent.id}/asks/${first.id}`, { allow: true });
+  assert.deepEqual([allowed.status, allowed.json.ask], [200, "allowed"]);
+  // An ask takes one answer.
+  assert.equal((await call(ME, "POST", `/agents/${agent.id}/asks/${first.id}`, { allow: false })).status, 409);
+  await queue.kick(agent.id);
+
+  await say(ME, agent.id, "and the downloads");
+  const second = (await chat()).at(-1)!;
+  // The chat shows all of what Allow would let happen.
+  assert.equal(second.body, `Can I run this command?\n\n\`\`\`\n${long}\n\`\`\``);
+  assert.equal((await call(ME, "POST", `/agents/${agent.id}/asks/${second.id}`, { allow: false })).json.ask, "refused");
+  await queue.kick(agent.id);
+
+  assert.equal(answers[0], "allowed");
+  assert.match(answers[1], /^Alex said no to this\./);
+  assert.deepEqual(
+    (await chat()).map((message) => [message.sender, message.body.split("\n")[0], message.ask]),
+    [
+      ["person", "clear out the old folder", null],
+      ["agent", "Can I run this command?", "allowed"],
+      ["agent", "Deleted.", null],
+      ["person", "and the downloads", null],
+      ["agent", "Can I run this command?", "refused"],
+      ["agent", "Left it.", null],
+    ],
+  );
+  // The ask notifies the phone as a reply does. Its answer notifies nobody.
+  assert.deepEqual(sent.map((notice) => notice.body.slice(0, 60)), ["Can I run this command? rm -rf ~/old It deletes a folder.", "Deleted.", `Can I run this command? echo ${"a".repeat(31)}`, "Left it."]);
+});
+
+test("an ask closes unanswered when the person sends a message instead, takes too long, or the turn ends, and a restart closes the ones it left", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const answers: string[] = [];
+  const withdrawn = new AbortController();
+  const { store, queue, call, say } = setup(async (turn) => {
+    const later: string[] = [];
+    turn.followUps!.onArrival(() => later.push(...turn.followUps!.take().map((each) => each.id)));
+    const asking = turn.ask({ what: "run this command", detail: "make clean" }, withdrawn.signal);
+    if (turn.prompt.text === "and crash") throw new Error("Claude Code stopped.");
+    const answer = await asking;
+    answers.push(answer.allowed ? "allowed" : answer.words);
+    turn.seen(later);
+    turn.replied("Done.", [turn.prompt.id, ...later]);
+    return { sessionId: "session-1", contextTokens: 0, cost: 0 };
+  });
+  const agent = (await call(ME, "POST", "/agents", { name: "Tidy", avatarId: "mochi" })).json;
+  const chat = async () => (await call(ME, "GET", `/agents/${agent.id}/messages`)).json as { id: string; ask: string | null }[];
+  const asks = async () => (await chat()).flatMap((message) => message.ask ?? []);
+
+  await say(ME, agent.id, "tidy up");
+  assert.deepEqual(await asks(), ["waiting"]);
+  await say(ME, agent.id, "wait, not the build folder");
+  await queue.kick(agent.id);
+
+  await say(ME, agent.id, "tidy up again");
+  assert.deepEqual(await asks(), ["unanswered", "waiting"]);
+  t.mock.timers.tick(30 * 60_000);
+  await queue.kick(agent.id);
+
+  // This turn ends with its ask still waiting.
+  await say(ME, agent.id, "and crash");
+  await queue.kick(agent.id);
+
+  // Claude Code takes this one back.
+  await say(ME, agent.id, "once more");
+  assert.deepEqual(await asks(), ["unanswered", "unanswered", "unanswered", "waiting"]);
+  withdrawn.abort();
+  await queue.kick(agent.id);
+
+  assert.match(answers[0], /^Alex sent a message instead of answering\./);
+  assert.match(answers[1], /^Alex didn't answer in time\./);
+  assert.deepEqual(await asks(), ["unanswered", "unanswered", "unanswered", "unanswered"]);
+  // Nothing is left for an answer to reach.
+  const last = (await chat()).findLast((message) => message.ask)!;
+  assert.equal((await call(ME, "POST", `/agents/${agent.id}/asks/${last.id}`, { allow: true })).status, 409);
+
+  // A server that stops mid-turn leaves its ask waiting, and the next start closes it.
+  store.addMessage(agent.id, "agent", "Can I run this command?", "done", { ask: "waiting" });
+  store.requeueInterrupted();
+  assert.deepEqual((await asks()).at(-1), "unanswered");
+});
+
+/** A turn that works until it is stopped, as a provider's does: it then ends with no reply, in the session it had. */
+const untilStopped = (turn: Turn, sessionId = "session-1") =>
+  new Promise<Answer>((resolve) => turn.stop.signal.addEventListener("abort", () => resolve({ sessionId, contextTokens: 0, cost: 0 })));
+
+test("stopping an agent ends the turn it is running, says so in the chat, and the next message carries on in the same session", async () => {
+  const turns: Turn[] = [];
+  const { store, queue, call, say, phoneOf, open } = setup(async (turn) => {
+    turns.push(turn);
+    return turn.prompt.text === "book the band" ? untilStopped(turn) : reply("Carrying on.");
+  });
+  const sent: Notice[] = [];
+  startPush(store, async (_device, notice) => {
+    sent.push(open(phoneOf(ME), notice));
+    return "sent";
+  });
+  await call(ME, "PUT", "/push-token", { token: "a".repeat(64), environment: "production" });
+  const agent = (await call(ME, "POST", "/agents", { name: "Wedding", avatarId: "mochi" })).json;
+  const shown = async () => (await call(ME, "GET", `/agents/${agent.id}/messages`)).json.map((m: { sender: string; body: string; status: string }) => [m.sender, m.body, m.status]);
+
+  // With nothing running there is nothing to stop, and nothing is said.
+  assert.equal((await call(ME, "POST", `/agents/${agent.id}/stop`)).status, 200);
+  assert.deepEqual(await shown(), []);
+
+  await say(ME, agent.id, "book the band");
+  const working = queue.kick(agent.id);
+  assert.equal((await call(HER, "POST", `/agents/${agent.id}/stop`)).status, 404);
+  assert.equal(turns[0].stop.signal.aborted, false);
+  assert.equal((await call(ME, "POST", `/agents/${agent.id}/stop`)).status, 200);
+  await working;
+
+  assert.deepEqual(await shown(), [
+    ["person", "book the band", "done"],
+    ["sidebots", "Stopped", "done"],
+  ]);
+  // The agent rests, with the session the stopped turn was in. Stopping it is nothing to read or be told of.
+  const [stopped] = (await call(ME, "GET", "/agents")).json;
+  assert.deepEqual([stopped.working, stopped.session_id, stopped.unread], [false, "session-1", 0]);
+  assert.deepEqual(sent, []);
+
+  await say(ME, agent.id, "carry on");
+  await queue.kick(agent.id);
+  assert.deepEqual([turns[1].sessionId, turns[1].prompt.text], ["session-1", "carry on"]);
+  assert.deepEqual((await shown()).slice(-2), [
+    ["person", "carry on", "done"],
+    ["agent", "Carrying on.", "done"],
+  ]);
+});
+
+test("a stopped turn leaves what the agent never read to send again, and a message sent after the stop gets its own turn", async () => {
+  const turns: Turn[] = [];
+  let read: (() => void) | undefined;
+  let end: (() => void) | undefined;
+  const { queue, call, say } = setup(async (turn) => {
+    turns.push(turn);
+    if (turns.length > 1) return reply("On it.");
+    // The agent reads the first follow-up at a pause, then works on. Like a provider, the turn takes what is sent into it until it is stopped, and then takes a moment to end, in which it reports one more message read.
+    await new Promise<void>((resolve) => (read = resolve));
+    turn.seen(turn.followUps!.take().map((each) => each.id));
+    const taken: { id: string; text: string }[] = [];
+    const stopTaking = turn.followUps!.onArrival(() => taken.push(...turn.followUps!.take()));
+    await new Promise<void>((resolve) => turn.stop.signal.addEventListener("abort", () => resolve()));
+    stopTaking();
+    turn.seen(taken.filter((each) => each.text === "and a DJ").map((each) => each.id));
+    await new Promise<void>((resolve) => (end = resolve));
+    return { sessionId: "session-1", contextTokens: 0, cost: 0 };
+  });
+  const agent = (await call(ME, "POST", "/agents", { name: "Wedding", avatarId: "mochi" })).json;
+  await say(ME, agent.id, "book the band");
+  const working = queue.kick(agent.id);
+  await say(ME, agent.id, "and the florist");
+  read!();
+  await say(ME, agent.id, "and a cake");
+  await say(ME, agent.id, "and a DJ");
+  await call(ME, "POST", `/agents/${agent.id}/stop`);
+  await say(ME, agent.id, "only the band, after all");
+  end!();
+  await working;
+
+  const messages = (await call(ME, "GET", `/agents/${agent.id}/messages`)).json;
+  assert.deepEqual(
+    messages.map((m: { sender: string; body: string; status: string }) => [m.sender, m.body, m.status]),
+    [
+      ["person", "book the band", "done"],
+      ["person", "and the florist", "done"],
+      ["person", "and a cake", "failed"],
+      ["person", "and a DJ", "done"],
+      ["person", "only the band, after all", "done"],
+      ["sidebots", "Stopped", "done"],
+      ["agent", "On it.", "done"],
+    ],
+  );
+  assert.deepEqual([turns.length, turns[1].prompt.text, turns[1].sessionId], [2, "only the band, after all", "session-1"]);
+});
+
+test("stopping a job's run ends it with no reply, leaves a message that waited for it to send again, and the job keeps to its schedule", async () => {
+  let time = new Date(2026, 10, 16, 9, 0).getTime();
+  const runs: Turn[] = [];
+  const { store, queue, call, say } = setup(async (turn) => {
+    if (turn.prompt.text === "watch the price") {
+      turn.scheduleJob({ what: "Check the price.", every_minutes: 5 });
+      return reply("Watching.");
+    }
+    runs.push(turn);
+    return untilStopped(turn, "job-session");
+  }, () => time);
+  const agent = (await call(ME, "POST", "/agents", { name: "Scout", avatarId: "moss" })).json;
+  await say(ME, agent.id, "watch the price");
+  await queue.kick(agent.id);
+
+  time += 5 * 60_000;
+  const running = queue.kick(agent.id);
+  await say(ME, agent.id, "any drop yet?");
+  time += 60_000;
+  await call(ME, "POST", `/agents/${agent.id}/stop`);
+  await running;
+
+  const messages = (await call(ME, "GET", `/agents/${agent.id}/messages`)).json;
+  assert.deepEqual(messages.map((m: { sender: string; body: string; status: string }) => [m.sender, m.body, m.status]), [
+    ["person", "watch the price", "done"],
+    ["agent", "Watching.", "done"],
+    ["person", "any drop yet?", "failed"],
+    ["sidebots", "Stopped", "done"],
+  ]);
+  assert.equal(runs.length, 1);
+  // The next run counts from when this one was stopped, and the chat's session is the one it had.
+  assert.equal(store.jobs(agent.id)[0].next_at, time + 5 * 60_000);
+  assert.equal((await call(ME, "GET", "/agents")).json[0].session_id, "session-1");
+});
+
+test("stopping a fresh start calls it off, and the agent keeps its session", async () => {
+  const turns: Turn[] = [];
+  const { queue, call, say } = setup(async (turn) => {
+    turns.push(turn);
+    return turn.prompt.text.startsWith("This session is about to be replaced") ? untilStopped(turn) : reply("sure");
+  });
+  const agent = (await call(ME, "POST", "/agents", { name: "Wedding", avatarId: "mochi" })).json;
+  await say(ME, agent.id, "book the band");
+  await queue.kick(agent.id);
+
+  await call(ME, "POST", `/agents/${agent.id}/fresh-start`);
+  await call(ME, "POST", `/agents/${agent.id}/stop`);
+  await say(ME, agent.id, "any news?");
+  await queue.kick(agent.id);
+
+  const messages = (await call(ME, "GET", `/agents/${agent.id}/messages`)).json;
+  assert.deepEqual(
+    messages.map((m: { sender: string; body: string; status: string }) => [m.sender, m.body, m.status]),
+    [
+      ["person", "book the band", "done"],
+      ["agent", "sure", "done"],
+      ["sidebots", "Fresh start", "done"],
+      ["sidebots", "Stopped", "done"],
+      ["person", "any news?", "done"],
+      ["agent", "sure", "done"],
+    ],
+  );
+  assert.deepEqual([turns[2].sessionId, turns[2].prompt.text], ["session-1", "any news?"]);
+});
+
+test("deleting an agent stops the turn it is running, and runs nothing that waited for it", async () => {
+  const turns: Turn[] = [];
+  const { store, queue, call, say } = setup(async (turn) => {
+    turns.push(turn);
+    return untilStopped(turn);
+  });
+  const agent = (await call(ME, "POST", "/agents", { name: "Scout", avatarId: "moss" })).json;
+  await call(ME, "POST", `/agents/${agent.id}/fresh-start`);
+  const working = queue.kick(agent.id);
+  await say(ME, agent.id, "find me a flat");
+  const said: string[] = [];
+  store.onChange((change) => "message" in change && said.push(change.message.body));
+
+  assert.equal((await call(ME, "DELETE", `/agents/${agent.id}`)).status, 200);
+  await working;
+  assert.deepEqual([turns.length, said], [1, []]);
+  assert.deepEqual((await call(ME, "GET", "/agents")).json, []);
+});
+
+test("a message the agent never answered is sent again as it was, with its file and the message it answers", async () => {
+  const prompts: string[] = [];
+  const { queue, call, app, phoneOf } = setup(async (turn) => {
+    prompts.push(turn.prompt.text);
+    if (prompts.length === 2) throw new Error("Signed out.");
+    return reply("It is a receipt.");
+  });
+  const agent = (await call(ME, "POST", "/agents", { name: "Scout", avatarId: "moss" })).json;
+  const first = (await call(ME, "POST", `/agents/${agent.id}/messages`, { body: "what is this?" })).json;
+  await queue.kick(agent.id);
+  const [, answer] = (await call(ME, "GET", `/agents/${agent.id}/messages`)).json;
+
+  // A photo with no words, in answer to the agent's reply, in a turn that fails.
+  const form = new FormData();
+  form.append("body", "");
+  form.append("replyTo", answer.id);
+  form.append("files", new File(["jpeg bytes"], "IMG_0042.jpg", { type: "image/jpeg" }));
+  const photo = await (await app.request(`/agents/${agent.id}/messages`, { method: "POST", headers: phoneOf(ME), body: form })).json();
+  await queue.kick(agent.id);
+  const status = async () => (await call(ME, "GET", `/agents/${agent.id}/messages`)).json.find((m: { id: string }) => m.id === photo.id).status;
+  assert.equal(await status(), "failed");
+
+  assert.equal((await call(HER, "POST", `/agents/${agent.id}/messages/${photo.id}/resend`)).status, 404);
+  assert.equal((await call(ME, "POST", `/agents/${agent.id}/messages/${first.id}/resend`)).status, 404);
+  assert.equal((await call(ME, "POST", `/agents/${agent.id}/messages/${photo.id}/resend`)).status, 200);
+  await queue.kick(agent.id);
+
+  assert.equal(await status(), "done");
+  assert.ok(prompts[2].startsWith('Replying to your message: "It is a receipt."') && prompts[2].endsWith(`Sent with this message: ${photo.attachments[0]}`));
+  assert.equal(prompts[2], prompts[1]);
+});
+
+test("a stop that lands as the last reply comes in says nothing, unless a message of the person's was still unread", async () => {
+  let end: (() => void) | undefined;
+  let turns = 0;
+  // Each turn replies, then takes a moment to end, in which it takes no more messages.
+  const { queue, call, say } = setup(async (turn) => {
+    turns++;
+    turn.replied("Booked.", [turn.prompt.id]);
+    await new Promise<void>((resolve) => (end = resolve));
+    return { sessionId: "session-1", contextTokens: 0, cost: 0 };
+  });
+  const agent = (await call(ME, "POST", "/agents", { name: "Wedding", avatarId: "mochi" })).json;
+  const shown = async () => (await call(ME, "GET", `/agents/${agent.id}/messages`)).json.map((m: { sender: string; body: string; status: string }) => [m.sender, m.body, m.status]);
+
+  await say(ME, agent.id, "book the band");
+  let working = queue.kick(agent.id);
+  await call(ME, "POST", `/agents/${agent.id}/stop`);
+  end!();
+  await working;
+  const replied = [
+    ["person", "book the band", "done"],
+    ["agent", "Booked.", "done"],
+  ];
+  assert.deepEqual(await shown(), replied);
+
+  await say(ME, agent.id, "and the florist");
+  working = queue.kick(agent.id);
+  await say(ME, agent.id, "and a cake");
+  await call(ME, "POST", `/agents/${agent.id}/stop`);
+  end!();
+  await working;
+  assert.deepEqual(await shown(), [
+    ...replied,
+    ["person", "and the florist", "done"],
+    ["agent", "Booked.", "done"],
+    ["person", "and a cake", "failed"],
+    ["sidebots", "Stopped", "done"],
+  ]);
+  assert.equal(turns, 2);
+});
+
+test("stopping a turn that waits on an ask closes the ask, and the turn is counted with what it cost", async () => {
+  const answers: string[] = [];
+  const { queue, call, say } = setup(async (turn) => {
+    void turn.ask({ what: "run this command", detail: "rm -rf ~/old" }, new AbortController().signal).then((answer) => answers.push(answer.allowed ? "allowed" : answer.words));
+    return { ...(await untilStopped(turn)), cost: 0.5 };
+  });
+  const agent = (await call(ME, "POST", "/agents", { name: "Tidy", avatarId: "mochi" })).json;
+  const chat = async () => (await call(ME, "GET", `/agents/${agent.id}/messages`)).json as { id: string; sender: string; body: string; status: string; ask: string | null }[];
+
+  await say(ME, agent.id, "clear out the old folder");
+  const ask = (await chat()).at(-1)!;
+  assert.equal(ask.ask, "waiting");
+  await call(ME, "POST", `/agents/${agent.id}/stop`);
+  await queue.kick(agent.id);
+
+  assert.deepEqual(
+    (await chat()).map((message) => [message.sender, message.body.split("\n")[0], message.status, message.ask]),
+    [
+      ["person", "clear out the old folder", "done", null],
+      ["agent", "Can I run this command?", "done", "unanswered"],
+      ["sidebots", "Stopped", "done", null],
+    ],
+  );
+  assert.deepEqual(answers, ["The turn ended."]);
+  assert.equal((await call(ME, "POST", `/agents/${agent.id}/asks/${ask.id}`, { allow: true })).status, 409);
+  assert.equal((await call(ME, "GET", "/agents")).json[0].working, false);
+  const used = (await call(ME, "GET", "/usage")).json.used.map((each: { kind: string; turns: number; cost: number }) => [each.kind, each.turns, each.cost]);
+  assert.deepEqual(used, [["reply", 1, 0.5]]);
 });
