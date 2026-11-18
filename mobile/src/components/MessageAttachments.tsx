@@ -1,4 +1,4 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
   FlatList,
@@ -17,11 +17,13 @@ import { Image } from "expo-image";
 import { Directory, File, Paths } from "expo-file-system";
 import { useReducedMotion } from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { Share as ShareIcon, X } from "lucide-react-native";
+import { WebView } from "react-native-webview";
+import { Maximize2, Share as ShareIcon, X } from "lucide-react-native";
 import { IconButton } from "@/components/IconButton";
 import { FILE_ICONS, fileKind, fileKindWord, formatFileSize } from "@/lib/files";
 import { haptics } from "@/lib/haptics";
-import { useTheme } from "@/lib/theme";
+import { openLink } from "@/lib/links";
+import { type Theme, useTheme } from "@/lib/theme";
 
 /** A photo or file a message carries: its address, the header the computer asks for before it sends one of its own, and its own name. */
 export type Shown = { uri: string; headers?: Record<string, string>; name: string; size?: number | null };
@@ -33,9 +35,18 @@ const FILE_CARD_WIDTH = 280;
 const VIEWER_TOP_BAR = 56;
 /** How far a picture at rest is pulled down before the viewer lets it go. */
 const DISMISS_PULL = 90;
+// A page in the chat is as tall as what it holds, between these. Full screen shows the rest of a longer one.
+const PAGE_SHORTEST = 60;
+const PAGE_TALLEST = 480;
+const PAGE_UNMEASURED = 160;
+const PAGE_GUTTER = 16;
 
 // Each photo's shape once it has loaded, so a lone photo keeps its shape when the chat draws it again.
 const shapes = new Map<string, { width: number; height: number }>();
+
+// Each page's text once the phone has it, and its height in the chat once measured, so a page scrolled away and back shows as it was.
+const pages = new Map<string, string>();
+const pageHeights = new Map<string, number>();
 
 /** A lone photo's frame: its own shape, kept between 3:4 and 4:3, fitted to the box. */
 function photoFrame(shape: { width: number; height: number } | undefined, box: number): { width: number; height: number } {
@@ -225,6 +236,153 @@ export function FileCard({ file }: { file: Shown }) {
   );
 }
 
+/**
+ * What a page is given before its own content loads: a phone's width to lay
+ * out in, and the chat's colours, as its defaults and as CSS variables for its
+ * own styles. Run again, it gives the page the colours of the other mode.
+ */
+function dress(theme: Theme): string {
+  const css =
+    `:root{color-scheme:${theme.dark ? "dark" : "light"};--bg:${theme.bg};--ink:${theme.ink};--ink2:${theme.ink2};--line:${theme.line};--field:${theme.field};--tint:${theme.tint}}` +
+    `html{background:var(--bg);color:var(--ink);font:17px/1.3 -apple-system,system-ui,sans-serif;-webkit-text-size-adjust:100%}body{margin:0}svg{fill:currentColor}a{color:${theme.tintInk}}`;
+  return `(function(){var d=document,r=d.documentElement,s=d.getElementById("sidebots");if(!s){var m=d.createElement("meta");m.name="viewport";m.content="width=device-width,initial-scale=1";r.appendChild(m);s=d.createElement("style");s.id="sidebots";r.appendChild(s);}s.textContent=${JSON.stringify(css)};})();true;`;
+}
+
+// Tells the app how tall the page's content is, now and as it changes.
+const MEASURE = `(function(){var r=document.documentElement,last;function tell(){var h=Math.ceil(r.scrollHeight>r.clientHeight?r.scrollHeight:r.getBoundingClientRect().height);if(h!==last){last=h;window.ReactNativeWebView.postMessage(String(h));}}new ResizeObserver(tell).observe(r);if(document.body)new ResizeObserver(tell).observe(document.body);window.addEventListener("load",tell);tell();})();true;`;
+
+/**
+ * A page the agent wrote, drawn from its text. The page is closed off from
+ * the app: it loads as a document of no site, so it holds none of the phone's
+ * keys, keeps nothing between openings, can't use the camera or microphone,
+ * and can't leave for another page. A web link the person taps in it opens
+ * over the app, as a link in a reply does. Its scripts run, and it may fetch
+ * from the web. `onHeight` hears how tall its content is.
+ */
+function PageView({ html, scrolls, onHeight }: { html: string; scrolls: boolean; onHeight?: (height: number) => void }) {
+  const theme = useTheme();
+  const view = useRef<WebView<object>>(null);
+  const [loaded, setLoaded] = useState(false);
+  // The colours follow the phone into light or dark while the page is open.
+  useEffect(() => view.current?.injectJavaScript(dress(theme)), [theme]);
+  const open = (url: string) => {
+    if (/^https?:\/\//i.test(url)) void openLink(url, theme);
+  };
+  return (
+    <>
+      <WebView<object>
+        ref={view}
+        source={{ html }}
+        // Every address comes to onShouldStartLoadWithRequest, which lets none of them replace the page.
+        originWhitelist={["*"]}
+        injectedJavaScriptBeforeContentLoaded={dress(theme)}
+        injectedJavaScript={onHeight ? MEASURE : undefined}
+        onMessage={({ nativeEvent }) => {
+          const height = Number(nativeEvent.data);
+          if (height > 0) onHeight?.(height);
+        }}
+        onShouldStartLoadWithRequest={(request) => {
+          if (!request.isTopFrame || request.url.startsWith("about:blank")) return true;
+          if (request.navigationType === "click") open(request.url);
+          return false;
+        }}
+        onOpenWindow={({ nativeEvent }) => open(nativeEvent.targetUrl)}
+        onContentProcessDidTerminate={() => view.current?.reload()}
+        incognito
+        mediaCapturePermissionGrantType="deny"
+        allowsLinkPreview={false}
+        dataDetectorTypes="none"
+        scrollEnabled={scrolls}
+        onLoadEnd={() => setLoaded(true)}
+        style={styles.pageView}
+      />
+      {loaded ? null : <ActivityIndicator style={StyleSheet.absoluteFill} color={theme.ink2} />}
+    </>
+  );
+}
+
+/**
+ * A page the agent sent, as T3 Code shows one: drawn in the chat above the
+ * reply, in the chat's colours, as tall as what it holds up to a limit. The
+ * button beside its name opens it full screen, where a longer page scrolls.
+ * A page the phone can't fetch shows as its file card.
+ */
+export function MessagePage({ page }: { page: Shown }) {
+  const theme = useTheme();
+  const [html, setHtml] = useState(pages.get(page.uri));
+  const [failed, setFailed] = useState(false);
+  const [height, setHeight] = useState(pageHeights.get(page.uri) ?? PAGE_UNMEASURED);
+  const [full, setFull] = useState(false);
+  useEffect(() => {
+    if (pages.has(page.uri)) return;
+    let showing = true;
+    local(page)
+      .then((uri) => new File(uri).text())
+      .then(
+        (text) => {
+          pages.set(page.uri, text);
+          if (showing) setHtml(text);
+        },
+        () => showing && setFailed(true),
+      );
+    return () => {
+      showing = false;
+    };
+    // The page is the same one for as long as its address is.
+  }, [page.uri]);
+  if (failed) return <FileCard file={page} />;
+  const title = page.name.replace(/\.html?$/i, "");
+  return (
+    <View style={styles.pageCard}>
+      <View style={styles.pageHead}>
+        <Text numberOfLines={1} style={[styles.pageName, { color: theme.ink2 }]}>
+          {title}
+        </Text>
+        <IconButton icon={Maximize2} label={`Open ${title} full screen`} onPress={() => setFull(true)} disabled={!html} size={28} iconSize={16} color={theme.ink2} />
+      </View>
+      <View style={{ height }}>
+        {html ? (
+          <PageView
+            html={html}
+            scrolls={false}
+            onHeight={(measured) => {
+              const fitted = Math.min(PAGE_TALLEST, Math.max(PAGE_SHORTEST, measured));
+              pageHeights.set(page.uri, fitted);
+              setHeight(fitted);
+            }}
+          />
+        ) : (
+          <ActivityIndicator style={StyleSheet.absoluteFill} color={theme.ink2} />
+        )}
+      </View>
+      {full && html ? <PageViewer page={page} title={title} html={html} onClose={() => setFull(false)} /> : null}
+    </View>
+  );
+}
+
+/** A page full screen, on the page's own colour: it scrolls and zooms, with Close and Share above it. */
+function PageViewer({ page, title, html, onClose }: { page: Shown; title: string; html: string; onClose: () => void }) {
+  const theme = useTheme();
+  const reduceMotion = useReducedMotion();
+  const insets = useSafeAreaInsets();
+  return (
+    <Modal visible animationType={reduceMotion ? "none" : "slide"} presentationStyle="fullScreen" onRequestClose={onClose}>
+      <View style={[styles.viewer, { backgroundColor: theme.bg, paddingTop: insets.top, paddingBottom: insets.bottom }]}>
+        <View style={styles.pageBar}>
+          <IconButton icon={X} label="Close" onPress={onClose} />
+          <Text numberOfLines={1} style={[styles.viewerTitle, { color: theme.ink }]}>
+            {title}
+          </Text>
+          <IconButton icon={ShareIcon} label="Share" onPress={() => void share(page)} />
+        </View>
+        <View style={styles.pageRoom}>
+          <PageView html={html} scrolls />
+        </View>
+      </View>
+    </Modal>
+  );
+}
+
 const styles = StyleSheet.create({
   photos: { flexDirection: "row", flexWrap: "wrap", gap: 4, maxWidth: PHOTO_TILE * 3 + 8 },
   tile: { borderRadius: 16, borderCurve: "continuous", overflow: "hidden" },
@@ -251,4 +409,10 @@ const styles = StyleSheet.create({
   cardText: { flex: 1, minWidth: 0, gap: 1 },
   name: { fontSize: 15, lineHeight: 20, fontWeight: "500" },
   meta: { fontSize: 13, lineHeight: 18 },
+  pageCard: { alignSelf: "stretch" },
+  pageHead: { flexDirection: "row", alignItems: "center", gap: 8, paddingLeft: 2 },
+  pageName: { flex: 1, fontSize: 13, lineHeight: 18 },
+  pageView: { flex: 1, backgroundColor: "transparent" },
+  pageBar: { height: VIEWER_TOP_BAR, flexDirection: "row", alignItems: "center", paddingHorizontal: 16, gap: 12 },
+  pageRoom: { flex: 1, paddingHorizontal: PAGE_GUTTER },
 });

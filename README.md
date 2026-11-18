@@ -1,6 +1,6 @@
 # Sidebots
 
-Sidebots is a messaging app for your agents. Each chat is an agent. You send it a message, it does the work on a machine you own, and the finished reply arrives like a text from a person, with a notification, and with any files the agent made for you.
+Sidebots is a messaging app for your agents. Each chat is an agent. You send it a message, it does the work on a machine you own, and the finished reply arrives like a text from a person, with a notification, and with any files or pages the agent made for you.
 
 You run Sidebots yourself. There is no hosted service: a small server runs on your machine, drives the program each agent runs on, and keeps every message in a folder on that machine. Sidebots calls those programs providers, and today it has one, Claude Code. [Providers](#providers) says how another is added. You build your own copy of the app and pair it with your server.
 
