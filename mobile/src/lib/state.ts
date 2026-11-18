@@ -231,6 +231,20 @@ export async function freshStart(agentId: string): Promise<void> {
   keep(await request<Message>(`/agents/${agentId}/fresh-start`, { method: "POST" }));
 }
 
+/** Sends again a message the agent never answered, as it was sent, with its files and the message it answers. */
+export async function resend(message: Message): Promise<void> {
+  await request(`/agents/${message.agent_id}/messages/${message.id}/resend`, { method: "POST" });
+}
+
+/**
+ * Stops the turn the agent is running. The chat says "Stopped" once it has
+ * ended, and the agent keeps what it had in mind. Unlike a change to an
+ * agent, a stop doesn't wait on the phone for a server that is out of reach.
+ */
+export async function stop(agentId: string): Promise<void> {
+  await request(`/agents/${agentId}/stop`, { method: "POST" });
+}
+
 export async function createAgent(name: string, avatarId: string): Promise<Agent> {
   const agent = await request<Agent>("/agents", { method: "POST", body: { name, avatarId } });
   // The event stream may have brought the agent already.

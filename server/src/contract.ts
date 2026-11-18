@@ -31,8 +31,10 @@ export type Message = {
   attachments: string[];
   /**
    * For a message from a person: `queued` until the agent reads it, `running`
-   * once it has, then `done` when it has answered, or `failed`. For a fresh
-   * start, the state of replacing the session. A failure notice is `failed`.
+   * once it has, then `done` when it has answered or the person stopped it.
+   * `failed` when its turn failed, or was stopped before the agent read it.
+   * For a fresh start, the state of replacing the session. A failure notice
+   * is `failed`.
    */
   status: Status;
   /** When the agent read a message from the person, or null before it has. */
