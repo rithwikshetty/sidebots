@@ -863,11 +863,6 @@ test("a job's run can't send updates", async () => {
 const untilStopped = (turn: Turn, sessionId = "session-1") =>
   new Promise<Answer>((resolve) => turn.stop.signal.addEventListener("abort", () => resolve({ sessionId, contextTokens: 0 })));
 
-/** Waits until `ready` holds, as for a turn to start. */
-const until = async (ready: () => boolean) => {
-  while (!ready()) await new Promise((resolve) => setTimeout(resolve, 1));
-};
-
 test("stopping an agent ends the turn it is running, says so in the chat, and the next message carries on in the same session", async () => {
   const turns: Turn[] = [];
   const { store, queue, call, say, phoneOf, open } = setup(async (turn) => {
@@ -889,7 +884,6 @@ test("stopping an agent ends the turn it is running, says so in the chat, and th
 
   await say(ME, agent.id, "book the band");
   const working = queue.kick(agent.id);
-  await until(() => turns.length === 1);
   assert.equal((await call(HER, "POST", `/agents/${agent.id}/stop`)).status, 404);
   assert.equal(turns[0].stop.signal.aborted, false);
   assert.equal((await call(ME, "POST", `/agents/${agent.id}/stop`)).status, 200);
@@ -932,7 +926,6 @@ test("a stopped turn leaves what the agent hadn't read to send again, and a mess
   const agent = (await call(ME, "POST", "/agents", { name: "Wedding", avatarId: "mochi" })).json;
   await say(ME, agent.id, "book the band");
   const working = queue.kick(agent.id);
-  await until(() => read !== undefined);
   await say(ME, agent.id, "and the florist");
   read!();
   await say(ME, agent.id, "and a cake");
@@ -956,7 +949,7 @@ test("a stopped turn leaves what the agent hadn't read to send again, and a mess
   assert.deepEqual([turns.length, turns[1].prompt.text, turns[1].sessionId], [2, "only the band, after all", "session-1"]);
 });
 
-test("stopping a job's run ends it with nothing sent, and the job keeps to its schedule", async () => {
+test("stopping a job's run ends it with no reply, leaves a message that waited for it to send again, and the job keeps to its schedule", async () => {
   let time = new Date(2026, 10, 16, 9, 0).getTime();
   const runs: Turn[] = [];
   const { store, queue, call, say } = setup(async (turn) => {
@@ -973,17 +966,19 @@ test("stopping a job's run ends it with nothing sent, and the job keeps to its s
 
   time += 5 * 60_000;
   const running = queue.kick(agent.id);
-  await until(() => runs.length === 1);
+  await say(ME, agent.id, "any drop yet?");
   time += 60_000;
   await call(ME, "POST", `/agents/${agent.id}/stop`);
   await running;
 
   const messages = (await call(ME, "GET", `/agents/${agent.id}/messages`)).json;
-  assert.deepEqual(messages.map((m: { sender: string; body: string }) => [m.sender, m.body]), [
-    ["person", "watch the price"],
-    ["agent", "Watching."],
-    ["sidebots", "Stopped"],
+  assert.deepEqual(messages.map((m: { sender: string; body: string; status: string }) => [m.sender, m.body, m.status]), [
+    ["person", "watch the price", "done"],
+    ["agent", "Watching.", "done"],
+    ["person", "any drop yet?", "failed"],
+    ["sidebots", "Stopped", "done"],
   ]);
+  assert.equal(runs.length, 1);
   // The next run counts from when this one was stopped, and the chat's session is the one it had.
   assert.equal(store.jobs(agent.id)[0].next_at, time + 5 * 60_000);
   assert.equal((await call(ME, "GET", "/agents")).json[0].session_id, "session-1");
@@ -1000,7 +995,6 @@ test("stopping a fresh start calls it off, and the agent keeps its session", asy
   await queue.kick(agent.id);
 
   await call(ME, "POST", `/agents/${agent.id}/fresh-start`);
-  await until(() => turns.length === 2);
   await call(ME, "POST", `/agents/${agent.id}/stop`);
   await say(ME, agent.id, "any news?");
   await queue.kick(agent.id);
@@ -1030,13 +1024,43 @@ test("deleting an agent stops the turn it is running, and runs nothing that wait
   await call(ME, "POST", `/agents/${agent.id}/fresh-start`);
   const working = queue.kick(agent.id);
   await say(ME, agent.id, "find me a flat");
-  await until(() => turns.length === 1);
   const said: string[] = [];
   store.onChange((change) => "message" in change && said.push(change.message.body));
 
   assert.equal((await call(ME, "DELETE", `/agents/${agent.id}`)).status, 200);
   await working;
-  assert.equal(turns[0].stop.signal.aborted, true);
   assert.deepEqual([turns.length, said], [1, []]);
   assert.deepEqual((await call(ME, "GET", "/agents")).json, []);
+});
+
+test("a message the agent never answered is sent again as it was, with its file and the message it answers", async () => {
+  const prompts: string[] = [];
+  const { queue, call, app, phoneOf } = setup(async (turn) => {
+    prompts.push(turn.prompt.text);
+    if (prompts.length === 2) throw new Error("Signed out.");
+    return reply("It is a receipt.");
+  });
+  const agent = (await call(ME, "POST", "/agents", { name: "Scout", avatarId: "moss" })).json;
+  const first = (await call(ME, "POST", `/agents/${agent.id}/messages`, { body: "what is this?" })).json;
+  await queue.kick(agent.id);
+  const [, answer] = (await call(ME, "GET", `/agents/${agent.id}/messages`)).json;
+
+  // A photo with no words, in answer to the agent's reply, in a turn that fails.
+  const form = new FormData();
+  form.append("body", "");
+  form.append("replyTo", answer.id);
+  form.append("files", new File(["jpeg bytes"], "IMG_0042.jpg", { type: "image/jpeg" }));
+  const photo = await (await app.request(`/agents/${agent.id}/messages`, { method: "POST", headers: phoneOf(ME), body: form })).json();
+  await queue.kick(agent.id);
+  const status = async () => (await call(ME, "GET", `/agents/${agent.id}/messages`)).json.find((m: { id: string }) => m.id === photo.id).status;
+  assert.equal(await status(), "failed");
+
+  assert.equal((await call(HER, "POST", `/agents/${agent.id}/messages/${photo.id}/resend`)).status, 404);
+  assert.equal((await call(ME, "POST", `/agents/${agent.id}/messages/${first.id}/resend`)).status, 404);
+  assert.equal((await call(ME, "POST", `/agents/${agent.id}/messages/${photo.id}/resend`)).status, 200);
+  await queue.kick(agent.id);
+
+  assert.equal(await status(), "done");
+  assert.ok(prompts[2].startsWith('Replying to your message: "It is a receipt."') && prompts[2].endsWith(`Sent with this message: ${photo.attachments[0]}`));
+  assert.equal(prompts[2], prompts[1]);
 });

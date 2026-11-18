@@ -246,15 +246,11 @@ export function createQueue(store: Store, drivers: Drivers, now: () => number = 
       if (!agent || !person) return;
       const stop = new AbortController();
       stops.set(agentId, stop);
-      // A turn the person stopped says so in the chat. Of the messages sent into it, those the agent had read are done with, and those it hadn't can be sent again.
+      // A turn the person stopped says so in the chat, and the messages it had read are done with.
       const stopped = (ids: Iterable<string> = []) => {
         if (removed.has(agentId)) return;
         store.addMessage(agent.id, "sidebots", STOPPED, "done");
-        for (const id of ids) {
-          const status = store.message(agent.id, id)?.status;
-          if (status === "running") store.setStatus(id, "done");
-          if (status === "queued") store.setStatus(id, "failed");
-        }
+        for (const id of ids) if (store.message(agent.id, id)?.status === "running") store.setStatus(id, "done");
       };
       const driver = drivers[agent.provider];
       const account = store.account(person.id, agent.provider);
@@ -389,7 +385,8 @@ export function createQueue(store: Store, drivers: Drivers, now: () => number = 
           for (const id of sent) if (store.message(agent.id, id)?.status !== "done") store.setStatus(id, "failed");
         }
       }
-      if (stop.signal.aborted) stopped(sent);
+      // A stop that came as the last reply landed cut nothing short, and the chat says nothing of it.
+      if (stop.signal.aborted && [...sent].some((id) => store.message(agent.id, id)?.status !== "done")) stopped(sent);
     }
   }
 
@@ -423,12 +420,16 @@ export function createQueue(store: Store, drivers: Drivers, now: () => number = 
 
     /**
      * Stops the turn the agent is running: its work on the person's messages,
-     * a job's run or a fresh start. The chat says "Stopped" once the turn has
-     * ended. The agent keeps its session, so its next turn carries on from
-     * there, and whatever waited for the turn to end runs next.
+     * a job's run or a fresh start. The messages of theirs that the agent
+     * hasn't read, sent into the turn or waiting for it to end, are left to
+     * send again. The chat says "Stopped" once the turn has ended. The agent
+     * keeps its session, so its next turn carries on from there.
      */
     stop(agentId: string): void {
-      stops.get(agentId)?.abort();
+      const stop = stops.get(agentId);
+      if (!stop || stop.signal.aborted) return;
+      for (const unread of store.waitingFromPerson(agentId)) store.setStatus(unread.id, "failed");
+      stop.abort();
     },
 
     /** Stops whatever the agent is running, waits for it to end, and removes the sessions its provider keeps for it, as the agent is deleted. */

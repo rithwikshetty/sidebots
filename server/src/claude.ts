@@ -65,10 +65,9 @@ function inbox() {
  * A turn that is stopped ends through Claude Code's own interrupt, which ends
  * the command it was running and writes into the session that the person
  * interrupted it. The session stays whole, so the next turn resumes it and
- * the agent knows it was stopped. Ending the process instead would leave the
- * command looking as if it had failed. A message that was sent into the turn
- * and not yet read is dropped from it unread, and one that comes after the
- * stop is left for the next turn.
+ * the agent knows it was stopped. A message that was sent into the turn and
+ * not yet read is dropped from it unread, and one that comes after the stop
+ * is left for the next turn.
  */
 const runTurn: RunTurn = async (turn) => {
   const { prompt, followUps, seen, replied, cwd, sessionId, configDir, apiKey, model, effort, keepSession, stop } = turn;
@@ -148,7 +147,7 @@ const runTurn: RunTurn = async (turn) => {
     void (run as Interruptible)
       .interrupt({ cancelQueued: true })
       .then((interrupted) => {
-        // With every message dropped before Claude Code read it, there is no turn to end, and Claude Code would wait on for one.
+        // With no message left that Claude Code read and hasn't answered, there is no turn to end, and Claude Code would wait on for one.
         const dropped = new Set(interrupted?.cancelled);
         if ([...unanswered].every((id) => dropped.has(id))) end.abort();
       })

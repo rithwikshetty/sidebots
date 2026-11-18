@@ -23,7 +23,7 @@ import { useWorkingLine } from "@/lib/lines";
 import { preview } from "@/lib/messages";
 import { HIDE, MOVE, SHOW, arrive } from "@/lib/motion";
 import { askForPush, showChatOnScreen } from "@/lib/push";
-import { avatarStateOf, freshStart, loadMessages, loadOlder, markRead, send, stop, useAgent, useChatColor, useMessages, useOnline } from "@/lib/state";
+import { avatarStateOf, freshStart, loadMessages, loadOlder, markRead, resend, send, stop, useAgent, useChatColor, useMessages, useOnline } from "@/lib/state";
 import { ChatColor, type Theme, useTheme } from "@/lib/theme";
 import { dayLabel, listTime, sameDay } from "@/lib/time";
 
@@ -100,7 +100,7 @@ function ChatWith({ agent }: { agent: AgentWithLatest }) {
     );
   }
 
-  async function onSend(body: string, files: Picked[] = [], answering: Message | null = null) {
+  async function onSend(body: string, files: Picked[], answering: Message | null) {
     const text = body.trim();
     if (!text && files.length === 0) return;
     setDraft("");
@@ -121,6 +121,11 @@ function ChatWith({ agent }: { agent: AgentWithLatest }) {
     } finally {
       setOutgoing(null);
     }
+  }
+
+  function onResend(message: Message) {
+    haptics.send();
+    resend(message).catch((failure) => problem("Not sent", failure));
   }
 
   function onStop() {
@@ -224,7 +229,7 @@ function ChatWith({ agent }: { agent: AgentWithLatest }) {
                 theme={theme}
                 receipt={item.id === newestMine}
                 onReply={() => setReplyTo(item)}
-                onResend={() => onSend(item.body)}
+                onResend={() => onResend(item)}
               />
             </Row>
           );

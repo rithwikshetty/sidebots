@@ -169,6 +169,20 @@ export function createApi(store: Store, queue: Queue, machine: string) {
     return c.json(message, 201);
   });
 
+  /**
+   * Sends again a message the agent never answered: one whose turn failed, or
+   * was stopped before the agent read it. It waits its turn as it was sent,
+   * with its files and the message it answers.
+   */
+  app.post("/agents/:id/messages/:message/resend", (c) => {
+    const agent = ownAgent(c.var.person, c.req.param("id"));
+    const message = agent && store.message(agent.id, c.req.param("message"));
+    if (!agent || message?.sender !== "person" || message.status !== "failed") return c.json({ error: "No such message to send again." }, 404);
+    store.setStatus(message.id, "queued");
+    void queue.kick(agent.id);
+    return c.json({});
+  });
+
   app.get("/agents/:id/attachments/:name", (c) => {
     const agent = ownAgent(c.var.person, c.req.param("id"));
     const path = agent && store.attachment(agent.id, c.req.param("name"));
