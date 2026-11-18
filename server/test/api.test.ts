@@ -907,19 +907,21 @@ test("stopping an agent ends the turn it is running, says so in the chat, and th
   ]);
 });
 
-test("a stopped turn leaves what the agent hadn't read to send again, and a message sent after the stop gets its own turn", async () => {
+test("a stopped turn leaves what the agent never read to send again, and a message sent after the stop gets its own turn", async () => {
   const turns: Turn[] = [];
   let read: (() => void) | undefined;
   let end: (() => void) | undefined;
   const { queue, call, say } = setup(async (turn) => {
     turns.push(turn);
     if (turns.length > 1) return reply("On it.");
-    // The agent reads the first follow-up at a pause, then works on. Like a provider, the turn takes what is sent into it until it is stopped, and then takes a moment to end.
+    // The agent reads the first follow-up at a pause, then works on. Like a provider, the turn takes what is sent into it until it is stopped, and then takes a moment to end, in which it reports one more message read.
     await new Promise<void>((resolve) => (read = resolve));
     turn.seen(turn.followUps!.take().map((each) => each.id));
-    const stopTaking = turn.followUps!.onArrival(() => turn.followUps!.take());
+    const taken: { id: string; text: string }[] = [];
+    const stopTaking = turn.followUps!.onArrival(() => taken.push(...turn.followUps!.take()));
     await new Promise<void>((resolve) => turn.stop.signal.addEventListener("abort", () => resolve()));
     stopTaking();
+    turn.seen(taken.filter((each) => each.text === "and a DJ").map((each) => each.id));
     await new Promise<void>((resolve) => (end = resolve));
     return { sessionId: "session-1", contextTokens: 0 };
   });
@@ -929,6 +931,7 @@ test("a stopped turn leaves what the agent hadn't read to send again, and a mess
   await say(ME, agent.id, "and the florist");
   read!();
   await say(ME, agent.id, "and a cake");
+  await say(ME, agent.id, "and a DJ");
   await call(ME, "POST", `/agents/${agent.id}/stop`);
   await say(ME, agent.id, "only the band, after all");
   end!();
@@ -941,6 +944,7 @@ test("a stopped turn leaves what the agent hadn't read to send again, and a mess
       ["person", "book the band", "done"],
       ["person", "and the florist", "done"],
       ["person", "and a cake", "failed"],
+      ["person", "and a DJ", "done"],
       ["person", "only the band, after all", "done"],
       ["sidebots", "Stopped", "done"],
       ["agent", "On it.", "done"],

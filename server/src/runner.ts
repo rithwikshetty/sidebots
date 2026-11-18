@@ -246,11 +246,12 @@ export function createQueue(store: Store, drivers: Drivers, now: () => number = 
       if (!agent || !person) return;
       const stop = new AbortController();
       stops.set(agentId, stop);
-      // A turn the person stopped says so in the chat, and the messages it had read are done with.
+      // A turn the person stopped says so in the chat. The messages it had read are done with, and those the agent still hadn't read when it ended are left to send again.
       const stopped = (ids: Iterable<string> = []) => {
         if (removed.has(agentId)) return;
         store.addMessage(agent.id, "sidebots", STOPPED, "done");
         for (const id of ids) if (store.message(agent.id, id)?.status === "running") store.setStatus(id, "done");
+        for (const id of stop.signal.reason as string[]) if (store.message(agent.id, id)?.status === "queued") store.setStatus(id, "failed");
       };
       const driver = drivers[agent.provider];
       const account = store.account(person.id, agent.provider);
@@ -427,9 +428,8 @@ export function createQueue(store: Store, drivers: Drivers, now: () => number = 
      */
     stop(agentId: string): void {
       const stop = stops.get(agentId);
-      if (!stop || stop.signal.aborted) return;
-      for (const unread of store.waitingFromPerson(agentId)) store.setStatus(unread.id, "failed");
-      stop.abort();
+      // The stop carries the messages that were unread as it was asked for, so one sent after it gets its turn.
+      if (stop && !stop.signal.aborted) stop.abort(store.waitingFromPerson(agentId).map((unread) => unread.id));
     },
 
     /** Stops whatever the agent is running, waits for it to end, and removes the sessions its provider keeps for it, as the agent is deleted. */
