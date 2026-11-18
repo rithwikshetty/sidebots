@@ -290,11 +290,16 @@ export function createQueue(store: Store, drivers: Drivers, now: () => number = 
           },
           cancelJob: (id) => (store.removeJob(agent.id, id) ? "Removed." : "You have no job with that id."),
           sendFiles: (paths) => {
-            const named = paths.map((path) => store.fileToSend(agent.id, path));
-            const missing = paths.filter((_, at) => !named[at]);
-            if (missing.length) return `There is no file at ${missing.join(", ")}. Nothing was added, so give the paths again.`;
-            const added = named as Upload[];
-            if ([...files, ...added].reduce((total, file) => total + file.bytes.byteLength, 0) > MESSAGE_BYTES) return "A message carries up to 95 MB of files. Nothing was added, so send fewer or smaller ones.";
+            // Each file is read as it is counted, so a call that can't fit stops at the file that takes it too far.
+            const added: Upload[] = [];
+            let room = MESSAGE_BYTES - files.reduce((total, file) => total + file.bytes.byteLength, 0);
+            for (const path of paths) {
+              const file = store.fileToSend(agent.id, path);
+              if (!file) return `There is no file at ${path}. Nothing was added, so give the paths again.`;
+              room -= file.bytes.byteLength;
+              if (room < 0) return "A message carries up to 95 MB of files. Nothing was added, so send fewer or smaller ones.";
+              added.push(file);
+            }
             files.push(...added);
             return "Added. They go with the next message you send.";
           },
