@@ -3,9 +3,9 @@
 
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
-import { PROVIDERS, scheduleWords } from "./contract.ts";
-import type { Agent, Effort, Found, Job, Limit, Message, Model, Provider, Schedule, TurnKind } from "./contract.ts";
-import type { Person, Store } from "./store.ts";
+import { MESSAGE_BYTES, PROVIDERS, scheduleWords } from "./contract.ts";
+import type { Agent, Ask, Effort, Found, Job, Limit, Message, Model, Provider, Schedule, TurnKind } from "./contract.ts";
+import type { Person, Store, Upload } from "./store.ts";
 
 /** A job as an agent asks for one: what to do on each run, and one of three ways to say when. */
 export type JobRequest = { what: string; every_minutes?: number; daily_at?: string; weekdays?: number[]; once_at?: string };
@@ -19,6 +19,15 @@ export type Prompt = { id: string; text: string };
  * when another comes, until the function it returns is called.
  */
 export type FollowUps = { take: () => Prompt[]; onArrival: (listener: () => void) => () => void };
+
+/**
+ * What an agent asks the person before it does something: what it wants to
+ * do, as the words that follow "Can I", the thing itself, such as the command
+ * or the file, and why its provider won't decide this one by itself.
+ */
+export type Question = { what: string; detail: string; why?: string };
+/** The person's answer to an ask. When it isn't yes, `words` tell the agent what to do instead. */
+export type Answer = { allowed: true } | { allowed: false; words: string };
 
 export type Turn = {
   prompt: Prompt;
@@ -46,8 +55,12 @@ export type Turn = {
   scheduleJob: (request: JobRequest) => string;
   listJobs: () => string;
   cancelJob: (id: string) => string;
+  /** Adds files, by their paths, to the next message the agent sends: its reply, or an update that comes first. Answers in words the agent reads. */
+  sendFiles: (paths: string[]) => string;
   /** Sends the person a short update while the agent works, for a turn they are waiting on. Answers in words the agent reads. */
   sendUpdate?: (text: string) => string;
+  /** Asks the person before the agent does something, and waits for their answer. `withdrawn` aborts when the provider no longer wants one. */
+  ask: (question: Question, withdrawn: AbortSignal) => Promise<Answer>;
   /** The provider says where limits of the person's plan stand. */
   limits: (limits: Limit[]) => void;
 };
@@ -64,8 +77,9 @@ export type RunTurn = (turn: Turn) => Promise<TurnResult>;
  * runs on the person's API key for the provider when they have one, and
  * otherwise on the login in their config folder for it. It keeps the session
  * open while the turn runs, so that a message the person sends meanwhile goes
- * into it, and replies to every message it was sent. It passes on what the
- * provider says of the person's plan as the turn runs. `failure` puts why a
+ * into it, and replies to every message it was sent. What its safety check
+ * won't decide by itself, it asks the person through `turn.ask`. It passes on
+ * what the provider says of the person's plan as the turn runs. `failure` puts why a
  * turn failed in words for the person on their phone, from the provider's
  * own. `forget` removes the sessions the provider keeps for the agent that
  * works in `cwd`, once the agent is deleted.
@@ -78,10 +92,16 @@ export type Driver = {
 /** A driver for each provider. */
 export type Drivers = Record<Provider, Driver>;
 
-/** A tool Sidebots gives the agent: its name, what the agent is told it does, what it takes, and what it does, in words the agent reads. */
+/**
+ * A tool Sidebots gives the agent: its name, what the agent is told it does,
+ * what it takes, and what it does, in words the agent reads. A tool that is
+ * `checked` reaches the machine's files, so the provider's safety check judges
+ * each call to it, as it does the agent's own actions. The rest always run.
+ */
 export type Tool<Input extends z.ZodRawShape = z.ZodRawShape> = {
   name: string;
   description: string;
+  checked?: true;
   input: Input;
   run(input: z.infer<z.ZodObject<Input>>): string;
 };
@@ -118,6 +138,14 @@ export function toolsFor(turn: Turn): Tool[] {
       input: { id: z.string().describe("The job's id, as list_jobs gives it") },
       run: ({ id }) => turn.cancelJob(id),
     }),
+    define({
+      name: "send_files",
+      description:
+        "Send the person files: a photo, a chart, a PDF, anything you made or found for them. The files go with the next message you send, which is your reply unless you send an update first, and show above its text: a picture as a picture, a page as a page, any other file as a card that opens it. Use it whenever the person should have the file itself and not only your words about it. Up to 95 MB to a message. A file whose name ends in .html is a page: it is drawn in the chat and opens full screen, so use one for what words can't carry, such as a chart, a table or a layout. Write it as one file for a phone's width, with its styles, scripts and images inside it, and name it for what it shows. The page is given the chat's background and text colour, which change between light and dark, so set neither yourself. Colour the rest with the CSS variables it is also given: var(--ink) for text, var(--ink2) for quiet text, var(--line) for rules, var(--field) for a fill behind something, and var(--tint) for the one thing to pick out. Any colour of your own has to read on both white and black.",
+      checked: true,
+      input: { paths: z.array(z.string()).describe("Each file's path, in full or from your home folder") },
+      run: ({ paths }) => turn.sendFiles(paths),
+    }),
     ...(sendUpdate
       ? [
           define({
@@ -146,6 +174,8 @@ const CLOCK_MS = 15_000;
 // How long a turn runs before the agent may send an update, and how long between updates.
 const FIRST_UPDATE_MS = 60_000;
 const UPDATE_GAP_MS = 3 * 60_000;
+// How long an ask waits for the person.
+const ASK_WAIT_MS = 30 * 60_000;
 /** What a job's run replies when it has nothing to tell the person. */
 const SILENT = "SILENT";
 function found(messages: Found[]): string {
@@ -153,6 +183,17 @@ function found(messages: Found[]): string {
   return messages
     .map((message) => `${new Date(message.created_at).toISOString().slice(0, 10)}, chat with ${message.agent}, ${message.sender === "person" ? "the person" : message.agent}: ${message.body}`)
     .join("\n\n");
+}
+
+/**
+ * An ask as the chat shows it: the question, what it is about set apart as
+ * code, and why it is asked. The detail is shown whole, since Allow lets all
+ * of it happen.
+ */
+function asking({ what, detail, why }: Question): string {
+  // The fence is longer than any run of backticks inside it, so nothing in the detail can close it.
+  const fence = "`".repeat((detail.match(/`+/g) ?? []).reduce((longest, run) => Math.max(longest, run.length + 1), 3));
+  return [`Can I ${what}?`, detail.trim() && `${fence}\n${detail}\n${fence}`, why?.trim() && `> ${why.trim().replace(/\s+/g, " ")}`].filter(Boolean).join("\n\n");
 }
 
 /** What the agent is asked before its session is replaced. */
@@ -238,6 +279,12 @@ export function createQueue(store: Store, drivers: Drivers, now: () => number = 
   const stops = new Map<string, AbortController>();
   // For an agent running a turn the person can talk to, what to call when they send another message.
   const arrivals = new Map<string, () => void>();
+  // The asks that wait for the person, by the message that asks: whose agent's it is, what to call with the person's answer, and what closes it unanswered, with what the agent is told.
+  const asks = new Map<string, { agentId: string; answer: (allow: boolean) => void; close: (words: string) => void }>();
+  /** Closes the asks an agent has waiting, unanswered. */
+  const stopWaiting = (agentId: string, words: string) => {
+    for (const ask of [...asks.values()]) if (ask.agentId === agentId) ask.close(words);
+  };
 
   async function drain(agentId: string, stop: AbortController): Promise<void> {
     while (!stop.signal.aborted) {
@@ -249,8 +296,29 @@ export function createQueue(store: Store, drivers: Drivers, now: () => number = 
       const apiKey = store.apiKey(person.id, agent.provider);
       const message = store.nextQueued(agentId);
       const job = message ? undefined : store.dueJob(agentId, now());
+      // The files the agent has asked to send, which its next message takes.
+      const files: Upload[] = [];
       const turn = async (text: string, rest: Pick<Turn, "followUps" | "seen" | "replied" | "sendUpdate"> & { id?: string; kind: TurnKind }) => {
         if (!account) throw new Error(`${person.name} hasn't set up ${PROVIDERS[agent.provider].name} on this computer.`);
+        const ask = (question: Question, withdrawn: AbortSignal) =>
+          new Promise<Answer>((resolve) => {
+            const message = store.addMessage(agent.id, "agent", asking(question), "done", { ask: "waiting", jobId: job?.id });
+            const settle = (answer: Exclude<Ask, "waiting">, words: string) => {
+              clearTimeout(timer);
+              withdrawn.removeEventListener("abort", late);
+              asks.delete(message.id);
+              store.answerAsk(message.id, answer);
+              resolve(answer === "allowed" ? { allowed: true } : { allowed: false, words });
+            };
+            const late = () => settle("unanswered", `${person.name} didn't answer in time. Skip it, finish the rest, and say in your reply what you couldn't do.`);
+            const timer = setTimeout(late, ASK_WAIT_MS);
+            withdrawn.addEventListener("abort", late);
+            asks.set(message.id, {
+              agentId: agent.id,
+              answer: (allow) => settle(allow ? "allowed" : "refused", `${person.name} said no to this. Don't do it, or the same thing another way. Finish the rest and say in your reply what you left out.`),
+              close: (words) => settle("unanswered", words),
+            });
+          });
         // A job's run is a session of its own, which nothing comes back to. Any other turn carries on the chat's session.
         const sessionId = rest.kind === "job" ? null : agent.session_id;
         const result = await driver.runTurn({
@@ -259,6 +327,7 @@ export function createQueue(store: Store, drivers: Drivers, now: () => number = 
           seen: rest.seen,
           replied: rest.replied,
           sendUpdate: rest.sendUpdate,
+          ask,
           limits: (limits) => store.setLimits(person.id, agent.provider, limits),
           cwd: store.agentHome(agent.id),
           sessionId,
@@ -281,7 +350,23 @@ export function createQueue(store: Store, drivers: Drivers, now: () => number = 
             return `${jobs.join("\n\n") || "You have no jobs."}\n\nIt is now ${clock(now())}.`;
           },
           cancelJob: (id) => (store.removeJob(agent.id, id) ? "Removed." : "You have no job with that id."),
-        });
+          sendFiles: (paths) => {
+            // Each file is read as it is counted, so a call that can't fit stops at the file that takes it too far.
+            const added: Upload[] = [];
+            let room = MESSAGE_BYTES - files.reduce((total, file) => total + file.bytes.byteLength, 0);
+            for (const path of paths) {
+              const file = store.fileToSend(agent.id, path);
+              if (!file) return `There is no file at ${path}. Nothing was added, so give the paths again.`;
+              room -= file.bytes.byteLength;
+              if (room < 0) return "A message carries up to 95 MB of files. Nothing was added, so send fewer or smaller ones.";
+              added.push(file);
+            }
+            files.push(...added);
+            return "Added. They go with the next message you send.";
+          },
+        })
+          // An ask the turn leaves behind, as when it fails or is stopped, waits for nobody.
+          .finally(() => stopWaiting(agent.id, "The turn ended."));
         store.addUsage(agent.id, rest.kind, result, sessionId !== null);
         return result;
       };
@@ -296,7 +381,7 @@ export function createQueue(store: Store, drivers: Drivers, now: () => number = 
           const replies: string[] = [];
           await turn(jobPrompt(job, person), { kind: "job", seen: () => undefined, replied: (reply) => replies.push(reply) });
           const reply = replies.at(-1) ?? "";
-          if (!silent(reply)) store.addMessage(agent.id, "agent", reply, "done", { jobId: job.id });
+          if (!silent(reply)) store.addMessage(agent.id, "agent", reply, "done", { jobId: job.id, files });
         } catch (error) {
           if (stop.signal.aborted) return;
           // A job that keeps failing says so once, not on every run.
@@ -326,14 +411,15 @@ export function createQueue(store: Store, drivers: Drivers, now: () => number = 
       const sent = new Set([message.id]);
       const quotedBy = (each: Message) => (each.reply_to ? store.message(agent.id, each.reply_to) : undefined);
       const followUps: FollowUps = {
-        take: () =>
-          store
-            .waitingFromPerson(agent.id)
-            .filter((each) => !sent.has(each.id))
-            .map((each) => {
-              sent.add(each.id);
-              return { id: each.id, text: promptFor(each, person, { recent: [], quoted: quotedBy(each), fromJobs: [] }) };
-            }),
+        take: () => {
+          const arrived = store.waitingFromPerson(agent.id).filter((each) => !sent.has(each.id));
+          // The agent can't read a message while it waits on an ask, so a message is the person's answer to it.
+          if (arrived.length) stopWaiting(agent.id, `${person.name} sent a message instead of answering. Leave this undone and read their message.`);
+          return arrived.map((each) => {
+            sent.add(each.id);
+            return { id: each.id, text: promptFor(each, person, { recent: [], quoted: quotedBy(each), fromJobs: [] }) };
+          });
+        },
         onArrival: (listener) => {
           arrivals.set(agent.id, listener);
           return () => arrivals.delete(agent.id);
@@ -348,7 +434,7 @@ export function createQueue(store: Store, drivers: Drivers, now: () => number = 
         if (at - started < FIRST_UPDATE_MS) return "Too soon for an update. Carry on, and send one only if the work runs well past a minute.";
         if (lastUpdate !== null && at - lastUpdate < UPDATE_GAP_MS) return "You sent an update moments ago. Carry on, and tell the rest in your reply.";
         lastUpdate = at;
-        store.addMessage(agent.id, "agent", update.trim(), "done", { interim: true });
+        store.addMessage(agent.id, "agent", update.trim(), "done", { interim: true, files: files.splice(0) });
         return "Sent. Carry on with the work.";
       };
       try {
@@ -365,7 +451,7 @@ export function createQueue(store: Store, drivers: Drivers, now: () => number = 
             sendUpdate,
             seen: (ids) => store.markSeen(ids),
             replied: (reply, ids) => {
-              store.addMessage(agent.id, "agent", reply, "done");
+              store.addMessage(agent.id, "agent", reply, "done", { files: files.splice(0) });
               store.markSeen(ids);
               ids.forEach((id) => store.setStatus(id, "done"));
             },
@@ -409,6 +495,14 @@ export function createQueue(store: Store, drivers: Drivers, now: () => number = 
       const message = store.addMessage(agentId, "sidebots", FRESH_START, "queued");
       void kick(agentId);
       return message;
+    },
+
+    /** Gives an ask the person's answer, and the agent goes on with it. False when the agent has no such ask waiting. */
+    answer(agentId: string, messageId: string, allow: boolean): boolean {
+      const ask = asks.get(messageId);
+      if (ask?.agentId !== agentId) return false;
+      ask.answer(allow);
+      return true;
     },
 
     /** Stops whatever the agent is running, waits for it to end, and removes the sessions its provider keeps for it, as the agent is deleted. */

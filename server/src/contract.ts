@@ -13,6 +13,14 @@ export const CONTRACT_HEADER = "Sidebots-Contract";
 
 export type Sender = "person" | "agent" | "sidebots";
 export type Status = "queued" | "running" | "done" | "failed";
+/**
+ * Where an ask stands. An agent asks before it does something its provider's
+ * safety check won't decide by itself. The ask is `waiting` until the person
+ * answers, then `allowed` or `refused`. It is `unanswered` when the agent
+ * stopped waiting first: the person took too long or sent a message instead,
+ * or the turn ended.
+ */
+export type Ask = "waiting" | "allowed" | "refused" | "unanswered";
 
 export type Message = {
   id: string;
@@ -35,8 +43,17 @@ export type Message = {
   job_id: string | null;
   /** An update the agent sent while still working. It notifies nobody and doesn't count as unread; the reply that follows does. */
   interim: boolean;
+  /** For a message in which the agent asks before it does something, where the ask stands. Null for every other message. */
+  ask: Ask | null;
   created_at: number;
 };
+
+/**
+ * The most one message carries in files, in bytes, whoever sends it. It is
+ * under the 100 MB Cloudflare takes in one request, which is how the
+ * person's files reach the server.
+ */
+export const MESSAGE_BYTES = 95 * 1024 * 1024;
 
 /**
  * The programs an agent can run on, by id. Each has the name the apps show,
@@ -86,8 +103,8 @@ export type Agent = {
 };
 /**
  * An agent as the home screen shows it. `working` is true while it has a turn
- * queued or running. `unread` counts the replies and failure notices the
- * person hasn't read.
+ * queued or running. `unread` counts the replies, asks and failure notices
+ * the person hasn't read.
  */
 export type AgentWithLatest = Agent & { latest: Message | null; working: boolean; unread: number };
 /** A message found by a search, with the name of the agent whose chat it is in. */
@@ -155,9 +172,9 @@ export function plainText(markdown: string): string {
 }
 
 /**
- * What the event stream sends. A message that was added or changed status
- * comes with its agent as the home screen shows it. A new agent comes the same
- * way, with no message. A deleted agent comes as its id.
+ * What the event stream sends. A message that was added, changed status or
+ * had its ask closed comes with its agent as the home screen shows it. A new
+ * agent comes the same way, with no message. A deleted agent comes as its id.
  */
 export type StreamEvent = { message: Message | null; agent: AgentWithLatest } | { deleted: string };
 /**
