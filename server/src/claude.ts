@@ -19,6 +19,10 @@ import {
 import type { Limit, Question } from "./contract.ts";
 import { toolsFor, type Driver, type Prompt, type RunTurn } from "./runner.ts";
 
+// Added to Claude Code's own prompt. An ask leads with a command's `description`, which Claude Code leaves the agent free to skip, and agents skip it unless told.
+const DESCRIBE_COMMANDS =
+  "With every Bash command, give `description`: one short line that says in plain words what the command does, such as \"Book the Friday repair slot\". The person may be asked to allow the command on their phone, and they read that line, not the command.";
+
 // The longest a session stays open, after its replies are in, for background work the agent started.
 const BACKGROUND_WAIT_MS = 30 * 60_000;
 // The longest Claude Code is given to end a turn it was told to stop, before its process is ended for it.
@@ -96,9 +100,9 @@ function inbox() {
 /**
  * What a call to one of Claude Code's tools would do, in the parts the person
  * reads to say yes or no. A command leads with the agent's own account of it,
- * which Claude Code has the agent write for a person who won't see the
- * command. A page leads with its site, a file with its name, and a
- * connection's tool with what it is called. `connection` is the person's
+ * the `description` Claude Code lets an agent give with a command, and with
+ * the command's first line when the agent gave none. A page leads with its
+ * site, a file with its name, and a connection's tool with what it is called. `connection` is the person's
  * connection the tool comes from, when it comes from one.
  */
 export function question(toolName: string, input: Record<string, unknown>, connection: string | undefined, why: string | undefined): Question {
@@ -221,7 +225,7 @@ const runTurn: RunTurn = async (turn) => {
       env: { ...process.env, CLAUDE_CONFIG_DIR: configDir, ...(apiKey && { ANTHROPIC_API_KEY: apiKey }) },
       settingSources: ["user", "project"],
       // Claude Code's full prompt. Left out, the SDK gives a short one that says nothing of memory.
-      systemPrompt: { type: "preset", preset: "claude_code" },
+      systemPrompt: { type: "preset", preset: "claude_code", append: DESCRIBE_COMMANDS },
       // Claude Code's own memory, kept in the agent's folder so it outlives
       // every session. It is on for a Sidebots agent even when its owner has
       // turned it off for their own Claude Code.
