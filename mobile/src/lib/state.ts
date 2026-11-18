@@ -209,6 +209,13 @@ export async function send(agentId: string, body: string, files: Picked[] = [], 
   keep(await request<Message>(`/agents/${agentId}/messages`, { method: "POST", body: form }));
 }
 
+/** Answers an agent's ask: whether it may do what it asked about. It fails when the agent has stopped waiting. */
+export async function answerAsk(ask: Message, allow: boolean): Promise<void> {
+  const answered = await request<Message>(`/agents/${ask.agent_id}/asks/${ask.id}`, { method: "POST", body: { allow } });
+  const known = state.messages[ask.agent_id];
+  if (known) set({ messages: { ...state.messages, [ask.agent_id]: upsert(known, answered) } });
+}
+
 /** Replaces the agent's session. The chat stays, and the agent saves what is worth keeping first. */
 export async function freshStart(agentId: string): Promise<void> {
   keep(await request<Message>(`/agents/${agentId}/fresh-start`, { method: "POST" }));

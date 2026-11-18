@@ -858,3 +858,118 @@ test("a job's run can't send updates", async () => {
   await queue.kick(agent.id);
   assert.deepEqual(updates, [false]);
 });
+
+test("an agent asks before it does what its provider won't decide, waits for the person's answer, and goes on by it", async () => {
+  const answers: Awaited<ReturnType<Turn["ask"]>>[] = [];
+  const { store, queue, call, say, phoneOf, open } = setup(async (turn) => {
+    const answer = await turn.ask({ what: "run this command", detail: "rm -rf ~/old", why: "It deletes\na folder." }, new AbortController().signal);
+    answers.push(answer);
+    return reply(answer.allowed ? "Deleted." : "Left it.");
+  });
+  const sent: Notice[] = [];
+  startPush(store, async (_device, notice) => {
+    sent.push(open(phoneOf(ME), notice));
+    return "sent";
+  });
+  await call(ME, "PUT", "/push-token", { token: "a".repeat(64), environment: "production" });
+  const agent = (await call(ME, "POST", "/agents", { name: "Tidy", avatarId: "mochi" })).json;
+  await new Promise((resolve) => setTimeout(resolve, 1));
+  const chat = async () => (await call(ME, "GET", `/agents/${agent.id}/messages`)).json as { id: string; sender: string; body: string; ask: string | null }[];
+  /** The ask the agent has waiting, once it has one. */
+  const waiting = async () => {
+    for (;;) {
+      const ask = (await chat()).find((message) => message.ask === "waiting");
+      if (ask) return ask;
+      await new Promise((resolve) => setTimeout(resolve, 1));
+    }
+  };
+
+  await say(ME, agent.id, "clear out the old folder");
+  const first = await waiting();
+  assert.deepEqual([first.sender, first.body], ["agent", "Can I run this command?\n\n```\nrm -rf ~/old\n```\n\n> It deletes a folder."]);
+  // The agent is still at work, and its ask is something to read.
+  const [row] = (await call(ME, "GET", "/agents")).json;
+  assert.deepEqual([row.working, row.unread], [true, 1]);
+  assert.equal((await call(HER, "POST", `/agents/${agent.id}/asks/${first.id}`, { allow: true })).status, 404);
+  assert.equal((await call(ME, "POST", `/agents/${agent.id}/asks/${first.id}`, {})).status, 400);
+  const allowed = await call(ME, "POST", `/agents/${agent.id}/asks/${first.id}`, { allow: true });
+  assert.deepEqual([allowed.status, allowed.json.ask], [200, "allowed"]);
+  // An ask takes one answer.
+  assert.equal((await call(ME, "POST", `/agents/${agent.id}/asks/${first.id}`, { allow: false })).status, 409);
+  await queue.kick(agent.id);
+
+  await say(ME, agent.id, "and the downloads");
+  const second = await waiting();
+  assert.equal((await call(ME, "POST", `/agents/${agent.id}/asks/${second.id}`, { allow: false })).json.ask, "refused");
+  await queue.kick(agent.id);
+
+  assert.deepEqual(answers[0], { allowed: true });
+  assert.match(answers[1].allowed ? "" : answers[1].words, /^Alex said no to this\./);
+  assert.deepEqual(
+    (await chat()).map((message) => [message.sender, message.body.split("\n")[0], message.ask]),
+    [
+      ["person", "clear out the old folder", null],
+      ["agent", "Can I run this command?", "allowed"],
+      ["agent", "Deleted.", null],
+      ["person", "and the downloads", null],
+      ["agent", "Can I run this command?", "refused"],
+      ["agent", "Left it.", null],
+    ],
+  );
+  // The ask notifies the phone as a reply does. Its answer notifies nobody.
+  assert.deepEqual(sent.map((notice) => notice.body), ["Can I run this command? rm -rf ~/old It deletes a folder.", "Deleted.", "Can I run this command? rm -rf ~/old It deletes a folder.", "Left it."]);
+});
+
+test("an ask closes unanswered when the person sends a message instead, takes too long, or the turn ends, and a restart closes the ones it left", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const answers: string[] = [];
+  let withdrawn = new AbortController();
+  const { store, queue, call, say } = setup(async (turn) => {
+    const later: string[] = [];
+    turn.followUps!.onArrival(() => later.push(...turn.followUps!.take().map((each) => each.id)));
+    const asking = turn.ask({ what: "run this command", detail: "make clean" }, withdrawn.signal);
+    if (turn.prompt.text === "and crash") throw new Error("Claude Code stopped.");
+    const answer = await asking;
+    answers.push(answer.allowed ? "allowed" : answer.words);
+    turn.seen(later);
+    turn.replied("Done.", [turn.prompt.id, ...later]);
+    return { sessionId: "session-1", contextTokens: 0 };
+  });
+  const agent = (await call(ME, "POST", "/agents", { name: "Tidy", avatarId: "mochi" })).json;
+  const asks = async () => ((await call(ME, "GET", `/agents/${agent.id}/messages`)).json as { ask: string | null }[]).flatMap((message) => message.ask ?? []);
+  /** Sends a message and comes back once the agent has an ask waiting on it. */
+  const askedAfter = async (words: string) => {
+    await say(ME, agent.id, words);
+    while (!(await asks()).includes("waiting")) await new Promise((resolve) => setImmediate(resolve));
+  };
+
+  await askedAfter("tidy up");
+  await say(ME, agent.id, "wait, not the build folder");
+  await queue.kick(agent.id);
+
+  await askedAfter("tidy up again");
+  t.mock.timers.tick(30 * 60_000);
+  await queue.kick(agent.id);
+
+  await askedAfter("once more");
+  withdrawn.abort();
+  await queue.kick(agent.id);
+  withdrawn = new AbortController();
+
+  // This turn ends with its ask still waiting.
+  await say(ME, agent.id, "and crash");
+  await queue.kick(agent.id);
+
+  assert.match(answers[0], /^Alex sent a message instead of answering\./);
+  assert.match(answers[1], /^Alex didn't answer in time\./);
+  assert.match(answers[2], /^Alex didn't answer in time\./);
+  assert.deepEqual(await asks(), ["unanswered", "unanswered", "unanswered", "unanswered"]);
+  // Nothing is left for an answer to reach.
+  const [last] = ((await call(ME, "GET", `/agents/${agent.id}/messages`)).json as { id: string; ask: string | null }[]).filter((message) => message.ask).slice(-1);
+  assert.equal((await call(ME, "POST", `/agents/${agent.id}/asks/${last.id}`, { allow: true })).status, 409);
+
+  // A server that stops mid-turn leaves its ask waiting, and the next start closes it.
+  store.addMessage(agent.id, "agent", "Can I run this command?", "done", { ask: "waiting" });
+  store.requeueInterrupted();
+  assert.deepEqual((await asks()).slice(-1), ["unanswered"]);
+});

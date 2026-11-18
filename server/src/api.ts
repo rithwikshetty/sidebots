@@ -190,6 +190,16 @@ export function createApi(store: Store, queue: Queue, machine: string) {
     return c.json(queue.freshStart(agent.id), 201);
   });
 
+  /** The person's answer to an ask: whether the agent may do what it asked about. Answers with the ask as it now stands. */
+  app.post("/agents/:id/asks/:message", async (c) => {
+    const agent = ownAgent(c.var.person, c.req.param("id"));
+    if (!agent) return c.json({ error: "No such agent." }, 404);
+    const { allow } = await c.req.json<{ allow?: boolean }>();
+    if (typeof allow !== "boolean") return c.json({ error: "An answer is yes or no." }, 400);
+    if (!queue.answer(agent.id, c.req.param("message"), allow)) return c.json({ error: "The agent is no longer waiting for an answer to that." }, 409);
+    return c.json(store.message(agent.id, c.req.param("message")));
+  });
+
   /** The messages that contain `text`, in any of the person's chats. */
   app.get("/search", (c) => {
     const text = c.req.query("text")?.trim();

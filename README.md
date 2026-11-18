@@ -8,7 +8,7 @@ The full design is in [docs/specs/2026-11-15-sidebots.md](docs/specs/2026-11-15-
 
 ## Read this before you run it
 
-- **Agents act without asking.** They run in Claude Code's auto mode, where Claude Code's own safety check decides what is safe to run. Nobody is asked to approve anything. An action the check can't decide on is skipped.
+- **Agents act on their own.** They run in Claude Code's auto mode, where Claude Code's own safety check decides what is safe to run, and nobody is asked about those actions. An action the check can't decide on, the agent asks its person about on their phone. It leaves the action undone when they say no, or don't answer within half an hour.
 - **Agents can reach everything the server's user account can.** Every agent runs as the account that started the server, and can read and change that account's files, run commands as it, and use each person's Claude Code skills and connections.
 - **Share a server only with people you would trust with that machine.** Each person sees only their own agents in the app, but all agents run as the same account.
 - **A pairing code lets a phone in.** The server has no passwords. It answers only phones that have paired with it, and a phone pairs by scanning a code you make for one person. Whoever scans the code reaches that person's agents, so show it only to them.

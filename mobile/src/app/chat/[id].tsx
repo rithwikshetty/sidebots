@@ -5,7 +5,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { KeyboardChatScrollView, KeyboardController, KeyboardEvents, KeyboardStickyView } from "react-native-keyboard-controller";
 import Animated, { useSharedValue } from "react-native-reanimated";
 import { Reply, X } from "lucide-react-native";
-import type { AgentWithLatest, Message } from "@server/contract";
+import type { AgentWithLatest, Ask, Message } from "@server/contract";
 import { AvatarView } from "@/components/AvatarView";
 import { BAR_HEIGHT, ChatHeader, HEADER_CLEARANCE, HEADER_OVERHANG } from "@/components/ChatHeader";
 import { Composer } from "@/components/Composer";
@@ -23,7 +23,7 @@ import { useWorkingLine } from "@/lib/lines";
 import { preview } from "@/lib/messages";
 import { HIDE, MOVE, SHOW, arrive } from "@/lib/motion";
 import { askForPush, showChatOnScreen } from "@/lib/push";
-import { avatarStateOf, freshStart, loadMessages, loadOlder, markRead, send, useAgent, useChatColor, useMessages, useOnline } from "@/lib/state";
+import { answerAsk, avatarStateOf, freshStart, loadMessages, loadOlder, markRead, send, useAgent, useChatColor, useMessages, useOnline } from "@/lib/state";
 import { ChatColor, type Theme, useTheme } from "@/lib/theme";
 import { dayLabel, listTime, sameDay } from "@/lib/time";
 
@@ -334,6 +334,7 @@ function Bubble({
           files={shown.filter((item) => !isImage(item.name))}
           mine={mine}
           theme={theme}
+          foot={message.ask ? <AskAnswer message={message} ask={message.ask} theme={theme} /> : undefined}
         />
         {mine && message.status === "failed" ? (
           <Animated.View entering={SHOW} exiting={HIDE}>
@@ -361,11 +362,40 @@ function Receipt({ message, theme }: { message: Message; theme: Theme }) {
 }
 
 /**
+ * At the foot of an ask's bubble: Allow and Don't allow while the agent waits
+ * for the person's answer, and how the ask ended once it has. The agent goes
+ * on, or leaves the thing undone, as soon as one is tapped.
+ */
+function AskAnswer({ message, ask, theme }: { message: Message; ask: Ask; theme: Theme }) {
+  const [sending, setSending] = useState(false);
+  if (ask !== "waiting") return <FadingText style={[styles.asked, { color: theme.ink2 }]}>{ASKED[ask]}</FadingText>;
+  const answer = (allow: boolean) => {
+    haptics.select();
+    setSending(true);
+    answerAsk(message, allow)
+      .catch((failure) => problem("Couldn't answer", failure))
+      .finally(() => setSending(false));
+  };
+  return (
+    <Animated.View exiting={HIDE} style={styles.answers}>
+      {/* On the bubble's grey, the quieter button is the page colour, as code is. */}
+      <Pressable onPress={() => answer(false)} disabled={sending} accessibilityRole="button" style={({ pressed }) => [styles.answer, { backgroundColor: theme.bg, opacity: pressed || sending ? 0.6 : 1 }]}>
+        <Text style={[styles.answerText, { color: theme.ink }]}>Don't allow</Text>
+      </Pressable>
+      <Pressable onPress={() => answer(true)} disabled={sending} accessibilityRole="button" style={({ pressed }) => [styles.answer, { backgroundColor: theme.tint, opacity: pressed || sending ? 0.6 : 1 }]}>
+        <Text style={[styles.answerText, { color: theme.onTint }]}>Allow</Text>
+      </Pressable>
+    </Animated.View>
+  );
+}
+
+/**
  * A message as the chat draws it: its photos and files above its bubble, as
  * Assist draws one, and the message it answers quoted at the bubble's top.
  * The agent's words are markdown; the person's are as they typed them.
+ * `foot` sits under the words, inside the bubble.
  */
-function Sent({ body, quote, photos, files, mine, theme }: { body: string; quote?: string; photos: Shown[]; files: Shown[]; mine: boolean; theme: Theme }) {
+function Sent({ body, quote, photos, files, mine, theme, foot }: { body: string; quote?: string; photos: Shown[]; files: Shown[]; mine: boolean; theme: Theme; foot?: ReactNode }) {
   const quiet = mine ? theme.onTint : theme.ink2;
   return (
     <>
@@ -389,6 +419,7 @@ function Sent({ body, quote, photos, files, mine, theme }: { body: string; quote
           ) : body ? (
             <Markdown text={body} />
           ) : null}
+          {foot}
         </View>
       ) : null}
     </>
@@ -416,6 +447,8 @@ const PENDING_OPACITY = 0.7;
 // A new message rises into the chat. The person's own settles from its faded copy, which already sits there.
 const RISE = arrive(0, 12);
 const SETTLE = arrive(PENDING_OPACITY, 0);
+// How an ask ended, as its bubble says it.
+const ASKED: Record<Exclude<Ask, "waiting">, string> = { allowed: "Allowed", refused: "Not allowed", unanswered: "Not answered" };
 // The messages that have come in with motion, so a row scrolled away and back shows as it is.
 const arrived = new Set<string>();
 // The phone's clock and the server's may disagree by a little.
@@ -455,6 +488,10 @@ const styles = StyleSheet.create({
   note: { alignSelf: "center", textAlign: "center", fontSize: 13, lineHeight: 18, marginTop: 10, paddingHorizontal: 24 },
   hint: { textAlign: "center", fontSize: 15, lineHeight: 20, paddingHorizontal: 24 },
   receipt: { fontSize: 11, lineHeight: 15, marginTop: 2, marginRight: 4 },
+  answers: { flexDirection: "row", gap: 8, marginTop: 2, marginBottom: 6 },
+  answer: { flex: 1, minWidth: 108, minHeight: 44, paddingHorizontal: 14, borderRadius: 14, borderCurve: "continuous", alignItems: "center", justifyContent: "center" },
+  answerText: { fontSize: 16, fontWeight: "600" },
+  asked: { fontSize: 13, lineHeight: 18, fontWeight: "600", marginBottom: 2 },
   resend: { fontSize: 13, fontWeight: "600", marginTop: 4, marginRight: 4 },
   workingRow: { flexDirection: "row", alignItems: "center", gap: 10, marginTop: 10, paddingLeft: 2 },
   workingText: { fontSize: 15, fontStyle: "italic" },
