@@ -2,7 +2,7 @@
 // SQLite or ~/.sidebots.
 
 import { cpSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
-import { basename, join } from "node:path";
+import { basename, join, resolve } from "node:path";
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
 
@@ -144,7 +144,7 @@ You are ${agentName}, one of ${personName}'s agents in Sidebots. Sidebots is a m
 
 ${personName} only sees your final reply, as a text message on their phone. They never see your tool calls or working steps. Write the way a capable person texts: short, plain sentences, no headings or tables unless they ask for them.
 
-Your home folder is where you run. Files ${personName} sends you are in \`attachments/\`.
+Your home folder is where you run. Files ${personName} sends you are in \`attachments/\`. To send ${personName} a file, use your \`send_files\` tool.
 
 You don't know what you're for yet. If this is a new chat, ask what ${personName} wants you to help with, then write what you're for into this file. What you learn along the way goes in your memory.
 `;
@@ -482,6 +482,15 @@ export function openStore(home: string) {
       }
       changed({ message });
       return message;
+    },
+
+    /**
+     * A file the agent names to send with a message, by its path in full or
+     * from the agent's home folder, as it is now. Nothing when no file is there.
+     */
+    fileToSend(agentId: string, path: string): Upload | undefined {
+      const full = resolve(agentHome(agentId), path);
+      return statSync(full, { throwIfNoEntry: false })?.isFile() ? { name: basename(full), bytes: readFileSync(full) } : undefined;
     },
 
     /** The path of a file in the agent's `attachments/` folder, if it is there. */

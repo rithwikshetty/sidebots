@@ -1,14 +1,14 @@
 import { test } from "node:test";
 import { createDecipheriv } from "node:crypto";
 import assert from "node:assert/strict";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, statSync, truncateSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { openStore } from "../src/store.ts";
 import { createQueue, type Turn, type TurnResult } from "../src/runner.ts";
 import { claude } from "../src/claude.ts";
 import { createApi } from "../src/api.ts";
-import { CONTRACT_VERSION } from "../src/contract.ts";
+import { CONTRACT_VERSION, MESSAGE_BYTES } from "../src/contract.ts";
 import { startPush, type Notice, type Sealed } from "../src/push.ts";
 
 /** A turn's reply, as a fake provider gives it. No reply means the fake gave its replies itself. */
@@ -841,6 +841,59 @@ test("an agent's updates while it works wait a minute, then come no more than ev
     ],
   );
   assert.deepEqual(sent.map((notice) => [notice.body, notice.badge]), [["Here are the three flats.", 1]]);
+});
+
+test("an agent's files go with its next message, an update or its reply, and open as the person's own do", async () => {
+  let time = new Date(2026, 10, 16, 9, 0).getTime();
+  const answers: string[] = [];
+  const { home, queue, call, say, app, phoneOf } = setup(async (turn) => {
+    if (turn.prompt.text !== "chart my week") {
+      // A run of the job: a file sent with nothing to say goes nowhere, and one sent with a reply goes with it.
+      writeFileSync(join(turn.cwd, "week.png"), "this week");
+      turn.sendFiles(["week.png"]);
+      return reply(time > new Date(2026, 10, 16, 9, 10).getTime() ? "Your week so far." : "SILENT");
+    }
+    turn.scheduleJob({ what: "Chart the week.", every_minutes: 5 });
+    writeFileSync(join(turn.cwd, "chart.png"), "first draft");
+    writeFileSync(join(home, "Week 47 report.pdf"), "the report");
+    answers.push(turn.sendFiles(["chart.png", "missing.png"]));
+    answers.push(turn.sendFiles(["chart.png"]));
+    // What is sent is the file as it was when the agent named it, whatever becomes of it after.
+    writeFileSync(join(turn.cwd, "chart.png"), "final");
+    time += 2 * 60_000;
+    turn.sendUpdate!("Here is the chart so far.");
+    answers.push(turn.sendFiles(["chart.png", join(home, "Week 47 report.pdf")]));
+    // Files that would take the message past what it can carry are left out, and the ones already added stay.
+    writeFileSync(join(turn.cwd, "film.mov"), "");
+    truncateSync(join(turn.cwd, "film.mov"), MESSAGE_BYTES);
+    answers.push(turn.sendFiles(["film.mov"]));
+    return reply("Both are here.");
+  }, () => time);
+  const agent = (await call(ME, "POST", "/agents", { name: "Scout", avatarId: "moss" })).json;
+  await say(ME, agent.id, "chart my week");
+  await queue.kick(agent.id);
+  for (const minutes of [5, 10]) {
+    time += minutes * 60_000;
+    await queue.kick(agent.id);
+  }
+
+  assert.deepEqual(answers, [
+    "There is no file at missing.png. Nothing was added, so give the paths again.",
+    "Added. They go with the next message you send.",
+    "Added. They go with the next message you send.",
+    "A message carries up to 95 MB of files. Nothing was added, so send fewer or smaller ones.",
+  ]);
+  const [, update, answer, fromJob, ...rest] = (await call(ME, "GET", `/agents/${agent.id}/messages`)).json as { body: string; attachments: string[] }[];
+  assert.deepEqual(rest, []);
+  const names = (message: { attachments: string[] }) => message.attachments.map((path) => path.replace(/^attachments\/[0-9a-f]{8}-/, ""));
+  assert.deepEqual([update.body, names(update)], ["Here is the chart so far.", ["chart.png"]]);
+  assert.deepEqual([answer.body, names(answer)], ["Both are here.", ["chart.png", "Week-47-report.pdf"]]);
+  assert.deepEqual([fromJob.body, names(fromJob)], ["Your week so far.", ["week.png"]]);
+
+  const open = async (path: string) => app.request(`/agents/${agent.id}/${path}`, { headers: phoneOf(ME) });
+  assert.equal(await (await open(update.attachments[0])).text(), "first draft");
+  assert.equal(await (await open(answer.attachments[0])).text(), "final");
+  assert.equal(await (await open(answer.attachments[1])).text(), "the report");
 });
 
 test("a job's run can't send updates", async () => {
