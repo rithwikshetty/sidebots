@@ -36,15 +36,19 @@ async function environment(): Promise<PushToken["environment"]> {
   return named === "development" || (named === null && !isDevice) ? "sandbox" : "production";
 }
 
+/** Where Apple delivers to this install under `token`, which is the phone's device token or one of its Live Activities'. */
+export async function pushTokenOf(token: string): Promise<PushToken> {
+  // A development build is an app of its own, which Apple delivers to under its own identifier.
+  const app = Application.applicationId ?? undefined;
+  return { token, environment: await environment(), ...(app ? { app } : {}) };
+}
+
 /** Gives the server this phone's token when the phone allows notifications. */
 async function register(): Promise<void> {
   if (!isPaired() || (await Notifications.getPermissionsAsync()).status !== "granted") return;
   const token = (await Notifications.getDevicePushTokenAsync()).data;
   if (typeof token !== "string") return;
-  // A development build is an app of its own, which Apple delivers to under its own identifier.
-  const app = Application.applicationId ?? undefined;
-  const push: PushToken = { token, environment: await environment(), ...(app ? { app } : {}) };
-  await request("/push-token", { method: "PUT", body: push });
+  await request("/push-token", { method: "PUT", body: await pushTokenOf(token) });
 }
 
 /**

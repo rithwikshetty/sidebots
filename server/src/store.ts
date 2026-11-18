@@ -106,6 +106,14 @@ create table if not exists pairings (
   person_id  text not null references people(id),
   expires_at integer not null
 );
+create table if not exists activities (
+  device_id   text not null references devices(id) on delete cascade,
+  agent_id    text not null references agents(id) on delete cascade,
+  token       text not null,
+  environment text not null check (environment in ('sandbox', 'production')),
+  app         text,
+  primary key (device_id, agent_id)
+);
 `;
 
 const PAGE = 50;
@@ -653,6 +661,21 @@ export function openStore(home: string) {
     /** Forgets a token Apple no longer delivers to. The phone stays paired. */
     clearPushToken(token: string): void {
       clearPushToken.run(token);
+    },
+
+    /** Remembers where Apple delivers to the Live Activity a phone shows for a working agent. A phone shows one for an agent at a time, so a new one takes the last one's place. */
+    setActivityToken(deviceId: string, agentId: string, push: PushToken): void {
+      db.prepare(
+        "insert into activities (device_id, agent_id, token, environment, app) values (?1, ?2, ?3, ?4, ?5) on conflict (device_id, agent_id) do update set token = ?3, environment = ?4, app = ?5",
+      ).run(deviceId, agentId, push.token, push.environment, push.app ?? null);
+    },
+
+    /** Where Apple delivers to the Live Activities phones show for an agent. It forgets them as it answers, since each ends with the one push its token is for. */
+    endActivities(agentId: string): PushToken[] {
+      return db
+        .prepare("delete from activities where agent_id = ? returning token, environment, app")
+        .all(agentId)
+        .map(({ app, ...target }) => (app === null ? target : { ...target, app })) as PushToken[];
     },
 
     /** Keeps how this server is known to the relay, readable only by the server's user account. */

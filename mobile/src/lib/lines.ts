@@ -12,6 +12,11 @@ const LINES = [
 ];
 const CHANGE_MS = 2800;
 
+/** One of the playful lines, for where it can't change, as in a Live Activity. */
+export function workingLine(): string {
+  return LINES[Math.floor(Math.random() * LINES.length)];
+}
+
 /** A playful line to show while an agent works. It changes every few seconds. */
 export function useWorkingLine(): string {
   const [index, setIndex] = useState(() => Math.floor(Math.random() * LINES.length));

@@ -8,7 +8,7 @@ import { fetch as streamingFetch } from "expo/fetch";
 import { File } from "expo-file-system";
 import { Image } from "expo-image";
 import Storage from "expo-sqlite/kv-store";
-import type { About, Agent, AgentWithLatest, Avatar, AvatarState, Effort, Found, Message, Model, StreamEvent } from "@server/contract";
+import type { About, Agent, AgentWithLatest, Avatar, Effort, Found, Message, Model, StreamEvent } from "@server/contract";
 import { ApiError, avatarSheet, behind, isPaired, onPairing, remote, request, unpair, type Behind } from "./api";
 import type { Picked } from "./files";
 
@@ -101,12 +101,17 @@ export function useBehind(): Behind | null {
   return useSyncExternalStore(subscribe, () => state.behind);
 }
 
-/** Which animation an agent's avatar plays. */
-export function avatarStateOf(agent: AgentWithLatest): AvatarState {
-  if (agent.working) return "working";
-  if (agent.latest?.sender === "sidebots" && agent.latest.status === "failed") return "failed";
-  if (agent.unread > 0) return "replied";
-  return "resting";
+const told = new Set<(agents: AgentWithLatest[]) => void>();
+
+/**
+ * Calls `listener` with the agents each time the computer has just said how
+ * they are: with every event of its stream, and when the app catches up with
+ * it. What the phone saved of them doesn't count. Returns a function that
+ * stops it.
+ */
+export function onAgents(listener: (agents: AgentWithLatest[]) => void): () => void {
+  told.add(listener);
+  return () => told.delete(listener);
 }
 
 /** An agent as the server sent it, with the person's changes the server doesn't have yet laid over it. */
@@ -124,13 +129,16 @@ function upsert(list: Message[], message: Message): Message[] {
 
 /** Takes in what the event stream says: a message and its agent, a new agent, or an agent that was deleted. */
 function apply(event: StreamEvent): void {
-  if ("deleted" in event) return forget(event.deleted);
-  const { message, agent } = event;
-  const known = state.messages[agent.id];
-  set({
-    agents: [withPending(agent), ...state.agents.filter((item) => item.id !== agent.id)],
-    messages: known && message ? { ...state.messages, [agent.id]: upsert(known, message) } : state.messages,
-  });
+  if ("deleted" in event) forget(event.deleted);
+  else {
+    const { message, agent } = event;
+    const known = state.messages[agent.id];
+    set({
+      agents: [withPending(agent), ...state.agents.filter((item) => item.id !== agent.id)],
+      messages: known && message ? { ...state.messages, [agent.id]: upsert(known, message) } : state.messages,
+    });
+  }
+  told.forEach((listener) => listener(state.agents));
 }
 
 /** Lets go of everything the phone kept of an agent that is gone. */
@@ -171,6 +179,7 @@ async function refresh(): Promise<void> {
   const ofKept = <T>(record: Record<string, T>) => Object.fromEntries(Object.entries(record).filter(([agentId]) => kept.has(agentId)));
   set({ pending: ofKept(state.pending), messages: ofKept(state.messages), about: ofKept(state.about) });
   set({ agents: agents.map(withPending), avatars });
+  told.forEach((listener) => listener(state.agents));
   keepSheets(avatars);
   // Changes made while the server was out of reach go now.
   for (const agentId of Object.keys(state.pending)) void sendChanges(agentId).catch(() => undefined);

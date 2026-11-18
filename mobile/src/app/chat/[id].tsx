@@ -5,7 +5,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { KeyboardChatScrollView, KeyboardController, KeyboardEvents, KeyboardStickyView } from "react-native-keyboard-controller";
 import Animated, { useSharedValue } from "react-native-reanimated";
 import { Reply, X } from "lucide-react-native";
-import type { AgentWithLatest, Message } from "@server/contract";
+import { avatarStateOf, type AgentWithLatest, type Message } from "@server/contract";
 import { AvatarView } from "@/components/AvatarView";
 import { BAR_HEIGHT, ChatHeader, HEADER_CLEARANCE, HEADER_OVERHANG } from "@/components/ChatHeader";
 import { Composer } from "@/components/Composer";
@@ -23,7 +23,7 @@ import { useWorkingLine } from "@/lib/lines";
 import { preview } from "@/lib/messages";
 import { HIDE, MOVE, SHOW, arrive } from "@/lib/motion";
 import { askForPush, showChatOnScreen } from "@/lib/push";
-import { avatarStateOf, freshStart, loadMessages, loadOlder, markRead, send, useAgent, useChatColor, useMessages, useOnline } from "@/lib/state";
+import { freshStart, loadMessages, loadOlder, markRead, send, useAgent, useChatColor, useMessages, useOnline } from "@/lib/state";
 import { ChatColor, type Theme, useTheme } from "@/lib/theme";
 import { dayLabel, listTime, sameDay } from "@/lib/time";
 

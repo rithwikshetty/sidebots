@@ -13,8 +13,8 @@ import type { Queue } from "./runner.ts";
 const KEEPALIVE_MS = 25_000;
 // The most one message carries, under the 100 MB Cloudflare takes in one request.
 const MESSAGE_BYTES = 95 * 1024 * 1024;
-// An Apple device token as the phone reports it: hex, 32 bytes today, with room for Apple to lengthen it.
-const DEVICE_TOKEN = /^[0-9a-f]{64,200}$/;
+// A token of Apple's as the phone reports it, in hex: 32 bytes for a phone today and 128 for a Live Activity, with room for Apple to lengthen either.
+const DEVICE_TOKEN = /^[0-9a-f]{64,512}$/;
 // An app's bundle identifier, as Apple allows it.
 const BUNDLE_ID = /^[A-Za-z0-9.-]{1,155}$/;
 const CONTENT_TYPES: Record<string, string> = {
@@ -27,13 +27,24 @@ const CONTENT_TYPES: Record<string, string> = {
   ".pdf": "application/pdf",
 };
 
+/** Where Apple delivers to a phone, as the phone sent it, or nothing when it isn't one. */
+function pushToken({ token, environment, app }: Partial<PushToken>): PushToken | undefined {
+  if (!token || !DEVICE_TOKEN.test(token) || (environment !== "sandbox" && environment !== "production") || (app !== undefined && !BUNDLE_ID.test(app))) return undefined;
+  return app === undefined ? { token, environment } : { token, environment, app };
+}
+const NOT_A_PUSH_TOKEN = "A push token comes with its push service, and the app it is for when the app says.";
+
 /** What a request's `Authorization` header carries under a scheme, as in `Bearer <key>`. */
 function credential(header: string | undefined, scheme: string): string | undefined {
   return header?.startsWith(`${scheme} `) ? header.slice(scheme.length + 1) : undefined;
 }
 
-/** `machine` is the name of the machine the server runs on, which a phone shows once it has paired. */
-export function createApi(store: Store, queue: Queue, machine: string) {
+/**
+ * `machine` is the name of the machine the server runs on, which a phone shows
+ * once it has paired. `pushes` says whether the server sends through a relay,
+ * without which it can't end a Live Activity.
+ */
+export function createApi(store: Store, queue: Queue, machine: string, pushes: boolean) {
   const app = new Hono<{ Variables: { person: Person; device: Device } }>();
 
   /** Every answer says which version of the contract the server speaks, so the app can tell which side to update. */
@@ -198,12 +209,27 @@ export function createApi(store: Store, queue: Queue, machine: string) {
 
   /** The phone says where Apple delivers its notifications, once it allows them. */
   app.put("/push-token", async (c) => {
-    const { token, environment, app } = await c.req.json<Partial<PushToken>>();
-    if (!token || !DEVICE_TOKEN.test(token) || (environment !== "sandbox" && environment !== "production") || (app !== undefined && !BUNDLE_ID.test(app))) {
-      return c.json({ error: "A push token comes with its push service, and the app it is for when the app says." }, 400);
-    }
-    const push: PushToken = app === undefined ? { token, environment } : { token, environment, app };
+    const push = pushToken(await c.req.json<Partial<PushToken>>());
+    if (!push) return c.json({ error: NOT_A_PUSH_TOKEN }, 400);
     store.setPushToken(c.var.device.id, push);
+    return c.json(push);
+  });
+
+  /**
+   * The phone says where Apple delivers to the Live Activity it shows for a
+   * working agent, so the server can end the activity when the work does. A
+   * token the server could never use is refused, and the phone ends the
+   * activity itself: when the agent has no work left, and when the server
+   * sends nothing to Apple.
+   */
+  app.put("/agents/:id/activity-token", async (c) => {
+    const agent = ownAgent(c.var.person, c.req.param("id"));
+    if (!agent) return c.json({ error: "No such agent." }, 404);
+    const push = pushToken(await c.req.json<Partial<PushToken>>());
+    if (!push) return c.json({ error: NOT_A_PUSH_TOKEN }, 400);
+    if (!pushes) return c.json({ error: "This computer sends nothing to Apple, so it can't end a Live Activity." }, 501);
+    if (!store.agentWithLatest(agent.id)!.working) return c.json({ error: "The agent isn't working." }, 409);
+    store.setActivityToken(c.var.device.id, agent.id, push);
     return c.json(push);
   });
 

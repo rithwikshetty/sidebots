@@ -1,0 +1,7 @@
+{
+  "name": "agent-activity",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Starts and ends the Live Activity that shows a working agent on the Lock Screen and in the Dynamic Island.",
+  "main": "src/index.ts"
+}

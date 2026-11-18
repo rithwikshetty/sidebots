@@ -1,12 +1,14 @@
 # Sidebots relay
 
-The relay gives each Sidebots server an address under the zone, such as `<machine id>.sidebots.app`, through a Cloudflare Tunnel, and passes the server's notifications to Apple. Only the Apple Developer account that builds the app can notify it, so the relay holds that account's push key, and each server sends its notices here. The relay is a Cloudflare Worker with a D1 database. It keeps each server's public key, id and tunnel, and nothing about people, agents or messages.
+The relay gives each Sidebots server an address under the zone, such as `<machine id>.sidebots.app`, through a Cloudflare Tunnel, and passes the server's notifications and the ends of its Live Activities to Apple. Only the Apple Developer account that builds the app can notify it, so the relay holds that account's push key, and each server sends its notices here. The relay is a Cloudflare Worker with a D1 database. It keeps each server's public key, id and tunnel, and nothing about people, agents or messages.
 
 | Route | Purpose |
 | --- | --- |
 | `POST /machines` | Register a machine by its public key, with its server's port. Makes its tunnel and address the first time, and answers with its id, its address and its tunnel's token |
 | `DELETE /machines/:id` | Remove a machine, its tunnel and its address |
-| `POST /notifications` | Pass one encrypted notice to Apple for one device token, and answer `sent`, `gone` or `failed` |
+| `POST /notifications` | Pass one encrypted notice to Apple for one device token, or end one Live Activity by its token, and answer `sent`, `gone` or `failed` |
+
+A notice is one of two things. A notification comes as `sealed`, which only the phone can read, with `messageId`. The end of a Live Activity comes as `ended`, which is `resting`, `replied` or `failed`, the state the agent's avatar is left in. That one word is all the relay ever reads of an agent, and it goes to Apple under the topic `<app identifier>.push-type.liveactivity`, which the same push key covers.
 
 `src/worker.ts` describes how a server signs its requests. `src/cloudflare.ts` makes and removes tunnels and their DNS records. `src/apple.ts` sends to Apple's push service.
 
@@ -44,4 +46,4 @@ You need your own relay when you build your own copy of the app, since Apple del
 
 7. Start the server with `SIDEBOTS_RELAY=https://<the relay's address>`.
 
-The relay lets one network address register three new machines a minute, sends one machine at most `NOTICES_PER_DAY` notifications a day, and once a day removes the machines it hasn't heard from in 60 days, with their tunnels and addresses. A running server registers again each day, so only a machine that has been off or away that long is removed.
+The relay lets one network address register three new machines a minute, sends one machine at most `NOTICES_PER_DAY` notices a day, and once a day removes the machines it hasn't heard from in 60 days, with their tunnels and addresses. A running server registers again each day, so only a machine that has been off or away that long is removed.

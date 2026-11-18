@@ -5,7 +5,7 @@ import Swipeable, { type SwipeableMethods } from "react-native-gesture-handler/R
 import { useRouter } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Bell, BellOff, ChevronRight, Eye, EyeOff, Menu, Plus, Search, Trash2, X } from "lucide-react-native";
-import type { AgentWithLatest, Found } from "@server/contract";
+import { avatarStateOf, type AgentWithLatest, type Found } from "@server/contract";
 import { Glass } from "@/components/Glass";
 import { AvatarView } from "@/components/AvatarView";
 import { EdgeFade } from "@/components/EdgeFade";
@@ -16,7 +16,8 @@ import { UPDATE, type Behind } from "@/lib/api";
 import { useWorkingLine } from "@/lib/lines";
 import { preview } from "@/lib/messages";
 import { EASE, HIDE, MOVE, POP_IN, POP_OUT, SHOW } from "@/lib/motion";
-import { avatarStateOf, changeAgent, findMessages, useAgents, useAvatars, useBehind, useOnline, type AgentChanges } from "@/lib/state";
+import { changeAgent, findMessages, useAgents, useAvatars, useBehind, useOnline, type AgentChanges } from "@/lib/state";
+import { useActivities } from "@/lib/activity";
 import { usePush } from "@/lib/push";
 import { useTheme } from "@/lib/theme";
 import { listTime } from "@/lib/time";
@@ -76,6 +77,7 @@ export default function Home() {
   // The row whose actions are showing, which closes when another row's open.
   const opened = useRef<SwipeableMethods | null>(null);
   usePush();
+  useActivities();
 
   const rows: Row[] = behind
     ? []

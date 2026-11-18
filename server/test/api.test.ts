@@ -9,7 +9,7 @@ import { createQueue, type Turn, type TurnResult } from "../src/runner.ts";
 import { claude } from "../src/claude.ts";
 import { createApi } from "../src/api.ts";
 import { CONTRACT_VERSION } from "../src/contract.ts";
-import { startPush, type Notice, type Sealed } from "../src/push.ts";
+import { startPush, type Ended, type Notice, type Sealed } from "../src/push.ts";
 
 /** A turn's reply, as a fake provider gives it. No reply means the fake gave its replies itself. */
 type Answer = TurnResult & { reply?: string };
@@ -31,7 +31,7 @@ function setup(answer: (turn: Turn) => Promise<Answer>, now: () => number = Date
   store.addPerson({ name: "Alex", provider: "claude", configDir: "/config/alex" });
   store.addPerson({ name: "Robin", provider: "claude", configDir: "/config/robin" });
   const queue = createQueue(store, { claude: { ...claude, runTurn } }, now);
-  const app = createApi(store, queue, "Test computer");
+  const app = createApi(store, queue, "Test computer", true);
   const notificationKeys = new Map<string, string>();
   /** Pairs another phone as the person, and returns what it sends with each request. */
   const pair = (name: string) => {
@@ -40,8 +40,9 @@ function setup(answer: (turn: Turn) => Promise<Answer>, now: () => number = Date
     return { Authorization: `Bearer ${keys.key}` };
   };
   /** Opens a notice sealed for a phone, with that phone's notification key. */
-  const open = (phone: { Authorization: string }, { sealed }: Sealed): Notice => {
-    const bytes = Buffer.from(sealed, "base64");
+  const open = (phone: { Authorization: string }, push: Sealed | Ended): Notice => {
+    assert.ok("sealed" in push);
+    const bytes = Buffer.from(push.sealed, "base64");
     const key = Buffer.from(notificationKeys.get(phone.Authorization.slice("Bearer ".length))!, "base64");
     const decipher = createDecipheriv("aes-256-gcm", key, bytes.subarray(0, 12));
     decipher.setAuthTag(bytes.subarray(-16));
@@ -565,6 +566,66 @@ test("a reply or a failed turn notifies the person's phones, and a phone Apple h
   assert.equal((await call(ME, "GET", "/agents")).json[0].unread, 2);
   assert.equal((await call(ME, "POST", `/agents/${agent.id}/read`)).json.unread, 0);
   assert.equal((await call(HER, "POST", `/agents/${agent.id}/read`)).status, 404);
+});
+
+test("the Live Activity a phone shows for a working agent ends with the agent's work, on the state its avatar is left in", async () => {
+  let fail = false;
+  let finish = () => {};
+  const { store, queue, call, say, phoneOf } = setup(async () => {
+    await new Promise<void>((resolve) => (finish = resolve));
+    if (fail) throw new Error("Signed out.");
+    return reply("Booked.");
+  });
+  const ended: unknown[] = [];
+  startPush(store, async (to, push) => {
+    if ("ended" in push) ended.push([to, push]);
+    return "sent";
+  });
+  const activity = { token: "d".repeat(256), environment: "sandbox", app: "app.sidebots.dev" };
+  const agent = (await call(ME, "POST", "/agents", { name: "Wedding", avatarId: "mochi" })).json;
+  const token = (who: string | { Authorization: string }, body: unknown = activity) => call(who, "PUT", `/agents/${agent.id}/activity-token`, body);
+  /** Sends a message, gives the server the activity's token while the agent works, then lets the turn end. */
+  const work = async (start: () => Promise<unknown>) => {
+    await start();
+    const turn = queue.kick(agent.id);
+    await new Promise((resolve) => setTimeout(resolve, 1));
+    assert.equal((await token(ME)).status, 200);
+    finish();
+    await turn;
+  };
+
+  // An agent with no work has no activity to end, and nobody gives a token for another person's agent.
+  assert.equal((await token(ME)).status, 409);
+  assert.equal((await token(HER)).status, 404);
+  assert.equal((await token(ME, { token: "nope", environment: "sandbox" })).status, 400);
+
+  await new Promise((resolve) => setTimeout(resolve, 1));
+  await work(() => say(ME, agent.id, "book the band"));
+  // The push is the token and the state. The agent's name and what it said are in the notification, which is encrypted.
+  assert.deepEqual(ended, [[activity, { ended: "replied" }]]);
+
+  // The token was for that activity, so the next turn ends nothing until the phone shows another.
+  // A server with no relay could never end one, and says so while the agent works.
+  await say(ME, agent.id, "and the florist");
+  const unshown = queue.kick(agent.id);
+  await new Promise((resolve) => setTimeout(resolve, 1));
+  const noRelay = createApi(store, queue, "Test computer", false);
+  const refused = await noRelay.request(`/agents/${agent.id}/activity-token`, { method: "PUT", headers: { ...phoneOf(ME), "Content-Type": "application/json" }, body: JSON.stringify(activity) });
+  assert.equal(refused.status, 501);
+  finish();
+  await unshown;
+  assert.equal(ended.length, 1);
+
+  fail = true;
+  await work(() => say(ME, agent.id, "and the cake"));
+  assert.deepEqual(ended.at(-1), [activity, { ended: "failed" }]);
+
+  // A fresh start leaves nothing to read once the chat has been read, so the activity goes at once.
+  fail = false;
+  await call(ME, "POST", `/agents/${agent.id}/read`);
+  await work(() => call(ME, "POST", `/agents/${agent.id}/fresh-start`));
+  assert.deepEqual(ended.at(-1), [activity, { ended: "resting" }]);
+  assert.equal(ended.length, 3);
 });
 
 test("an agent's name, avatar, model and effort can be changed, and its turns run on its model at its effort", async () => {

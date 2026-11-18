@@ -1,15 +1,12 @@
 import { useEffect, useState } from "react";
 import { Image } from "expo-image";
 import Animated, { useAnimatedStyle, withTiming } from "react-native-reanimated";
-import { AVATAR_SHEET, AVATAR_STATES, type AvatarState } from "@server/contract";
+import { AVATAR_SHEET, AVATAR_STATES, avatarFrame, type AvatarState } from "@server/contract";
 import { avatarSheet } from "@/lib/api";
 import { EASE } from "@/lib/motion";
 
-const { columns, cellWidth, cellHeight, art } = AVATAR_SHEET;
-const ROWS = Object.keys(AVATAR_STATES) as AvatarState[];
-// The window onto a cell: the drawing plus the room above it for a hop.
-const WINDOW_TOP = art.top - art.pixel;
-const WINDOW_HEIGHT = art.size + art.pixel;
+const { columns, cellWidth, cellHeight } = AVATAR_SHEET;
+const ROWS = Object.keys(AVATAR_STATES).length;
 
 /**
  * An agent's avatar, playing the animation for `state`. `size` is the width of
@@ -27,10 +24,11 @@ export function AvatarView({ avatarId, state, size, dimmed = false }: { avatarId
 
   const fade = useAnimatedStyle(() => ({ opacity: withTiming(dimmed ? 0.4 : 1, EASE) }));
 
-  const scale = size / art.size;
-  const row = ROWS.indexOf(state);
+  // The view is a window onto the sheet, the size of one frame.
+  const shown = avatarFrame(state, frame % frames);
+  const scale = size / shown.width;
   return (
-    <Animated.View style={[{ width: size, height: WINDOW_HEIGHT * scale, overflow: "hidden" }, fade]}>
+    <Animated.View style={[{ width: size, height: shown.height * scale, overflow: "hidden" }, fade]}>
       <Image
         source={avatarSheet(avatarId)}
         cachePolicy="disk"
@@ -38,9 +36,9 @@ export function AvatarView({ avatarId, state, size, dimmed = false }: { avatarId
         style={{
           position: "absolute",
           width: columns * cellWidth * scale,
-          height: ROWS.length * cellHeight * scale,
-          left: -((frame % frames) * cellWidth + art.left) * scale,
-          top: -(row * cellHeight + WINDOW_TOP) * scale,
+          height: ROWS * cellHeight * scale,
+          left: -shown.x * scale,
+          top: -shown.y * scale,
         }}
       />
     </Animated.View>

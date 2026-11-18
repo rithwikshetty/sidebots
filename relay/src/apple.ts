@@ -11,7 +11,14 @@ export type PushKey = { key: string; keyId: string; teamId: string };
  * arrives, and shows what the agent said in place of the relay's words.
  */
 export type Sealed = { sealed: string; messageId: string };
-/** `gone` means Apple will never deliver to this phone's token again. */
+/**
+ * How a Live Activity ends: the state its agent's work left the avatar in.
+ * The phone drew the activity with the agent's name and picture when it
+ * started it, so its end carries no more than this.
+ */
+export const ENDED = ["resting", "replied", "failed"] as const;
+export type Ended = (typeof ENDED)[number];
+/** `gone` means Apple will never deliver to this token again. */
 export type Result = "sent" | "gone" | "failed";
 
 const ORIGINS = { production: "https://api.push.apple.com", sandbox: "https://api.sandbox.push.apple.com" } as const;
@@ -20,6 +27,8 @@ const TOKEN_SECONDS = 45 * 60;
 const GONE_REASONS = new Set(["BadDeviceToken", "DeviceTokenNotForTopic", "Unregistered"]);
 // The app's own sound, which it carries in its bundle.
 const SOUND = "sidebots.wav";
+// How long an ended Live Activity stays on the Lock Screen with the reply or the failure it ended on.
+const LINGER_SECONDS = 15 * 60;
 
 const base64url = (bytes: Uint8Array) => btoa(String.fromCharCode(...bytes)).replaceAll("+", "-").replaceAll("/", "_").replace(/=+$/, "");
 const fromBase64 = (text: string) => Uint8Array.from(atob(text.replaceAll("-", "+").replaceAll("_", "/")), (char) => char.charCodeAt(0));
@@ -52,31 +61,16 @@ async function providerToken(push: PushKey, now: number): Promise<string> {
   return cached.token;
 }
 
-/** Sends one notification to one phone, for the app `topic` names. `send` is how the relay reaches Apple. */
-export async function notify(
-  push: PushKey,
-  topic: string,
-  to: { token: string; environment: "sandbox" | "production" },
-  notice: Sealed,
-  send: typeof fetch,
-  now: number,
-): Promise<Result> {
+type Phone = { token: string; environment: "sandbox" | "production" };
+
+/** Sends Apple one request for one token, at once. `send` is how the relay reaches Apple. */
+async function deliver(push: PushKey, to: Phone, headers: Record<string, string>, body: object, send: typeof fetch, now: number): Promise<Result> {
   let response: Response;
   try {
     response = await send(`${ORIGINS[to.environment]}/3/device/${to.token}`, {
       method: "POST",
-      headers: {
-        authorization: `bearer ${await providerToken(push, now)}`,
-        "apns-topic": topic,
-        "apns-push-type": "alert",
-        "apns-priority": "10",
-        "apns-collapse-id": notice.messageId,
-      },
-      body: JSON.stringify({
-        // What shows if the app can't open the notice. `mutable-content` has iOS hand it to the app's notification extension first.
-        aps: { alert: { title: "Sidebots", body: "New message" }, sound: SOUND, "mutable-content": 1 },
-        sealed: notice.sealed,
-      }),
+      headers: { authorization: `bearer ${await providerToken(push, now)}`, "apns-priority": "10", ...headers },
+      body: JSON.stringify(body),
     });
   } catch {
     return "failed";
@@ -84,4 +78,38 @@ export async function notify(
   if (response.ok) return "sent";
   const { reason = "" } = await response.json<{ reason?: string }>().catch(() => ({ reason: "" }));
   return response.status === 410 || GONE_REASONS.has(reason) ? "gone" : "failed";
+}
+
+/** Sends one notification to one phone, for the app `topic` names. */
+export function notify(push: PushKey, topic: string, to: Phone, notice: Sealed, send: typeof fetch, now: number): Promise<Result> {
+  return deliver(
+    push,
+    to,
+    { "apns-topic": topic, "apns-push-type": "alert", "apns-collapse-id": notice.messageId },
+    {
+      // What shows if the app can't open the notice. `mutable-content` has iOS hand it to the app's notification extension first.
+      aps: { alert: { title: "Sidebots", body: "New message" }, sound: SOUND, "mutable-content": 1 },
+      sealed: notice.sealed,
+    },
+    send,
+    now,
+  );
+}
+
+/**
+ * Ends one Live Activity of the app `topic` names, by the token Apple gave the
+ * phone for it. The activity shows the state it ended on and leaves the Lock
+ * Screen a while later, or at once when the agent is left resting, with
+ * nothing to show.
+ */
+export function endActivity(push: PushKey, topic: string, to: Phone, ended: Ended, send: typeof fetch, now: number): Promise<Result> {
+  const seconds = Math.floor(now / 1000);
+  return deliver(
+    push,
+    to,
+    { "apns-topic": `${topic}.push-type.liveactivity`, "apns-push-type": "liveactivity" },
+    { aps: { timestamp: seconds, event: "end", "content-state": { state: ended }, "dismissal-date": ended === "resting" ? seconds : seconds + LINGER_SECONDS } },
+    send,
+    now,
+  );
 }

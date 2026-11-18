@@ -12,6 +12,9 @@ import { haptics } from "@/lib/haptics";
 import { startSync } from "@/lib/state";
 import { useTheme } from "@/lib/theme";
 
+// Home is always the first screen, even under a chat that a tap on its agent's Live Activity opens.
+export const unstable_settings = { anchor: "index" };
+
 /**
  * Every screen, in one stack, inside the side menu. The menu stays still
  * while the screens slide aside to uncover it. On the home screen a swipe
