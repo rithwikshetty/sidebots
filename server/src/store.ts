@@ -6,7 +6,7 @@ import { basename, join, resolve } from "node:path";
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
 
-import { COLOR, DEFAULT_PROVIDER, PROVIDERS, USAGE_DAYS, readableColor } from "./contract.ts";
+import { COLOR, DEFAULT_PROVIDER, PROVIDERS, USAGE_DAYS, betweenAgents, readableColor } from "./contract.ts";
 import type { About, Agent, AgentWithLatest, Ask, Avatar, Found, Job, Limit, Memory, Message, Provider, PushToken, Question, Schedule, Sender, Status, TurnKind, Usage, Used } from "./contract.ts";
 
 export type Person = { id: string; name: string };
@@ -18,8 +18,8 @@ export type Device = { id: string; person_id: string; name: string; paired_at: n
 export type PushTarget = PushToken & { notificationKey: string };
 /** A file as it arrives with a message. */
 export type Upload = { name: string; bytes: Uint8Array };
-/** What a message can carry besides its text: files, the message it answers, the job that sent it, and, when it is an ask, where the ask stands and what it asks. */
-export type Extras = { files?: Upload[]; replyTo?: string; jobId?: string; interim?: boolean; ask?: Ask; question?: Question };
+/** What a message can carry besides its text: files, the message it answers, the job that sent it, when it is an ask, where the ask stands and what it asks, and the other agent when it is between two. */
+export type Extras = { files?: Upload[]; replyTo?: string; jobId?: string; interim?: boolean; ask?: Ask; question?: Question; peerId?: string };
 /** What the person can change about an agent. */
 export type AgentChanges = Partial<Pick<Agent, "name" | "avatar_id" | "model" | "effort" | "muted" | "hidden" | "color">>;
 /** What the store tells its listeners about: a message that was added, changed status or had its ask closed, or an agent that was added or deleted. */
@@ -43,6 +43,7 @@ const TABLE_CHANGES = [
   "alter table agents add column provider text not null default 'claude'",
   "alter table messages add column ask text check (ask in ('waiting', 'allowed', 'refused', 'unanswered'))",
   "alter table messages add column question text",
+  "alter table messages add column peer_id text references agents(id)",
 ];
 
 const SCHEMA = `
@@ -84,6 +85,7 @@ create table if not exists messages (
   interim     integer not null default 0,
   ask         text check (ask in ('waiting', 'allowed', 'refused', 'unanswered')),
   question    text,
+  peer_id     text references agents(id),
   created_at  integer not null
 );
 create table if not exists jobs (
@@ -150,6 +152,16 @@ const DAY_MS = 24 * 60 * 60_000;
 const secret = () => randomBytes(32).toString("base64url");
 /** What the database keeps of a secret, so that nobody who reads the database can use it. */
 const hashOf = (value: string) => createHash("sha256").update(value).digest("hex");
+
+// Which messages a query means, as conditions on a row. `?1` is an agent's id.
+// A message between the agent and the person, or an ask, which is the person's to answer whoever it was raised for.
+const WITH_PERSON = "(peer_id is null or ask is not null)";
+// A message one agent sent another that asks something, as apart from one that answers.
+const ASKED = "peer_id is not null and ask is null and reply_to is null";
+// What is in an agent's chat: its own messages, and what another agent said to it or asked the person while working for it.
+const IN_CHAT = "(agent_id = ?1 or peer_id = ?1)";
+// What waits on an agent: the messages in its chat that aren't for another agent, and other agents' messages to it.
+const FOR_AGENT = "((agent_id = ?1 and peer_id is null) or (peer_id = ?1 and ask is null))";
 
 /** A message as SQLite holds it, with its attachments and its question as JSON text and yes and no as 1 and 0. */
 type Row = Omit<Message, "attachments" | "interim" | "question"> & { attachments: string; interim: number; question: string | null };
@@ -221,11 +233,14 @@ export function openStore(home: string) {
   };
   const many = (sql: string, ...values: (string | number)[]): Message[] => (db.prepare(sql).all(...values) as Row[]).map(toMessage);
 
-  const pendingTurn = db.prepare("select 1 from messages where agent_id = ? and status in ('queued', 'running') limit 1");
-  // What waits to be read: the agent's replies and asks, and Sidebots' failure notices.
+  const pendingTurn = db.prepare(`select 1 from messages where ${FOR_AGENT} and status in ('queued', 'running') limit 1`);
+  // What waits to be read: the agent's replies, its asks that still wait, and Sidebots' failure notices. An ask the person answered, which they may have done in another agent's chat, is read.
   const unread = db.prepare(
-    "select count(*) as unread from messages where agent_id = ? and created_at > ? and ((sender = 'agent' and interim = 0) or (sender = 'sidebots' and status = 'failed'))",
+    `select count(*) as unread from messages where agent_id = ? and created_at > ? and ${WITH_PERSON}
+       and ((sender = 'agent' and interim = 0 and (ask is null or ask = 'waiting')) or (sender = 'sidebots' and status = 'failed'))`,
   );
+  // What the agent asked other agents and hasn't heard back on, oldest first.
+  const asked = (agentId: string): Message[] => many(`select * from messages where agent_id = ? and ${ASKED} and status in ('queued', 'running') order by rowid`, agentId);
   const agentById = (id: string): Agent | undefined => {
     const row = db.prepare("select * from agents where id = ?").get(id) as AgentRow | undefined;
     return row && toAgent(row);
@@ -234,9 +249,10 @@ export function openStore(home: string) {
   const jobsFor = (agentId: string): Job[] => (db.prepare("select * from jobs where agent_id = ? order by next_at").all(agentId) as JobRow[]).map(toJob);
   const withLatest = (agent: Agent): AgentWithLatest => ({
     ...agent,
-    latest: one("select * from messages where agent_id = ? order by rowid desc limit 1", agent.id) ?? null,
+    latest: one(`select * from messages where agent_id = ? and ${WITH_PERSON} order by rowid desc limit 1`, agent.id) ?? null,
     working: pendingTurn.get(agent.id) !== undefined,
     unread: (unread.get(agent.id, agent.read_at) as { unread: number }).unread,
+    waiting_on: asked(agent.id)[0]?.peer_id ?? null,
   });
 
   return {
@@ -410,6 +426,9 @@ export function openStore(home: string) {
       db.prepare("delete from usage where agent_id = ?").run(agent.id);
       db.prepare("delete from jobs where agent_id = ?").run(agent.id);
       db.prepare("delete from messages where agent_id = ?").run(agent.id);
+      // What other agents said to it goes too, and an ask raised while working for it stays as its own agent's.
+      db.prepare("delete from messages where peer_id = ? and ask is null").run(agent.id);
+      db.prepare("update messages set peer_id = null where peer_id = ?").run(agent.id);
       db.prepare("delete from agents where id = ?").run(agent.id);
       rmSync(agentHome(agent.id), { recursive: true, force: true });
       changed({ agent, deleted: true });
@@ -535,9 +554,9 @@ export function openStore(home: string) {
      * Saves a message, with any files sent with it written into the agent's
      * `attachments/` folder. A reply, an ask or a failure notice brings a hidden
      * agent back to the home screen, unless the agent is muted. An update while
-     * the agent works doesn't.
+     * the agent works doesn't, and neither does what it says to another agent.
      */
-    addMessage(agentId: string, sender: Sender, body: string, status: Status, { files = [], replyTo, jobId, interim = false, ask, question }: Extras = {}): Message {
+    addMessage(agentId: string, sender: Sender, body: string, status: Status, { files = [], replyTo, jobId, interim = false, ask, question, peerId }: Extras = {}): Message {
       const attachments = files.map((file) => {
         // A name keeps its letters, digits, dots and dashes. Anything else becomes a dash, as does a %20 the phone wrote for a space.
         const name = `${randomUUID().slice(0, 8)}-${basename(file.name).replace(/(?:%[0-9a-f]{2}|[^\w.-])+/gi, "-")}`;
@@ -557,9 +576,10 @@ export function openStore(home: string) {
         interim,
         ask: ask ?? null,
         question: question ?? null,
+        peer_id: peerId ?? null,
         created_at: Date.now(),
       };
-      db.prepare("insert into messages (id, agent_id, sender, body, attachments, status, reply_to, job_id, interim, ask, question, created_at) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)").run(
+      db.prepare("insert into messages (id, agent_id, sender, body, attachments, status, reply_to, job_id, interim, ask, question, peer_id, created_at) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)").run(
         message.id,
         message.agent_id,
         message.sender,
@@ -571,9 +591,10 @@ export function openStore(home: string) {
         Number(interim),
         message.ask,
         question ? JSON.stringify(question) : null,
+        message.peer_id,
         message.created_at,
       );
-      if ((sender === "agent" && !interim) || (sender === "sidebots" && status === "failed")) {
+      if ((sender === "agent" && !interim && !betweenAgents(message)) || (sender === "sidebots" && status === "failed")) {
         db.prepare("update agents set hidden = 0 where id = ? and muted = 0").run(agentId);
       }
       changed({ message });
@@ -596,11 +617,11 @@ export function openStore(home: string) {
       return statSync(path, { throwIfNoEntry: false })?.isFile() ? path : undefined;
     },
 
-    /** Records that the agent has read these messages from the person, the ones it hadn't yet. */
+    /** Records that an agent has read these messages, from the person or from another agent, the ones it hadn't yet. */
     markSeen(messageIds: string[]): void {
       const now = Date.now();
       for (const id of messageIds) {
-        const read = db.prepare("update messages set status = 'running', seen_at = ? where id = ? and sender = 'person' and status = 'queued'").run(now, id);
+        const read = db.prepare("update messages set status = 'running', seen_at = ? where id = ? and sender != 'sidebots' and status = 'queued'").run(now, id);
         const message = read.changes ? one("select * from messages where id = ?", id) : undefined;
         if (message) changed({ message });
       }
@@ -619,25 +640,28 @@ export function openStore(home: string) {
       if (message) changed({ message });
     },
 
-    /** Oldest first: everything after a known message, the page before one, or the latest page. */
+    /** A chat, oldest first: everything after a known message, the page before one, or the latest page. What the agent and another agent said to each other is in both their chats. */
     messages(agentId: string, { after, before }: { after?: string; before?: string } = {}): Message[] {
       if (after) {
-        return many("select * from messages where agent_id = ? and rowid > (select rowid from messages where id = ?) order by rowid", agentId, after);
+        return many(`select * from messages where ${IN_CHAT} and rowid > (select rowid from messages where id = ?2) order by rowid`, agentId, after);
       }
       if (before) {
-        return many(
-          "select * from messages where agent_id = ? and rowid < (select rowid from messages where id = ?) order by rowid desc limit ?",
-          agentId,
-          before,
-          PAGE,
-        ).reverse();
+        return many(`select * from messages where ${IN_CHAT} and rowid < (select rowid from messages where id = ?2) order by rowid desc limit ?3`, agentId, before, PAGE).reverse();
       }
-      return many("select * from messages where agent_id = ? order by rowid desc limit ?", agentId, PAGE).reverse();
+      return many(`select * from messages where ${IN_CHAT} order by rowid desc limit ?2`, agentId, PAGE).reverse();
     },
 
     /** A message, if it is in the agent's chat. */
     message(agentId: string, id: string): Message | undefined {
-      return one("select * from messages where id = ? and agent_id = ?", id, agentId);
+      return one(`select * from messages where ${IN_CHAT} and id = ?2`, agentId, id);
+    },
+
+    /** What the agent asked other agents and hasn't heard back on, oldest first. */
+    asked,
+
+    /** What other agents asked the agent that it has read and not answered, oldest first. */
+    askedOf(agentId: string): Message[] {
+      return many(`select * from messages where peer_id = ? and ${ASKED} and status = 'running' order by rowid`, agentId);
     },
 
     /**
@@ -645,24 +669,24 @@ export function openStore(home: string) {
      * chat, before a message, oldest first. The session a reply comes from
      * never saw them.
      */
-    sentByJobsBefore(messageId: string): Message[] {
+    sentByJobsBefore(agentId: string, messageId: string): Message[] {
       return many(
-        `select * from messages where sender = 'agent' and job_id is not null
-           and agent_id = (select agent_id from messages where id = ?1) and rowid < (select rowid from messages where id = ?1)
-           and rowid > coalesce((select max(rowid) from messages where sender = 'agent' and job_id is null
-             and agent_id = (select agent_id from messages where id = ?1) and rowid < (select rowid from messages where id = ?1)), 0)
+        `select * from messages where sender = 'agent' and job_id is not null and ${WITH_PERSON}
+           and agent_id = ?1 and rowid < (select rowid from messages where id = ?2)
+           and rowid > coalesce((select max(rowid) from messages where sender = 'agent' and job_id is null and ${WITH_PERSON}
+             and agent_id = ?1 and rowid < (select rowid from messages where id = ?2)), 0)
          order by rowid`,
+        agentId,
         messageId,
       );
     },
 
-    /** The last few things the person and the agent said before a message, oldest first. */
-    messagesBefore(messageId: string, limit: number): Message[] {
+    /** The last few things the person and the agent said to each other before a message, oldest first. */
+    messagesBefore(agentId: string, messageId: string, limit: number): Message[] {
       return many(
-        `select * from messages where sender != 'sidebots'
-           and agent_id = (select agent_id from messages where id = ?) and rowid < (select rowid from messages where id = ?)
-         order by rowid desc limit ?`,
-        messageId,
+        `select * from messages where sender != 'sidebots' and ${WITH_PERSON} and agent_id = ?1 and rowid < (select rowid from messages where id = ?2)
+         order by rowid desc limit ?3`,
+        agentId,
         messageId,
         limit,
       ).reverse();
@@ -686,16 +710,17 @@ export function openStore(home: string) {
       return many("select * from messages where agent_id = ? and sender = 'person' and status = 'queued' order by rowid", agentId);
     },
 
-    /** The agent's oldest message that is waiting for its turn. */
+    /** The oldest message that waits for the agent's turn: the person's, a fresh start, or another agent's to it. */
     nextQueued(agentId: string): Message | undefined {
-      return one("select * from messages where agent_id = ? and status = 'queued' order by rowid limit 1", agentId);
+      return one(`select * from messages where ${FOR_AGENT} and status = 'queued' order by rowid limit 1`, agentId);
     },
 
     /** Puts turns that a stopped server left running back in the queue, with the asks they left waiting closed, and lists the agents with queued turns. */
     requeueInterrupted(): string[] {
       db.prepare("update messages set status = 'queued' where status = 'running'").run();
       db.prepare("update messages set ask = 'unanswered' where ask = 'waiting'").run();
-      const rows = db.prepare("select distinct agent_id from messages where status = 'queued'").all() as { agent_id: string }[];
+      // A message one agent sent another waits in the other's queue.
+      const rows = db.prepare("select distinct coalesce(peer_id, agent_id) as agent_id from messages where status = 'queued'").all() as { agent_id: string }[];
       return rows.map((row) => row.agent_id);
     },
 

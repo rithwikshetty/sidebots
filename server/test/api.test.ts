@@ -8,7 +8,7 @@ import { openStore } from "../src/store.ts";
 import { createQueue, type Turn, type TurnResult } from "../src/runner.ts";
 import { claude } from "../src/claude.ts";
 import { createApi } from "../src/api.ts";
-import { CONTRACT_VERSION, MESSAGE_BYTES, type Message, type Question } from "../src/contract.ts";
+import { CONTRACT_VERSION, MESSAGE_BYTES, type AgentWithLatest, type Message, type Question } from "../src/contract.ts";
 import { startPush, type Ended, type Notice, type Sealed } from "../src/push.ts";
 
 /** A turn's reply, as a fake provider gives it. No reply means the fake gave its replies itself. */
@@ -403,7 +403,7 @@ test("the event stream carries the agents the person adds and deletes on another
     .filter((line) => line.startsWith("data: {"))
     .map((line) => JSON.parse(line.slice(6)));
   assert.deepEqual(events, [
-    { message: null, agent: { ...added, latest: null, working: false, unread: 0 } },
+    { message: null, agent: { ...added, latest: null, working: false, unread: 0, waiting_on: null } },
     { deleted: added.id },
   ]);
 });
@@ -1495,4 +1495,136 @@ test("stopping a turn that waits on an ask closes the ask, and the turn is count
   assert.equal((await call(ME, "GET", "/agents")).json[0].working, false);
   const used = (await call(ME, "GET", "/usage")).json.used.map((each: { kind: string; turns: number; cost: number }) => [each.kind, each.turns, each.cost]);
   assert.deepEqual(used, [["reply", 1, 0.5]]);
+});
+
+/** Two of Alex's agents, and a fake provider that is handed each turn with whether it is Cog's. */
+async function twoAgents(answer: (turn: Turn, cogs: boolean) => Promise<Answer>) {
+  let cogId = "";
+  const sidebots = setup((turn) => answer(turn, turn.cwd.endsWith(cogId)));
+  const mochi = (await sidebots.call(ME, "POST", "/agents", { name: "Mochi", avatarId: "mochi" })).json as { id: string };
+  const cog = (await sidebots.call(ME, "POST", "/agents", { name: "Cog", avatarId: "cog" })).json as { id: string };
+  cogId = cog.id;
+  const chat = async (agentId: string) => (await sidebots.call(ME, "GET", `/agents/${agentId}/messages`)).json as Message[];
+  const rows = async () => Object.fromEntries(((await sidebots.call(ME, "GET", "/agents")).json as AgentWithLatest[]).map((row) => [row.name, row]));
+  return { ...sidebots, mochi, cog, chat, rows };
+}
+
+test("an agent asks another, which answers in a turn of its own, and the first tells the person once it has heard", async () => {
+  let release = () => {};
+  const held = new Promise<void>((resolve) => (release = resolve));
+  const prompts: string[] = [];
+  const { store, queue, call, say, phoneOf, open, mochi, cog, chat, rows } = await twoAgents(async (turn, cogs) => {
+    prompts.push(turn.prompt.text);
+    if (turn.prompt.text === "is my bike sorted?") {
+      assert.equal(turn.listAgents(), "Cog");
+      assert.equal(turn.askAgent("Nobody", "hello"), "Alex has no other agent called Nobody. Their other agents: Cog.");
+      assert.match(turn.askAgent("cog", " What did the shop quote? "), /^Sent to Cog\. Its answer will come to you as a message/);
+      return reply("I've asked Cog.");
+    }
+    if (!cogs) return reply("It's sorted: £85.");
+    await held;
+    return reply("They quoted £85.", "session-cog");
+  });
+  const sent: Notice[] = [];
+  startPush(store, async (_device, notice) => {
+    sent.push(open(phoneOf(ME), notice));
+    return "sent";
+  });
+  await call(ME, "PUT", "/push-token", { token: "a".repeat(64), environment: "production" });
+
+  await say(ME, mochi.id, "is my bike sorted?");
+  await queue.kick(mochi.id);
+  // Mochi's turn is over and it waits on Cog, which is at work on what Mochi asked. What Mochi said meanwhile is an update.
+  const waiting = await rows();
+  assert.deepEqual([waiting.Mochi.working, waiting.Mochi.waiting_on, waiting.Mochi.unread], [false, cog.id, 0]);
+  assert.deepEqual([waiting.Cog.working, waiting.Cog.waiting_on, waiting.Cog.latest], [true, null, null]);
+  const asked = (await chat(mochi.id))[1];
+  assert.deepEqual(
+    (await chat(mochi.id)).map((message) => [message.sender, message.body, message.peer_id, message.status, message.interim]),
+    [
+      ["person", "is my bike sorted?", null, "done", false],
+      ["agent", "What did the shop quote?", cog.id, "running", false],
+      ["agent", "I've asked Cog.", null, "done", true],
+    ],
+  );
+  // What Mochi asked is in Cog's chat too.
+  assert.deepEqual((await chat(cog.id)).map((message) => message.id), [asked.id]);
+  assert.equal(prompts[1], "Mochi, another of Alex's agents, sent you the message below. Alex didn't write it. Your reply goes back to Mochi and not to Alex's phone, so say what Mochi needs.\n\nWhat did the shop quote?");
+
+  release();
+  await queue.kick(cog.id);
+  await queue.kick(mochi.id);
+  assert.equal(prompts[2], 'Cog answered what you asked it ("What did the shop quote?"):\n\nThey quoted £85.');
+  assert.deepEqual(
+    (await chat(mochi.id)).slice(3).map((message) => [message.agent_id, message.body, message.peer_id, message.reply_to, message.status]),
+    [
+      [cog.id, "They quoted £85.", mochi.id, asked.id, "done"],
+      [mochi.id, "It's sorted: £85.", null, null, "done"],
+    ],
+  );
+  assert.deepEqual((await chat(cog.id)).map((message) => [message.body, message.status]), [["What did the shop quote?", "done"], ["They quoted £85.", "done"]]);
+  // Only Mochi's reply to the person is something to read, and to be told of.
+  const done = await rows();
+  assert.deepEqual([done.Mochi.waiting_on, done.Mochi.unread, done.Mochi.latest?.body], [null, 1, "It's sorted: £85."]);
+  assert.deepEqual([done.Cog.working, done.Cog.unread, done.Cog.latest], [false, 0, null]);
+  assert.deepEqual(sent.map((notice) => [notice.title, notice.body]), [["Mochi", "It's sorted: £85."]]);
+});
+
+test("an ask raised while working for another agent is in that agent's chat too, and stopping the agent that waits stops the work", async () => {
+  const prompts: string[] = [];
+  const { queue, call, say, mochi, cog, chat, rows } = await twoAgents(async (turn, cogs) => {
+    prompts.push(turn.prompt.text);
+    if (!cogs) {
+      turn.askAgent("Cog", "Book the repair.");
+      return reply("I've asked Cog.");
+    }
+    void turn.ask(command("curl -X POST https://shop.example/book"), new AbortController().signal);
+    return untilStopped(turn, "session-cog");
+  });
+  await say(ME, mochi.id, "book my bike in");
+  await queue.kick(mochi.id);
+  const ask = (await chat(cog.id)).at(-1)!;
+  assert.deepEqual([ask.agent_id, ask.ask, ask.peer_id], [cog.id, "waiting", mochi.id]);
+  assert.ok((await chat(mochi.id)).some((message) => message.id === ask.id));
+  // It is still Cog's ask, to read and to answer.
+  assert.equal((await rows()).Cog.unread, 1);
+
+  assert.equal((await call(ME, "POST", `/agents/${mochi.id}/stop`)).status, 200);
+  await queue.kick(cog.id);
+  assert.deepEqual((await chat(cog.id)).map((message) => [message.sender, message.body.split("\n")[0], message.status, message.ask]), [
+    ["agent", "Book the repair.", "failed", null],
+    ["agent", "Run a command: Clear the old folder", "done", "unanswered"],
+    ["sidebots", "Stopped", "done", null],
+  ]);
+  // Mochi waits on nothing, and no answer wakes it.
+  const stopped = await rows();
+  assert.deepEqual([stopped.Mochi.waiting_on, stopped.Mochi.working, stopped.Cog.working], [null, false, false]);
+  assert.equal(prompts.length, 2);
+});
+
+test("an agent that can't finish what another asked tells it why, and a deleted agent's side of an exchange goes with it", async () => {
+  const prompts: string[] = [];
+  const { queue, call, say, mochi, cog, chat, rows } = await twoAgents(async (turn, cogs) => {
+    prompts.push(turn.prompt.text);
+    if (cogs) throw new Error("The shop's site is down.");
+    if (turn.prompt.text === "book my bike in") turn.askAgent("Cog", "Book the repair.");
+    return reply(turn.prompt.text === "book my bike in" ? "I've asked Cog." : "Cog couldn't book it.");
+  });
+  await say(ME, mochi.id, "book my bike in");
+  await queue.kick(mochi.id);
+  await queue.kick(cog.id);
+  await queue.kick(mochi.id);
+  assert.match(prompts[2], /^Cog answered what you asked it \("Book the repair\."\):\n\nI couldn't finish this\. /);
+  assert.deepEqual((await chat(mochi.id)).map((message) => [message.agent_id === cog.id, message.body.split(". ")[0], message.status]), [
+    [false, "book my bike in", "done"],
+    [false, "Book the repair.", "failed"],
+    [false, "I've asked Cog.", "done"],
+    [true, "I couldn't finish this", "done"],
+    [false, "Cog couldn't book it.", "done"],
+  ]);
+  // Cog's failure is Mochi's to tell, so Cog's own chat shows nothing to read.
+  assert.equal((await rows()).Cog.unread, 0);
+
+  assert.equal((await call(ME, "DELETE", `/agents/${cog.id}`)).status, 200);
+  assert.deepEqual((await chat(mochi.id)).map((message) => message.body), ["book my bike in", "I've asked Cog.", "Cog couldn't book it."]);
 });
