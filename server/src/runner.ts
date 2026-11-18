@@ -151,9 +151,8 @@ const CLOCK_MS = 15_000;
 // How long a turn runs before the agent may send an update, and how long between updates.
 const FIRST_UPDATE_MS = 60_000;
 const UPDATE_GAP_MS = 3 * 60_000;
-// How long an ask waits for the person, and how much of what it asks about the chat shows.
+// How long an ask waits for the person.
 const ASK_WAIT_MS = 30 * 60_000;
-const ASK_DETAIL_CHARS = 2000;
 /** What a job's run replies when it has nothing to tell the person. */
 const SILENT = "SILENT";
 function found(messages: Found[]): string {
@@ -163,12 +162,15 @@ function found(messages: Found[]): string {
     .join("\n\n");
 }
 
-/** An ask as the chat shows it: the question, what it is about set apart as code, and why it is asked. */
+/**
+ * An ask as the chat shows it: the question, what it is about set apart as
+ * code, and why it is asked. The detail is shown whole, since Allow lets all
+ * of it happen.
+ */
 function asking({ what, detail, why }: Question): string {
-  const shown = detail.length > ASK_DETAIL_CHARS ? `${detail.slice(0, ASK_DETAIL_CHARS)}…` : detail;
   // The fence is longer than any run of backticks inside it, so nothing in the detail can close it.
-  const fence = "`".repeat(Math.max(3, ...(shown.match(/`+/g) ?? []).map((run) => run.length + 1)));
-  return [`Can I ${what}?`, shown.trim() && `${fence}\n${shown}\n${fence}`, why?.trim() && `> ${why.trim().replace(/\s+/g, " ")}`].filter(Boolean).join("\n\n");
+  const fence = "`".repeat(Math.max(3, ...(detail.match(/`+/g) ?? []).map((run) => run.length + 1)));
+  return [`Can I ${what}?`, detail.trim() && `${fence}\n${detail}\n${fence}`, why?.trim() && `> ${why.trim().replace(/\s+/g, " ")}`].filter(Boolean).join("\n\n");
 }
 
 /** What the agent is asked before its session is replaced. */
@@ -292,7 +294,6 @@ export function createQueue(store: Store, drivers: Drivers, now: () => number = 
               close: (words) => settle("unanswered", words),
             });
           });
-        // An ask the turn leaves behind, as when it fails or is stopped, waits for nobody.
         return driver.runTurn({
           prompt: { id: rest.id ?? randomUUID(), text },
           followUps: rest.followUps,
@@ -321,7 +322,9 @@ export function createQueue(store: Store, drivers: Drivers, now: () => number = 
             return `${jobs.join("\n\n") || "You have no jobs."}\n\nIt is now ${clock(now())}.`;
           },
           cancelJob: (id) => (store.removeJob(agent.id, id) ? "Removed." : "You have no job with that id."),
-        }).finally(() => stopWaiting(agent.id, "The turn ended."));
+        })
+          // An ask the turn leaves behind, as when it fails or is stopped, waits for nobody.
+          .finally(() => stopWaiting(agent.id, "The turn ended."));
       };
       // Why a turn failed, as the chat says it. An error can quote what the turn ran with, and the person's API key never goes with it.
       const reason = (error: unknown) => {

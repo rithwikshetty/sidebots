@@ -22,7 +22,7 @@ export type Upload = { name: string; bytes: Uint8Array };
 export type Extras = { files?: Upload[]; replyTo?: string; jobId?: string; interim?: boolean; ask?: Ask };
 /** What the person can change about an agent. */
 export type AgentChanges = Partial<Pick<Agent, "name" | "avatar_id" | "model" | "effort" | "muted" | "hidden" | "color">>;
-/** What the store tells its listeners about: a message that was added or changed status, or an agent that was added or deleted. */
+/** What the store tells its listeners about: a message that was added, changed status or had its ask closed, or an agent that was added or deleted. */
 export type Change = { message: Message } | { agent: Agent; deleted: boolean };
 /** How this server is known to the relay: its signing key, and the id, the address phones reach it at and the token its tunnel runs with, which the relay gives it once it has registered. */
 export type Machine = { privateKey: string; id?: string; address?: string; tunnelToken?: string };
@@ -209,7 +209,7 @@ export function openStore(home: string) {
   return {
     agentHome,
 
-    /** Calls `listener` with every message that is added or changes status, and every agent that is added or deleted. Returns a function that stops it. */
+    /** Calls `listener` with every message that is added, changes status or has its ask closed, and every agent that is added or deleted. Returns a function that stops it. */
     onChange(listener: (change: Change) => void): () => void {
       listeners.add(listener);
       return () => listeners.delete(listener);
@@ -511,12 +511,11 @@ export function openStore(home: string) {
       if (message) changed({ message });
     },
 
-    /** Records where an ask that was waiting now stands. False when the ask had stopped waiting. */
-    answerAsk(messageId: string, answer: Exclude<Ask, "waiting">): boolean {
+    /** Records where an ask that was waiting now stands. */
+    answerAsk(messageId: string, answer: Exclude<Ask, "waiting">): void {
       const answered = db.prepare("update messages set ask = ? where id = ? and ask = 'waiting'").run(answer, messageId).changes > 0;
       const message = answered ? one("select * from messages where id = ?", messageId) : undefined;
       if (message) changed({ message });
-      return answered;
     },
 
     /** Oldest first: everything after a known message, the page before one, or the latest page. */

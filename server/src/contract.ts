@@ -143,9 +143,9 @@ export function plainText(markdown: string): string {
 }
 
 /**
- * What the event stream sends. A message that was added or changed status
- * comes with its agent as the home screen shows it. A new agent comes the same
- * way, with no message. A deleted agent comes as its id.
+ * What the event stream sends. A message that was added, changed status or
+ * had its ask closed comes with its agent as the home screen shows it. A new
+ * agent comes the same way, with no message. A deleted agent comes as its id.
  */
 export type StreamEvent = { message: Message | null; agent: AgentWithLatest } | { deleted: string };
 /**
