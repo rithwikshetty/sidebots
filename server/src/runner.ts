@@ -169,7 +169,7 @@ function found(messages: Found[]): string {
  */
 function asking({ what, detail, why }: Question): string {
   // The fence is longer than any run of backticks inside it, so nothing in the detail can close it.
-  const fence = "`".repeat(Math.max(3, ...(detail.match(/`+/g) ?? []).map((run) => run.length + 1)));
+  const fence = "`".repeat((detail.match(/`+/g) ?? []).reduce((longest, run) => Math.max(longest, run.length + 1), 3));
   return [`Can I ${what}?`, detail.trim() && `${fence}\n${detail}\n${fence}`, why?.trim() && `> ${why.trim().replace(/\s+/g, " ")}`].filter(Boolean).join("\n\n");
 }
 
