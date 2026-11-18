@@ -74,7 +74,14 @@ Apple processes an upload for a few minutes before TestFlight offers it.
 
 ## 5. This Mac's server
 
-Follow "The server" in the [serve procedure](../sidebots-serve/SKILL.md) from the main checkout. Its question about `TABLE_CHANGES` is already answered here, because `main` is what is being served. Leave the phone's development app alone.
+The launch agent `app.sidebots.server` keeps it running from the main checkout's `server/`, and starts it again whenever it stops. Node doesn't reload changed code, so restart it on the released code:
+
+```sh
+(cd server && pnpm install --frozen-lockfile)
+launchctl kickstart -k gui/$(id -u)/app.sidebots.server
+```
+
+A turn cut off by the restart is queued again when the server starts. It is up once `lsof -tiTCP:4317 -sTCP:LISTEN` returns a new process and `node src/main.ts status` in `server/` says `Phones reach it at <address>`. The server makes the release's changes to `~/.sidebots/sidebots.sqlite` as it starts.
 
 ## Handing over
 
