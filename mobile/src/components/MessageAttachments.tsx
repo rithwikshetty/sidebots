@@ -35,17 +35,18 @@ const FILE_CARD_WIDTH = 280;
 const VIEWER_TOP_BAR = 56;
 /** How far a picture at rest is pulled down before the viewer lets it go. */
 const DISMISS_PULL = 90;
-// A page in the chat is as tall as what it holds, between these. Full screen shows the rest of a longer one.
+// A page in the chat is as tall as what it holds, between these, and the third until it is measured. Full screen shows the rest of a longer one.
 const PAGE_SHORTEST = 60;
 const PAGE_TALLEST = 480;
 const PAGE_UNMEASURED = 160;
-const PAGE_GUTTER = 16;
+// How long after the person touches a page a link in it may open, which is as long as a tap takes to reach it.
+const TAP_MS = 1000;
 
 // Each photo's shape once it has loaded, so a lone photo keeps its shape when the chat draws it again.
 const shapes = new Map<string, { width: number; height: number }>();
 
-// Each page's text once the phone has it, and its height in the chat once measured, so a page scrolled away and back shows as it was.
-const pages = new Map<string, string>();
+// Each page's text and the copy of it saved on the phone, and its height in the chat once measured, so a page scrolled away and back shows as it was.
+const pages = new Map<string, { html: string; file: string }>();
 const pageHeights = new Map<string, number>();
 
 /** A lone photo's frame: its own shape, kept between 3:4 and 4:3, fitted to the box. */
@@ -55,7 +56,7 @@ function photoFrame(shape: { width: number; height: number } | undefined, box: n
   return clamped > 1 ? { width: Math.round(box / clamped), height: box } : { width: box, height: Math.round(box * clamped) };
 }
 
-/** Saves a sent file on the phone, so the share sheet can hand it on. */
+/** Saves a sent file on the phone, so the share sheet can hand it on and a page can be read. */
 async function local(item: Shown): Promise<string> {
   if (!item.uri.startsWith("http")) return item.uri;
   const folder = new Directory(Paths.cache, "sent");
@@ -244,7 +245,7 @@ export function FileCard({ file }: { file: Shown }) {
 function dress(theme: Theme): string {
   const css =
     `:root{color-scheme:${theme.dark ? "dark" : "light"};--bg:${theme.bg};--ink:${theme.ink};--ink2:${theme.ink2};--line:${theme.line};--field:${theme.field};--tint:${theme.tint}}` +
-    `html{background:var(--bg);color:var(--ink);font:17px/1.3 -apple-system,system-ui,sans-serif;-webkit-text-size-adjust:100%}body{margin:0}svg{fill:currentColor}a{color:${theme.tintInk}}`;
+    `html{background:var(--bg);color:var(--ink);font:17px/1.3 -apple-system,system-ui,sans-serif;-webkit-text-size-adjust:100%}body{margin:0}a{color:${theme.tintInk}}`;
   return `(function(){var d=document,r=d.documentElement,s=d.getElementById("sidebots");if(!s){var m=d.createElement("meta");m.name="viewport";m.content="width=device-width,initial-scale=1";r.appendChild(m);s=d.createElement("style");s.id="sidebots";r.appendChild(s);}s.textContent=${JSON.stringify(css)};})();true;`;
 }
 
@@ -255,22 +256,32 @@ const MEASURE = `(function(){var r=document.documentElement,last;function tell()
  * A page the agent wrote, drawn from its text. The page is closed off from
  * the app: it loads as a document of no site, so it holds none of the phone's
  * keys, keeps nothing between openings, can't use the camera or microphone,
- * and can't leave for another page. A web link the person taps in it opens
- * over the app, as a link in a reply does. Its scripts run, and it may fetch
- * from the web. `onHeight` hears how tall its content is.
+ * and can't leave for another page. A web link opens over the app, as a link
+ * in a reply does, and only as the person taps the page, so a page's own
+ * script opens nothing. Its scripts run, and it may fetch from the web.
+ * `onHeight` hears how tall its content is.
  */
 function PageView({ html, scrolls, onHeight }: { html: string; scrolls: boolean; onHeight?: (height: number) => void }) {
   const theme = useTheme();
   const view = useRef<WebView<object>>(null);
+  // The web view is made again when iOS ends the process that draws it.
+  const [life, setLife] = useState(0);
   const [loaded, setLoaded] = useState(false);
+  // The life whose page has begun to load. Nothing replaces the page after that.
+  const begun = useRef(-1);
+  const touched = useRef(0);
+  const touch = () => {
+    touched.current = Date.now();
+  };
   // The colours follow the phone into light or dark while the page is open.
   useEffect(() => view.current?.injectJavaScript(dress(theme)), [theme]);
   const open = (url: string) => {
-    if (/^https?:\/\//i.test(url)) void openLink(url, theme);
+    if (Date.now() - touched.current < TAP_MS && /^https?:\/\//i.test(url)) void openLink(url, theme);
   };
   return (
-    <>
+    <View style={styles.pageView} onTouchStart={touch} onTouchEnd={touch}>
       <WebView<object>
+        key={life}
         ref={view}
         source={{ html }}
         // Every address comes to onShouldStartLoadWithRequest, which lets none of them replace the page.
@@ -282,22 +293,30 @@ function PageView({ html, scrolls, onHeight }: { html: string; scrolls: boolean;
           if (height > 0) onHeight?.(height);
         }}
         onShouldStartLoadWithRequest={(request) => {
-          if (!request.isTopFrame || request.url.startsWith("about:blank")) return true;
+          // A frame inside the page, and a place further down the page, load as they are.
+          if (!request.isTopFrame || request.url.startsWith("about:blank#")) return true;
+          if (request.url === "about:blank" && begun.current !== life) {
+            begun.current = life;
+            return true;
+          }
           if (request.navigationType === "click") open(request.url);
           return false;
         }}
         onOpenWindow={({ nativeEvent }) => open(nativeEvent.targetUrl)}
-        onContentProcessDidTerminate={() => view.current?.reload()}
+        onContentProcessDidTerminate={() => {
+          setLoaded(false);
+          setLife((lives) => lives + 1);
+        }}
+        onLoadEnd={() => setLoaded(true)}
         incognito
         mediaCapturePermissionGrantType="deny"
         allowsLinkPreview={false}
         dataDetectorTypes="none"
         scrollEnabled={scrolls}
-        onLoadEnd={() => setLoaded(true)}
-        style={styles.pageView}
+        style={styles.pageWeb}
       />
       {loaded ? null : <ActivityIndicator style={StyleSheet.absoluteFill} color={theme.ink2} />}
-    </>
+    </View>
   );
 }
 
@@ -309,7 +328,7 @@ function PageView({ html, scrolls, onHeight }: { html: string; scrolls: boolean;
  */
 export function MessagePage({ page }: { page: Shown }) {
   const theme = useTheme();
-  const [html, setHtml] = useState(pages.get(page.uri));
+  const [saved, setSaved] = useState(pages.get(page.uri));
   const [failed, setFailed] = useState(false);
   const [height, setHeight] = useState(pageHeights.get(page.uri) ?? PAGE_UNMEASURED);
   const [full, setFull] = useState(false);
@@ -317,11 +336,11 @@ export function MessagePage({ page }: { page: Shown }) {
     if (pages.has(page.uri)) return;
     let showing = true;
     local(page)
-      .then((uri) => new File(uri).text())
+      .then(async (file) => ({ html: await new File(file).text(), file }))
       .then(
-        (text) => {
-          pages.set(page.uri, text);
-          if (showing) setHtml(text);
+        (fetched) => {
+          pages.set(page.uri, fetched);
+          if (showing) setSaved(fetched);
         },
         () => showing && setFailed(true),
       );
@@ -331,19 +350,19 @@ export function MessagePage({ page }: { page: Shown }) {
     // The page is the same one for as long as its address is.
   }, [page.uri]);
   if (failed) return <FileCard file={page} />;
-  const title = page.name.replace(/\.html?$/i, "");
+  const title = page.name.replace(/\.html$/i, "");
   return (
     <View style={styles.pageCard}>
       <View style={styles.pageHead}>
         <Text numberOfLines={1} style={[styles.pageName, { color: theme.ink2 }]}>
           {title}
         </Text>
-        <IconButton icon={Maximize2} label={`Open ${title} full screen`} onPress={() => setFull(true)} disabled={!html} size={28} iconSize={16} color={theme.ink2} />
+        <IconButton icon={Maximize2} label={`Open ${title} full screen`} onPress={() => setFull(true)} disabled={!saved} size={28} iconSize={16} color={theme.ink2} />
       </View>
       <View style={{ height }}>
-        {html ? (
+        {saved ? (
           <PageView
-            html={html}
+            html={saved.html}
             scrolls={false}
             onHeight={(measured) => {
               const fitted = Math.min(PAGE_TALLEST, Math.max(PAGE_SHORTEST, measured));
@@ -355,13 +374,14 @@ export function MessagePage({ page }: { page: Shown }) {
           <ActivityIndicator style={StyleSheet.absoluteFill} color={theme.ink2} />
         )}
       </View>
-      {full && html ? <PageViewer page={page} title={title} html={html} onClose={() => setFull(false)} /> : null}
+      {/* Share hands on the copy the phone already has, so it works out of the computer's reach. */}
+      {full && saved ? <FullScreenPage page={{ ...page, uri: saved.file }} title={title} html={saved.html} onClose={() => setFull(false)} /> : null}
     </View>
   );
 }
 
 /** A page full screen, on the page's own colour: it scrolls and zooms, with Close and Share above it. */
-function PageViewer({ page, title, html, onClose }: { page: Shown; title: string; html: string; onClose: () => void }) {
+function FullScreenPage({ page, title, html, onClose }: { page: Shown; title: string; html: string; onClose: () => void }) {
   const theme = useTheme();
   const reduceMotion = useReducedMotion();
   const insets = useSafeAreaInsets();
@@ -412,7 +432,8 @@ const styles = StyleSheet.create({
   pageCard: { alignSelf: "stretch" },
   pageHead: { flexDirection: "row", alignItems: "center", gap: 8, paddingLeft: 2 },
   pageName: { flex: 1, fontSize: 13, lineHeight: 18 },
-  pageView: { flex: 1, backgroundColor: "transparent" },
+  pageView: { flex: 1 },
+  pageWeb: { flex: 1, backgroundColor: "transparent" },
   pageBar: { height: VIEWER_TOP_BAR, flexDirection: "row", alignItems: "center", paddingHorizontal: 16, gap: 12 },
-  pageRoom: { flex: 1, paddingHorizontal: PAGE_GUTTER },
+  pageRoom: { flex: 1, paddingHorizontal: 16 },
 });

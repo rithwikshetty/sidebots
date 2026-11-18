@@ -364,10 +364,10 @@ function Receipt({ message, theme }: { message: Message; theme: Theme }) {
 }
 
 /**
- * A message as the chat draws it: its photos, pages and files above its
- * bubble, as Assist draws one, and the message it answers quoted at the
- * bubble's top. The agent's words are markdown; the person's are as they
- * typed them.
+ * A message as the chat draws it: its photos and files above its bubble, as
+ * Assist draws one, its pages between them, as T3 Code draws one, and the
+ * message it answers quoted at the bubble's top. The agent's words are
+ * markdown; the person's are as they typed them.
  */
 function Sent({ body, quote, photos, pages = [], files, mine, theme }: { body: string; quote?: string; photos: Shown[]; pages?: Shown[]; files: Shown[]; mine: boolean; theme: Theme }) {
   const quiet = mine ? theme.onTint : theme.ink2;

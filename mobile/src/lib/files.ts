@@ -33,7 +33,7 @@ export function isImage(name: string): boolean {
 
 /** Whether a file is a page the app can draw, going by its name. */
 export function isPage(name: string): boolean {
-  return /\.html?$/i.test(name);
+  return /\.html$/i.test(name);
 }
 
 /** What kind of file it is, for its icon and the word under its name. */
