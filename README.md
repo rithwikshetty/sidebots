@@ -101,7 +101,7 @@ APP_VARIANT=development npx expo prebuild --platform ios
 APP_VARIANT=development npx expo run:ios --device --configuration Release
 ```
 
-`APP_VARIANT=development` makes Sidebots Dev: an app of its own, with `.dev` after the bundle identifier and a "DEV" tag on its icon, so it sits beside the published Sidebots on the same phone and pairs on its own. Without it, the build is the published app. For TestFlight, `mobile/testflight.sh` makes that build, archives it and uploads it to App Store Connect, signed by the Apple account Xcode is signed in with. Its build number is the count of commits.
+`APP_VARIANT=development` makes Sidebots Dev: an app of its own, with `.dev` after the bundle identifier and a "DEV" tag on its icon, so it sits beside the published Sidebots on the same phone and pairs on its own. Without it, the build is the published app. For TestFlight, `mobile/testflight.sh` makes that build, archives it and uploads it to App Store Connect, signed by the Apple account Xcode is signed in with. Its build number is the count of commits. It then waits until Apple has processed the build and says whether TestFlight offers it, which it asks App Store Connect with the API key `.env.local` names.
 
 ### Pair each phone
 
