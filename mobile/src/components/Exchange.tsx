@@ -5,6 +5,7 @@ import { ChevronRight } from "lucide-react-native";
 import type { Message } from "@server/contract";
 import { AvatarView } from "@/components/AvatarView";
 import { FadingText } from "@/components/FadingText";
+import { FlowDot } from "@/components/FlowDot";
 import { Markdown } from "@/components/Markdown";
 import { haptics } from "@/lib/haptics";
 import { EASE, HIDE, SHOW } from "@/lib/motion";
@@ -12,8 +13,9 @@ import { useAgent } from "@/lib/state";
 import { useTheme } from "@/lib/theme";
 
 const AVATAR = 22;
-// The dotted line between the two avatars, and the dot that crosses it.
+// The dotted line between the two avatars, its specks, and the dot that crosses it.
 const LINK = 20;
+const SPECK = 2;
 const DOT = 4;
 // The dot leaves once the line has risen into the chat, and the other avatar nods as it lands.
 const CROSS = { duration: 700, easing: Easing.inOut(Easing.quad), reduceMotion: ReduceMotion.System } as const;
@@ -24,10 +26,12 @@ const NOD_AFTER_MS = CROSS_AFTER_MS + CROSS.duration - 60;
 /**
  * What one of the person's agents asked another, as one line in both their
  * chats: the two avatars, who asked whom, and where it stands. A tap opens
- * what was asked and, once it has come, the answer. `needsPerson` is true
- * while the agent that was asked waits on the person's answer to an ask of
- * its own. An `arriving` one came in while the chat was open: a dot crosses
- * from the asker to the other, which nods as it lands.
+ * what was asked and, once it has come, the answer. While it waits for the
+ * answer, the specks of the line between the avatars light in turn, from the
+ * asker to the other. `needsPerson` is true while the agent that was asked
+ * waits on the person's answer to an ask of its own, and the specks rest.
+ * An `arriving` one came in while the chat was open: a dot crosses from the
+ * asker to the other, which nods as it lands.
  */
 export function Exchange({ asked, answer, needsPerson, arriving }: { asked: Message; answer: Message | undefined; needsPerson: boolean; arriving: boolean }) {
   const theme = useTheme();
@@ -52,6 +56,7 @@ export function Exchange({ asked, answer, needsPerson, arriving }: { asked: Mess
 
   const waitsOnPerson = needsPerson && !answer;
   const state = answer ? "Answered" : asked.status === "failed" ? "No answer" : waitsOnPerson ? "Needs your OK" : "Waiting";
+  const waiting = state === "Waiting";
   const toggle = () => {
     haptics.select();
     setOpen((shown) => !shown);
@@ -68,7 +73,7 @@ export function Exchange({ asked, answer, needsPerson, arriving }: { asked: Mess
         <AvatarView avatarId={from.avatar_id} state="resting" size={AVATAR} />
         <View style={styles.link}>
           {[0, 1, 2, 3].map((speck) => (
-            <View key={speck} style={[styles.speck, { backgroundColor: theme.faint }]} />
+            <FlowDot key={speck} index={speck} running={waiting} size={SPECK} color={waiting ? theme.ink2 : theme.faint} />
           ))}
           <Animated.View style={[styles.courier, { backgroundColor: theme.tint }, crossing]} />
         </View>
@@ -113,7 +118,6 @@ const styles = StyleSheet.create({
   exchange: { alignItems: "flex-start", marginTop: 10 },
   head: { flexDirection: "row", alignItems: "center", gap: 6, paddingLeft: 2, maxWidth: "100%" },
   link: { width: LINK, height: DOT, flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
-  speck: { width: 2, height: 2, borderRadius: 1 },
   courier: { position: "absolute", left: 0, top: 0, width: DOT, height: DOT, borderRadius: DOT / 2 },
   words: { fontSize: 13, lineHeight: 18, flexShrink: 1 },
   loud: { fontWeight: "600" },
