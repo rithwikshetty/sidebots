@@ -302,12 +302,14 @@ function PageView({ html, scrolls, onHeight }: { html: string; scrolls: boolean;
           if (height > 0) onHeight?.(height);
         }}
         onShouldStartLoadWithRequest={(request) => {
-          // A frame inside the page loads as it is.
-          if (!request.isTopFrame) return true;
-          if (request.url === "about:blank" && begun.current !== life) {
+          // The page's own first load, and no other. Its other forms, such as a place further down the page, bring back an empty page on a reload.
+          if (request.url.startsWith("about:blank")) {
+            if (request.url !== "about:blank" || begun.current === life) return false;
             begun.current = life;
             return true;
           }
+          // A frame inside the page loads as it is.
+          if (!request.isTopFrame) return true;
           if (request.navigationType === "click") open(request.url);
           return false;
         }}
