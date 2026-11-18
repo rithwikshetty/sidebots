@@ -486,13 +486,11 @@ export function openStore(home: string) {
 
     /**
      * A file the agent names to send with a message, by its path in full or
-     * from the agent's home folder: its size, and `read`, which takes it as it
-     * is now. Nothing when no file is there.
+     * from the agent's home folder, as it is now. Nothing when no file is there.
      */
-    fileToSend(agentId: string, path: string): { size: number; read: () => Upload } | undefined {
+    fileToSend(agentId: string, path: string): Upload | undefined {
       const full = resolve(agentHome(agentId), path);
-      const stat = statSync(full, { throwIfNoEntry: false });
-      return stat?.isFile() ? { size: stat.size, read: () => ({ name: basename(full), bytes: readFileSync(full) }) } : undefined;
+      return statSync(full, { throwIfNoEntry: false })?.isFile() ? { name: basename(full), bytes: readFileSync(full) } : undefined;
     },
 
     /** The path of a file in the agent's `attachments/` folder, if it is there. */

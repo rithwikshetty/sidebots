@@ -3,7 +3,7 @@
 
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
-import { PROVIDERS, scheduleWords } from "./contract.ts";
+import { MESSAGE_BYTES, PROVIDERS, scheduleWords } from "./contract.ts";
 import type { Agent, Effort, Found, Job, Message, Model, Provider, Schedule } from "./contract.ts";
 import type { Person, Store, Upload } from "./store.ts";
 
@@ -73,10 +73,16 @@ export type Driver = {
 /** A driver for each provider. */
 export type Drivers = Record<Provider, Driver>;
 
-/** A tool Sidebots gives the agent: its name, what the agent is told it does, what it takes, and what it does, in words the agent reads. */
+/**
+ * A tool Sidebots gives the agent: its name, what the agent is told it does,
+ * what it takes, and what it does, in words the agent reads. A tool that is
+ * `checked` reaches the machine's files, so the provider's safety check judges
+ * each call to it, as it does the agent's own actions. The rest always run.
+ */
 export type Tool<Input extends z.ZodRawShape = z.ZodRawShape> = {
   name: string;
   description: string;
+  checked?: true;
   input: Input;
   run(input: z.infer<z.ZodObject<Input>>): string;
 };
@@ -117,6 +123,7 @@ export function toolsFor(turn: Turn): Tool[] {
       name: "send_files",
       description:
         "Send the person files: a photo, a chart, a PDF, anything you made or found for them. The files go with the next message you send, which is your reply unless you send an update first, and show above its text: a picture as a picture, any other file as a card that opens it. Use it whenever the person should have the file itself and not only your words about it. Up to 95 MB to a message.",
+      checked: true,
       input: { paths: z.array(z.string()).describe("Each file's path, in full or from your home folder") },
       run: ({ paths }) => turn.sendFiles(paths),
     }),
@@ -148,8 +155,6 @@ const CLOCK_MS = 15_000;
 // How long a turn runs before the agent may send an update, and how long between updates.
 const FIRST_UPDATE_MS = 60_000;
 const UPDATE_GAP_MS = 3 * 60_000;
-// The most a message from the agent carries in files, which is what one from the person can.
-const MESSAGE_FILE_BYTES = 95 * 1024 * 1024;
 /** What a job's run replies when it has nothing to tell the person. */
 const SILENT = "SILENT";
 function found(messages: Found[]): string {
@@ -288,9 +293,9 @@ export function createQueue(store: Store, drivers: Drivers, now: () => number = 
             const named = paths.map((path) => store.fileToSend(agent.id, path));
             const missing = paths.filter((_, at) => !named[at]);
             if (missing.length) return `There is no file at ${missing.join(", ")}. Nothing was added, so give the paths again.`;
-            const bytes = [...files.map((file) => file.bytes.byteLength), ...named.map((file) => file!.size)].reduce((total, size) => total + size, 0);
-            if (bytes > MESSAGE_FILE_BYTES) return "A message carries up to 95 MB of files. Nothing was added, so send fewer or smaller ones.";
-            files.push(...named.map((file) => file!.read()));
+            const added = named as Upload[];
+            if ([...files, ...added].reduce((total, file) => total + file.bytes.byteLength, 0) > MESSAGE_BYTES) return "A message carries up to 95 MB of files. Nothing was added, so send fewer or smaller ones.";
+            files.push(...added);
             return "Added. They go with the next message you send.";
           },
         });

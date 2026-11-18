@@ -109,7 +109,7 @@ const runTurn: RunTurn = async (turn) => {
       settings: { autoMemoryEnabled: true, autoMemoryDirectory: join(cwd, "memory"), env: { CLAUDE_CODE_DISABLE_AUTO_MEMORY: "0" } },
       skills: "all",
       mcpServers: { sidebots },
-      allowedTools: tools.map((each) => `mcp__sidebots__${each.name}`),
+      allowedTools: tools.filter((each) => !each.checked).map((each) => `mcp__sidebots__${each.name}`),
       permissionMode: "auto",
       // Auto mode asks here when its classifier can't decide. Nobody is at
       // the keyboard, so the agent carries on without the action.
