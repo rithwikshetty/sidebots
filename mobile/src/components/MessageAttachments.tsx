@@ -39,7 +39,8 @@ const DISMISS_PULL = 90;
 const PAGE_SHORTEST = 60;
 const PAGE_TALLEST = 480;
 const PAGE_UNMEASURED = 160;
-// How long after the person touches a page a link in it may open, which is as long as a tap takes to reach it.
+// A touch on a page is a tap when the finger lifts this near to where it came down, and a link may open this long after one.
+const TAP_SLOP = 10;
 const TAP_MS = 1000;
 
 // Each photo's shape once it has loaded, so a lone photo keeps its shape when the chat draws it again.
@@ -257,8 +258,10 @@ const MEASURE = `(function(){var r=document.documentElement,last;function tell()
  * the app: it loads as a document of no site, so it holds none of the phone's
  * keys, keeps nothing between openings, can't use the camera or microphone,
  * and can't leave for another page. A web link opens over the app, as a link
- * in a reply does, and only as the person taps the page, so a page's own
- * script opens nothing. Its scripts run, and it may fetch from the web.
+ * in a reply does, and only just after the person taps the page, so neither
+ * a page's own script nor a scroll opens one. Where a tap leads is the
+ * page's to say, as it is any link's. Its scripts run, and it may fetch from
+ * the web.
  * `onHeight` hears how tall its content is.
  */
 function PageView({ html, scrolls, onHeight }: { html: string; scrolls: boolean; onHeight?: (height: number) => void }) {
@@ -269,17 +272,23 @@ function PageView({ html, scrolls, onHeight }: { html: string; scrolls: boolean;
   const [loaded, setLoaded] = useState(false);
   // The life whose page has begun to load. Nothing replaces the page after that.
   const begun = useRef(-1);
-  const touched = useRef(0);
-  const touch = () => {
-    touched.current = Date.now();
-  };
+  // Where the person's finger came down on the page, and when a tap of theirs ended.
+  const down = useRef({ x: 0, y: 0 });
+  const tapped = useRef(0);
   // The colours follow the phone into light or dark while the page is open.
   useEffect(() => view.current?.injectJavaScript(dress(theme)), [theme]);
   const open = (url: string) => {
-    if (Date.now() - touched.current < TAP_MS && /^https?:\/\//i.test(url)) void openLink(url, theme);
+    if (Date.now() - tapped.current < TAP_MS && /^https?:\/\//i.test(url)) void openLink(url, theme);
   };
   return (
-    <View style={styles.pageView} onTouchStart={touch} onTouchEnd={touch}>
+    <View
+      style={styles.pageView}
+      onTouchStart={({ nativeEvent }) => {
+        down.current = { x: nativeEvent.pageX, y: nativeEvent.pageY };
+      }}
+      onTouchEnd={({ nativeEvent }) => {
+        if (Math.hypot(nativeEvent.pageX - down.current.x, nativeEvent.pageY - down.current.y) < TAP_SLOP) tapped.current = Date.now();
+      }}>
       <WebView<object>
         key={life}
         ref={view}
@@ -293,8 +302,8 @@ function PageView({ html, scrolls, onHeight }: { html: string; scrolls: boolean;
           if (height > 0) onHeight?.(height);
         }}
         onShouldStartLoadWithRequest={(request) => {
-          // A frame inside the page, and a place further down the page, load as they are.
-          if (!request.isTopFrame || request.url.startsWith("about:blank#")) return true;
+          // A frame inside the page loads as it is.
+          if (!request.isTopFrame) return true;
           if (request.url === "about:blank" && begun.current !== life) {
             begun.current = life;
             return true;
@@ -302,7 +311,6 @@ function PageView({ html, scrolls, onHeight }: { html: string; scrolls: boolean;
           if (request.navigationType === "click") open(request.url);
           return false;
         }}
-        onOpenWindow={({ nativeEvent }) => open(nativeEvent.targetUrl)}
         onContentProcessDidTerminate={() => {
           setLoaded(false);
           setLife((lives) => lives + 1);
