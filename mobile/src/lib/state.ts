@@ -231,8 +231,10 @@ export async function send(agentId: string, body: string, files: Picked[] = [], 
 /** Answers an agent's ask: whether it may do what it asked about. It fails when the agent has stopped waiting. */
 export async function answerAsk(ask: Message, allow: boolean): Promise<void> {
   const answered = await request<Message>(`/agents/${ask.agent_id}/asks/${ask.id}`, { method: "POST", body: { allow } });
-  const known = state.messages[ask.agent_id];
-  if (known) set({ messages: { ...state.messages, [ask.agent_id]: upsert(known, answered) } });
+  // An ask raised while working for another agent is in that agent's chat too.
+  const messages = { ...state.messages };
+  for (const agentId of [ask.agent_id, ask.peer_id]) if (agentId && messages[agentId]) messages[agentId] = upsert(messages[agentId], answered);
+  set({ messages });
 }
 
 /** Replaces the agent's session. The chat stays, and the agent saves what is worth keeping first. */
@@ -258,7 +260,7 @@ export async function createAgent(name: string, avatarId: string): Promise<Agent
   const agent = await request<Agent>("/agents", { method: "POST", body: { name, avatarId } });
   // The event stream may have brought the agent already.
   const others = state.agents.filter((each) => each.id !== agent.id);
-  set({ agents: [{ ...agent, latest: null, working: false, unread: 0 }, ...others], messages: { ...state.messages, [agent.id]: [] } });
+  set({ agents: [{ ...agent, latest: null, working: false, unread: 0, waiting_on: null }, ...others], messages: { ...state.messages, [agent.id]: [] } });
   return agent;
 }
 

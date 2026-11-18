@@ -3,9 +3,11 @@ import { Pressable, StyleSheet, Text, View } from "react-native";
 import Animated, { useAnimatedStyle, withTiming } from "react-native-reanimated";
 import { ChevronRight, FilePenLine, Globe, Plug, Terminal } from "lucide-react-native";
 import { fenced, type Question } from "@server/contract";
+import { AvatarView } from "@/components/AvatarView";
 import { Markdown } from "@/components/Markdown";
 import { haptics } from "@/lib/haptics";
 import { EASE, HIDE, SHOW } from "@/lib/motion";
+import { useAgent } from "@/lib/state";
 import { useTheme } from "@/lib/theme";
 
 const ICONS = { command: Terminal, page: Globe, file: FilePenLine, tool: Plug };
@@ -16,10 +18,13 @@ const DETAIL = { command: "the command", page: "the address", file: "the file", 
  * What an agent asks to do, inside its bubble: the sort of thing it is, this
  * one in plain words, the facts that matter and the provider's reason for
  * asking. The thing itself, such as the command, opens on a tap, so a person
- * reads words first and can still see all that Allow lets happen.
+ * reads words first and can still see all that Allow lets happen. `from` is
+ * the agent that asks, for an ask shown in another agent's chat, and the card
+ * then says whose it is.
  */
-export function AskCard({ question }: { question: Question }) {
+export function AskCard({ question, from }: { question: Question; from?: string }) {
   const theme = useTheme();
+  const asker = useAgent(from ?? "");
   const [open, setOpen] = useState(false);
   const turned = useAnimatedStyle(() => ({ transform: [{ rotate: withTiming(open ? "90deg" : "0deg", EASE) }] }));
   const Icon = ICONS[question.kind];
@@ -29,6 +34,12 @@ export function AskCard({ question }: { question: Question }) {
   };
   return (
     <View>
+      {asker ? (
+        <View style={styles.asker}>
+          <AvatarView avatarId={asker.avatar_id} state="resting" size={18} />
+          <Text style={[styles.small, { color: theme.ink2 }]}>{asker.name} asks</Text>
+        </View>
+      ) : null}
       <View style={styles.kind}>
         <Icon size={14} strokeWidth={2.25} color={theme.ink2} />
         <Text style={[styles.small, { color: theme.ink2 }]}>{question.title}</Text>
@@ -63,6 +74,7 @@ export function AskCard({ question }: { question: Question }) {
 }
 
 const styles = StyleSheet.create({
+  asker: { flexDirection: "row", alignItems: "center", gap: 6, marginLeft: -2, marginBottom: 6 },
   kind: { flexDirection: "row", alignItems: "center", gap: 5 },
   small: { fontSize: 13, lineHeight: 18, fontWeight: "600" },
   what: { fontSize: 17, lineHeight: 22, fontWeight: "600", marginTop: 1, marginBottom: 6 },

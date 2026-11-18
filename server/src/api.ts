@@ -294,8 +294,11 @@ export function createApi(store: Store, queue: Queue, machine: string, pushes: b
           if (change.deleted) return send("deleted", { deleted: change.agent.id });
           return send("agent", { message: null, agent: store.agentWithLatest(change.agent.id)! });
         }
-        const agent = store.agentWithLatest(change.message.agent_id);
-        if (agent?.person_id === person.id) send("message", { message: change.message, agent });
+        // A message between two agents is in both their chats, and changes how both stand.
+        for (const id of [change.message.agent_id, change.message.peer_id]) {
+          const agent = id ? store.agentWithLatest(id) : undefined;
+          if (agent?.person_id === person.id) send("message", { message: change.message, agent });
+        }
       });
       stream.onAbort(stop);
       while (!stream.aborted) {

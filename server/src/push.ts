@@ -4,7 +4,7 @@
 // working agent, with a push that names the avatar's state and nothing else.
 
 import { createCipheriv, randomBytes } from "node:crypto";
-import { avatarStateOf, oneLine } from "./contract.ts";
+import { avatarStateOf, betweenAgents, oneLine } from "./contract.ts";
 import type { AvatarState, PushToken } from "./contract.ts";
 import type { Store } from "./store.ts";
 
@@ -35,7 +35,7 @@ export function seal(notice: Notice, notificationKey: string): string {
 /**
  * Tells the person's phones when an agent replies or asks, or a turn fails,
  * unless the agent is muted. An update while it works tells nobody, and
- * neither does an ask's answer. When an agent has no work left, the Live
+ * neither does an ask's answer or what one agent says to another. When an agent has no work left, the Live
  * Activities phones show for it end. Returns a function that stops it.
  */
 export function startPush(store: Store, send: SendPush): () => void {
@@ -46,7 +46,7 @@ export function startPush(store: Store, send: SendPush): () => void {
     const ended = shown && avatarStateOf(shown);
     if (ended && ended !== "working") for (const to of store.endActivities(message.agent_id)) void send(to, { ended });
     const answered = message.ask !== null && message.ask !== "waiting";
-    const finished = (message.sender === "agent" && !message.interim && !answered) || (message.sender === "sidebots" && message.status === "failed");
+    const finished = (message.sender === "agent" && !message.interim && !answered && !betweenAgents(message)) || (message.sender === "sidebots" && message.status === "failed");
     const agent = finished ? store.agent(message.agent_id) : undefined;
     if (!agent || agent.muted) return;
     // A muted agent's unread replies show on its own row, and never on the app's icon.

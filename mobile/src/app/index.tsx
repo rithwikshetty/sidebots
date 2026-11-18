@@ -16,7 +16,7 @@ import { UPDATE, type Behind } from "@/lib/api";
 import { useWorkingLine } from "@/lib/lines";
 import { preview } from "@/lib/messages";
 import { EASE, HIDE, MOVE, POP_IN, POP_OUT, SHOW } from "@/lib/motion";
-import { changeAgent, findMessages, useAgents, useAvatars, useBehind, useOnline, type AgentChanges } from "@/lib/state";
+import { changeAgent, findMessages, useAgent, useAgents, useAvatars, useBehind, useOnline, type AgentChanges } from "@/lib/state";
 import { useActivities } from "@/lib/activity";
 import { usePush } from "@/lib/push";
 import { useTheme } from "@/lib/theme";
@@ -309,6 +309,8 @@ function AgentRow({ agent, found, search, online, onPress }: { agent: AgentWithL
   const avatarState = found ? "resting" : avatarStateOf(agent);
   const line = useWorkingLine();
   const working = online && avatarState === "working";
+  // The agent it asked something and hasn't heard back from.
+  const waitingOn = useAgent(agent.waiting_on ?? "");
   const unread = !found && agent.unread > 0;
   return (
     <Pressable onPress={onPress} style={({ pressed }) => [styles.row, { backgroundColor: pressed ? theme.field : theme.bg }]}>
@@ -330,7 +332,7 @@ function AgentRow({ agent, found, search, online, onPress }: { agent: AgentWithL
         <View style={styles.bottom}>
           {/* The line crossfades as a new message comes or the working line changes. */}
           <FadingText style={[styles.preview, { color: unread ? theme.ink : theme.ink2 }, working && styles.working]} numberOfLines={2}>
-            {found ? foundLine(found, search) : working ? line : agent.latest ? preview(agent.latest) : "Say hello"}
+            {found ? foundLine(found, search) : working ? line : waitingOn && online ? `Waiting on ${waitingOn.name}` : agent.latest ? preview(agent.latest) : "Say hello"}
           </FadingText>
           {unread ? (
             <Animated.View

@@ -3,13 +3,14 @@ import { FlatList, Pressable, StyleSheet, Text, View } from "react-native";
 import { Stack, useFocusEffect, useLocalSearchParams, useRouter } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { KeyboardChatScrollView, KeyboardController, KeyboardEvents, KeyboardStickyView } from "react-native-keyboard-controller";
-import Animated, { useSharedValue } from "react-native-reanimated";
+import Animated, { useAnimatedStyle, useSharedValue, withDelay, withRepeat, withSequence, withTiming } from "react-native-reanimated";
 import { Reply, X } from "lucide-react-native";
-import { avatarStateOf, type AgentWithLatest, type Ask, type Message, type Question } from "@server/contract";
+import { avatarStateOf, betweenAgents, type AgentWithLatest, type Ask, type Message, type Question } from "@server/contract";
 import { AskCard } from "@/components/AskCard";
 import { AvatarView } from "@/components/AvatarView";
 import { BAR_HEIGHT, ChatHeader, HEADER_CLEARANCE, HEADER_OVERHANG } from "@/components/ChatHeader";
 import { Composer } from "@/components/Composer";
+import { Exchange } from "@/components/Exchange";
 import { FadingText } from "@/components/FadingText";
 import { Glass } from "@/components/Glass";
 import { IconButton } from "@/components/IconButton";
@@ -22,7 +23,7 @@ import { fitsInMessage, isImage, isPage, MAX_FILES, pick, SIZE_LIMIT_NOTICE, typ
 import { haptics } from "@/lib/haptics";
 import { useWorkingLine } from "@/lib/lines";
 import { preview } from "@/lib/messages";
-import { HIDE, MOVE, SHOW, arrive } from "@/lib/motion";
+import { EASE, HIDE, MOVE, SHOW, arrive } from "@/lib/motion";
 import { askForPush, showChatOnScreen } from "@/lib/push";
 import { answerAsk, freshStart, loadMessages, loadOlder, markRead, resend, send, stop, useAgent, useChatColor, useMessages, useOnline } from "@/lib/state";
 import { ChatColor, type Theme, useTheme } from "@/lib/theme";
@@ -47,6 +48,10 @@ function ChatWith({ agent }: { agent: AgentWithLatest }) {
   const online = useOnline();
   const avatarState = avatarStateOf(agent);
   const messages = useMessages(agent.id);
+  // The agent this one asked something and hasn't heard back from.
+  const waitingOn = useAgent(agent.waiting_on ?? "");
+  // Whether an agent that was asked something by another waits on the person's answer to an ask of its own.
+  const needsPerson = (askerId: string, askedId: string | null) => messages.some((message) => message.ask === "waiting" && message.agent_id === askedId && message.peer_id === askerId);
   // The person's newest message, which carries the chat's receipt.
   const newestMine = messages.findLast((message) => message.sender === "person")?.id;
   // What the person typed stays with the chat when they leave it and come back.
@@ -212,26 +217,40 @@ function ChatWith({ agent }: { agent: AgentWithLatest }) {
                   />
                 </Animated.View>
               ) : null}
-              {agent.working && online ? <WorkingRow agent={agent} /> : null}
+              {agent.working && online ? <WorkingRow agent={agent} /> : waitingOn && online ? <WaitingRow agent={agent} other={waitingOn} needsPerson={needsPerson(agent.id, waitingOn.id)} /> : null}
             </View>
             <View style={{ height: composerHeight }} />
           </View>
         }
         renderItem={({ item, index }) => {
           const older = newestFirst[index + 1];
+          const between = betweenAgents(item);
+          // An answer shows inside the line for what was asked.
+          if (between && item.reply_to) return null;
           return (
             <Row message={item} openedAt={openedAt}>
               {!older || !sameDay(older.created_at, item.created_at) ? (
                 <Text style={[styles.day, { color: theme.ink2 }]}>{dayLabel(item.created_at)}</Text>
               ) : null}
-              <Bubble
-                message={item}
-                quoted={item.reply_to ? messages.find((message) => message.id === item.reply_to) : undefined}
-                theme={theme}
-                receipt={item.id === newestMine}
-                onReply={() => setReplyTo(item)}
-                onResend={() => onResend(item)}
-              />
+              {between ? (
+                <Exchange
+                  asked={item}
+                  answer={messages.find((message) => betweenAgents(message) && message.reply_to === item.id)}
+                  needsPerson={needsPerson(item.agent_id, item.peer_id)}
+                  arriving={item.created_at >= openedAt && !arrived.has(item.id)}
+                />
+              ) : (
+                <Bubble
+                  message={item}
+                  quoted={item.reply_to ? messages.find((message) => message.id === item.reply_to) : undefined}
+                  theme={theme}
+                  // An ask another agent raised while working for this one says whose it is.
+                  from={item.agent_id === agent.id ? undefined : item.agent_id}
+                  receipt={item.id === newestMine}
+                  onReply={() => setReplyTo(item)}
+                  onResend={() => onResend(item)}
+                />
+              )}
             </Row>
           );
         }}
@@ -269,7 +288,7 @@ function ChatWith({ agent }: { agent: AgentWithLatest }) {
               value={draft}
               onChangeText={setDraft}
               onSend={() => void onSend(draft, picked, replyTo)}
-              onStop={agent.working && online ? onStop : undefined}
+              onStop={(agent.working || waitingOn) && online ? onStop : undefined}
               placeholder={`Message ${agent.name}`}
               attachments={picked}
               onAttach={onAttach}
@@ -293,6 +312,38 @@ function WorkingRow({ agent }: { agent: AgentWithLatest }) {
       <FadingText style={[styles.workingText, { color: theme.ink2 }]}>{line}</FadingText>
     </Animated.View>
   );
+}
+
+/**
+ * The agent beside the one it asked something, while it waits to hear back:
+ * dots run from one to the other, and the line says who waits on whom. They
+ * stop when the agent that was asked is itself waiting on the person.
+ */
+function WaitingRow({ agent, other, needsPerson }: { agent: AgentWithLatest; other: AgentWithLatest; needsPerson: boolean }) {
+  const theme = useTheme();
+  return (
+    <Animated.View entering={SHOW} exiting={HIDE} style={styles.workingRow}>
+      <AvatarView avatarId={agent.avatar_id} state="resting" size={48} />
+      <View style={styles.flow}>
+        {[0, 1, 2].map((dot) => (
+          <FlowDot key={dot} after={dot * FLOW_STEP_MS} running={!needsPerson} color={theme.ink2} />
+        ))}
+      </View>
+      <AvatarView avatarId={other.avatar_id} state={other.working && !needsPerson ? "working" : "resting"} size={48} />
+      <FadingText style={[styles.workingText, { color: theme.ink2 }]}>{needsPerson ? `${other.name} is waiting on you` : `Waiting on ${other.name}`}</FadingText>
+    </Animated.View>
+  );
+}
+
+/** One of the dots between two avatars. It brightens `after` a moment, in turn with the others, while `running`. */
+function FlowDot({ after, running, color }: { after: number; running: boolean; color: string }) {
+  const lit = useSharedValue(FLOW_DIM);
+  useEffect(() => {
+    const rest = FLOW_MS - 2 * EASE.duration;
+    lit.value = running ? withDelay(after, withRepeat(withSequence(withTiming(FLOW_LIT, EASE), withTiming(FLOW_DIM, EASE), withTiming(FLOW_DIM, { ...EASE, duration: rest })), -1)) : withTiming(FLOW_DIM, EASE);
+  }, [after, running, lit]);
+  const style = useAnimatedStyle(() => ({ opacity: lit.value }));
+  return <Animated.View style={[styles.flowDot, { backgroundColor: color }, style]} />;
 }
 
 /**
@@ -321,6 +372,7 @@ function Bubble({
   message,
   quoted,
   theme,
+  from,
   receipt,
   onReply,
   onResend,
@@ -328,6 +380,8 @@ function Bubble({
   message: Message;
   quoted: Message | undefined;
   theme: Theme;
+  /** The agent that sent it, when that isn't the chat's own. */
+  from?: string;
   /** Whether the message carries the chat's receipt, as the person's newest does. */
   receipt: boolean;
   onReply: () => void;
@@ -350,6 +404,7 @@ function Bubble({
           mine={mine}
           theme={theme}
           asked={message.question ?? undefined}
+          from={from}
           foot={message.ask ? <AskAnswer message={message} ask={message.ask} theme={theme} /> : undefined}
         />
         {mine && message.status === "failed" ? (
@@ -410,10 +465,11 @@ function AskAnswer({ message, ask, theme }: { message: Message; ask: Ask; theme:
  * Assist draws one, its pages between them, as T3 Code draws one, and the
  * message it answers quoted at the bubble's top. The agent's words are
  * markdown; the person's are as they typed them. An ask shows what is
- * `asked` as its card, in place of the words. `foot` sits under either,
- * inside the bubble.
+ * `asked` as its card, in place of the words, with the agent it is `from`
+ * when that isn't the chat's own. `foot` sits under either, inside the
+ * bubble.
  */
-function Sent({ body, quote, photos, pages = [], files, mine, theme, asked, foot }: { body: string; quote?: string; photos: Shown[]; pages?: Shown[]; files: Shown[]; mine: boolean; theme: Theme; asked?: Question; foot?: ReactNode }) {
+function Sent({ body, quote, photos, pages = [], files, mine, theme, asked, from, foot }: { body: string; quote?: string; photos: Shown[]; pages?: Shown[]; files: Shown[]; mine: boolean; theme: Theme; asked?: Question; from?: string; foot?: ReactNode }) {
   const quiet = mine ? theme.onTint : theme.ink2;
   return (
     <>
@@ -434,7 +490,7 @@ function Sent({ body, quote, photos, pages = [], files, mine, theme, asked, foot
             </View>
           ) : null}
           {asked ? (
-            <AskCard question={asked} />
+            <AskCard question={asked} from={from} />
           ) : body && mine ? (
             <Text selectable style={[styles.text, { color: theme.onTint }]}>
               {body}
@@ -477,6 +533,12 @@ const arrived = new Set<string>();
 // The phone's clock and the server's may disagree by a little.
 const CLOCK_SLACK_MS = 2000;
 
+// The dots between an agent and the one it waits on: how bright each gets, how long one round takes, and how far apart they light.
+const FLOW_DIM = 0.25;
+const FLOW_LIT = 0.9;
+const FLOW_MS = 1400;
+const FLOW_STEP_MS = 180;
+
 // The resting composer's height above the home indicator, used until it is measured.
 const COMPOSER_ESTIMATE = 64;
 
@@ -517,7 +579,9 @@ const styles = StyleSheet.create({
   asked: { fontSize: 13, lineHeight: 18, fontWeight: "600", marginBottom: 2 },
   resend: { fontSize: 13, fontWeight: "600", marginTop: 4, marginRight: 4 },
   workingRow: { flexDirection: "row", alignItems: "center", gap: 10, marginTop: 10, paddingLeft: 2 },
-  workingText: { fontSize: 15, fontStyle: "italic" },
+  workingText: { fontSize: 15, fontStyle: "italic", flexShrink: 1 },
+  flow: { flexDirection: "row", gap: 4, marginHorizontal: -2 },
+  flowDot: { width: 4, height: 4, borderRadius: 2 },
   sticky: { position: "absolute", left: 0, right: 0, bottom: 0 },
   above: { paddingHorizontal: 12, paddingTop: 8 },
   bar: { paddingHorizontal: 12, paddingTop: 8 },

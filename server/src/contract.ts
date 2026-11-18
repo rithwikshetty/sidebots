@@ -66,6 +66,16 @@ export type Message = {
   ask: Ask | null;
   /** What an ask asks, which the phone draws as its card. The message's `body` says the same in words. Null for every other message. */
   question: Question | null;
+  /**
+   * The other agent, for a message that is between two of the person's
+   * agents and so shows in both their chats. On a message one agent sent
+   * another, it is the agent the message is for. The message waits in that
+   * agent's queue, its `status` says whether that agent has read and answered
+   * it, and an answer names what it answers in `reply_to`. On an ask, it is
+   * the agent whose message the asking agent was working on. Null for a
+   * message between an agent and the person.
+   */
+  peer_id: string | null;
   created_at: number;
 };
 
@@ -124,10 +134,15 @@ export type Agent = {
 };
 /**
  * An agent as the home screen shows it. `working` is true while it has a turn
- * queued or running. `unread` counts the replies, asks and failure notices
- * the person hasn't read.
+ * queued or running. `unread` counts the replies, the asks still waiting and
+ * the failure notices the person hasn't read. `latest` and `unread` leave out what agents say to
+ * each other. `waiting_on` is the agent it asked something and hasn't heard
+ * back from, when there is one.
  */
-export type AgentWithLatest = Agent & { latest: Message | null; working: boolean; unread: number };
+export type AgentWithLatest = Agent & { latest: Message | null; working: boolean; unread: number; waiting_on: string | null };
+
+/** Whether a message is one agent's to another, which the person can read and nobody is notified of. */
+export const betweenAgents = (message: Pick<Message, "peer_id" | "ask">): boolean => message.peer_id !== null && message.ask === null;
 
 /** The state an agent's avatar acts out: working while it has a turn, then failed when its last turn failed, replied while a reply waits to be read, and resting otherwise. */
 export function avatarStateOf(agent: AgentWithLatest): AvatarState {
