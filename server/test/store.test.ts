@@ -8,7 +8,7 @@ import { openStore } from "../src/store.ts";
 
 test("a database made before the table changes gets them and keeps what it holds", () => {
   const home = mkdtempSync(join(tmpdir(), "sidebots-store-test-"));
-  // The tables the changes touch, as the first published version made them, with an agent, a phone that allows notifications, and an API key as that version saved one.
+  // The tables the changes touch, as the first published version made them, with an agent, a message, a phone that allows notifications, and an API key as that version saved one.
   const old = new DatabaseSync(join(home, "sidebots.sqlite"));
   old.exec(`
     create table people (id text primary key, name text not null unique, claude_config_dir text not null);
@@ -21,8 +21,14 @@ test("a database made before the table changes gets them and keeps what it holds
       model text not null default 'opus', effort text not null default 'medium', muted integer not null default 0,
       hidden integer not null default 0, session_id text, read_at integer not null default 0, created_at integer not null
     );
+    create table messages (
+      id text primary key, agent_id text not null references agents(id), sender text not null check (sender in ('person', 'agent', 'sidebots')),
+      body text not null, attachments text not null default '[]', status text not null check (status in ('queued', 'running', 'done', 'failed')),
+      seen_at integer, reply_to text, job_id text, interim integer not null default 0, created_at integer not null
+    );
     insert into people values ('me', 'Rithwik', '/tmp/claude');
     insert into agents (id, person_id, name, avatar_id, created_at) values ('scout', 'me', 'Scout', 'mochi', 1);
+    insert into messages (id, agent_id, sender, body, status, created_at) values ('hello', 'scout', 'agent', 'Hello.', 'done', 2);
     insert into devices values ('phone', 'me', 'phone', 'hash', 'key', '${"a".repeat(64)}', 'production', 1);
   `);
   old.close();
@@ -30,6 +36,7 @@ test("a database made before the table changes gets them and keeps what it holds
 
   const store = openStore(home);
   assert.deepEqual(store.agentsFor("me").map((agent) => [agent.name, agent.provider, agent.color]), [["Scout", "claude", null]]);
+  assert.deepEqual(store.messages("scout").map((message) => [message.body, message.ask]), [["Hello.", null]]);
   assert.deepEqual(store.people().map((person) => ({ ...person })), [{ id: "me", name: "Rithwik" }]);
   assert.deepEqual(store.accounts("me").map((account) => ({ ...account })), [{ person_id: "me", provider: "claude", config_dir: "/tmp/claude" }]);
   assert.equal(store.apiKey("me", "claude"), "sk-ant-key");

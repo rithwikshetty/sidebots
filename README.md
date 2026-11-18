@@ -1,6 +1,6 @@
 # Sidebots
 
-Sidebots is a messaging app for your agents. Each chat is an agent. You send it a message, it does the work on a machine you own, and the finished reply arrives like a text from a person, with a notification.
+Sidebots is a messaging app for your agents. Each chat is an agent. You send it a message, it does the work on a machine you own, and the finished reply arrives like a text from a person, with a notification, and with any files or pages the agent made for you.
 
 You run Sidebots yourself. There is no hosted service: a small server runs on your machine, drives the program each agent runs on, and keeps every message in a folder on that machine. Sidebots calls those programs providers, and today it has one, Claude Code. [Providers](#providers) says how another is added. You build your own copy of the app and pair it with your server.
 
@@ -8,7 +8,7 @@ The full design is in [docs/specs/2026-11-15-sidebots.md](docs/specs/2026-11-15-
 
 ## Read this before you run it
 
-- **Agents act without asking.** They run in Claude Code's auto mode, where Claude Code's own safety check decides what is safe to run. Nobody is asked to approve anything. An action the check can't decide on is skipped.
+- **Agents act on their own.** They run in Claude Code's auto mode, where Claude Code's own safety check decides what is safe to run, and nobody is asked about those actions. An action the check can't decide on, the agent asks its person about on their phone. It leaves the action undone when they say no, or don't answer within half an hour.
 - **Agents can reach everything the server's user account can.** Every agent runs as the account that started the server, and can read and change that account's files, run commands as it, and use each person's Claude Code skills and connections.
 - **Share a server only with people you would trust with that machine.** Each person sees only their own agents in the app, but all agents run as the same account.
 - **A pairing code lets a phone in.** The server has no passwords. It answers only phones that have paired with it, and a phone pairs by scanning a code you make for one person. Whoever scans the code reaches that person's agents, so show it only to them.
@@ -125,6 +125,8 @@ Each person pays for their own agents, in one of two ways:
 - **A Claude subscription.** The agents run through the person's own Claude Code sign-in and use that subscription's limits. Sidebots never reads, stores or passes on a sign-in.
 - **An Anthropic API key.** Anthropic bills the key's account for what the agents use. The key is from the [Claude Console](https://platform.claude.com), and Sidebots keeps it in `~/.sidebots` on your machine.
 
+Usage, in the app's side menu, shows where either one goes: what is left of a subscription's limits and when they reset, as Claude Code last said while an agent ran, and what each agent used in the last seven days, with its jobs apart from its replies. A cost there is Claude Code's own estimate at API prices. On an API key it is about what Anthropic bills. On a subscription it is no bill, and only measures where the limits go. Anthropic charges a subscription for use past its limits only where usage credits are turned on.
+
 Anthropic's terms decide which you may use. A subscription is for the subscriber's own use. For a product built on the Agent SDK, as Sidebots is, Anthropic [asks for API keys](https://code.claude.com/docs/en/agent-sdk/overview) and doesn't allow Claude sign-ins to be offered to its users without its approval. So read the terms before you set Sidebots up for anyone but yourself, and when in doubt give each person an API key.
 
 ## Providers
@@ -132,7 +134,7 @@ Anthropic's terms decide which you may use. A subscription is for the subscriber
 A provider is a program that runs agents, such as Claude Code. Each agent runs on one, and each person signs in to each provider their agents use with a config folder of their own. Adding a provider takes two things:
 
 - An entry in `PROVIDERS` in `server/src/contract.ts`, with the name the apps show, its models and levels of effort, and the file its agents read their instructions from. The phone shows an agent's models from there.
-- A driver, the module that runs a turn on the program: `server/src/claude.ts` is Claude Code's. It hands the program the agent's tools from `toolsFor` in `server/src/runner.ts`, ends a turn the person stops with its session kept, puts the program's failures in words for the person, and removes the program's sessions when an agent is deleted. `server/src/main.ts` passes each driver to the queue.
+- A driver, the module that runs a turn on the program: `server/src/claude.ts` is Claude Code's. It hands the program the agent's tools from `toolsFor` in `server/src/runner.ts`, says what the session has cost and where the limits of the person's plan stand, ends a turn the person stops with its session kept, puts the program's failures in words for the person, and removes the program's sessions when an agent is deleted. `server/src/main.ts` passes each driver to the queue.
 
 The Mac app sets up Claude Code only, so a person's other providers are set up with `pnpm add-person` and `pnpm api-key` for now.
 

@@ -29,12 +29,13 @@ export function seal(notice: Notice, notificationKey: string): string {
   return Buffer.concat([nonce, encrypted, cipher.getAuthTag()]).toString("base64");
 }
 
-/** Tells the person's phones when an agent replies or a turn fails, unless the agent is muted. An update while it works tells nobody. Returns a function that stops it. */
+/** Tells the person's phones when an agent replies or asks, or a turn fails, unless the agent is muted. An update while it works tells nobody, and neither does an ask's answer. Returns a function that stops it. */
 export function startPush(store: Store, send: SendPush): () => void {
   return store.onChange((change) => {
     if (!("message" in change)) return;
     const { message } = change;
-    const finished = (message.sender === "agent" && !message.interim) || (message.sender === "sidebots" && message.status === "failed");
+    const answered = message.ask !== null && message.ask !== "waiting";
+    const finished = (message.sender === "agent" && !message.interim && !answered) || (message.sender === "sidebots" && message.status === "failed");
     const agent = finished ? store.agent(message.agent_id) : undefined;
     if (!agent || agent.muted) return;
     // A muted agent's unread replies show on its own row, and never on the app's icon.

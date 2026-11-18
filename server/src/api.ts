@@ -5,14 +5,12 @@ import { extname } from "node:path";
 import { Hono } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import { streamSSE } from "hono/streaming";
-import { COLOR, CONTRACT_HEADER, CONTRACT_VERSION, PROVIDERS } from "./contract.ts";
+import { COLOR, CONTRACT_HEADER, CONTRACT_VERSION, MESSAGE_BYTES, PROVIDERS } from "./contract.ts";
 import type { Effort, Model, Paired, PushToken, StreamEvent } from "./contract.ts";
 import type { AgentChanges, Device, Person, Store } from "./store.ts";
 import type { Queue } from "./runner.ts";
 
 const KEEPALIVE_MS = 25_000;
-// The most one message carries, under the 100 MB Cloudflare takes in one request.
-const MESSAGE_BYTES = 95 * 1024 * 1024;
 // An Apple device token as the phone reports it: hex, 32 bytes today, with room for Apple to lengthen it.
 const DEVICE_TOKEN = /^[0-9a-f]{64,200}$/;
 // An app's bundle identifier, as Apple allows it.
@@ -212,11 +210,23 @@ export function createApi(store: Store, queue: Queue, machine: string) {
     return c.json({});
   });
 
+  /** The person's answer to an ask: whether the agent may do what it asked about. Answers with the ask as it now stands. */
+  app.post("/agents/:id/asks/:message", async (c) => {
+    const agent = ownAgent(c.var.person, c.req.param("id"));
+    if (!agent) return c.json({ error: "No such agent." }, 404);
+    const { allow } = await c.req.json<{ allow?: boolean }>();
+    if (typeof allow !== "boolean") return c.json({ error: "An answer is yes or no." }, 400);
+    if (!queue.answer(agent.id, c.req.param("message"), allow)) return c.json({ error: "The agent is no longer waiting for an answer to that." }, 409);
+    return c.json(store.message(agent.id, c.req.param("message")));
+  });
+
   /** The messages that contain `text`, in any of the person's chats. */
   app.get("/search", (c) => {
     const text = c.req.query("text")?.trim();
     return c.json(text ? store.searchMessages(c.var.person.id, text) : []);
   });
+
+  app.get("/usage", (c) => c.json(store.usage(c.var.person.id)));
 
   /** The phone says where Apple delivers its notifications, once it allows them. */
   app.put("/push-token", async (c) => {
