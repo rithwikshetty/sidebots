@@ -843,6 +843,58 @@ test("an agent's updates while it works wait a minute, then come no more than ev
   assert.deepEqual(sent.map((notice) => [notice.body, notice.badge]), [["Here are the three flats.", 1]]);
 });
 
+test("an agent's files go with its next message, an update or its reply, and open as the person's own do", async () => {
+  let time = new Date(2026, 10, 16, 9, 0).getTime();
+  const answers: string[] = [];
+  const { home, store, queue, call, say, app, phoneOf } = setup(async (turn) => {
+    if (turn.prompt.text !== "chart my week") {
+      // A run of the job: a file sent with nothing to say goes nowhere, and one sent with a reply goes with it.
+      writeFileSync(join(turn.cwd, "week.png"), "this week");
+      turn.sendFiles(["week.png"]);
+      return reply(time > new Date(2026, 10, 16, 9, 10).getTime() ? "Your week so far." : "SILENT");
+    }
+    turn.scheduleJob({ what: "Chart the week.", every_minutes: 5 });
+    writeFileSync(join(turn.cwd, "chart.png"), "first draft");
+    writeFileSync(join(home, "Week 47 report.pdf"), "the report");
+    answers.push(turn.sendFiles(["chart.png", "missing.png"]));
+    answers.push(turn.sendFiles(["chart.png"]));
+    time += 2 * 60_000;
+    turn.sendUpdate!("Here is the chart so far.");
+    // What was sent is the file as it was, whatever becomes of it after.
+    writeFileSync(join(turn.cwd, "chart.png"), "final");
+    answers.push(turn.sendFiles(["chart.png", join(home, "Week 47 report.pdf")]));
+    return reply("Both are here.");
+  }, () => time);
+  const agent = (await call(ME, "POST", "/agents", { name: "Scout", avatarId: "moss" })).json;
+  await say(ME, agent.id, "chart my week");
+  await queue.kick(agent.id);
+  for (const minutes of [5, 10]) {
+    time += minutes * 60_000;
+    await queue.kick(agent.id);
+  }
+
+  assert.deepEqual(answers, [
+    "There is no file at missing.png. Nothing was added, so give the paths again.",
+    "Added. They go with the next message you send.",
+    "Added. They go with the next message you send.",
+  ]);
+  const [, update, answer, fromJob, ...rest] = (await call(ME, "GET", `/agents/${agent.id}/messages`)).json as { body: string; attachments: string[] }[];
+  assert.deepEqual(rest, []);
+  const names = (message: { attachments: string[] }) => message.attachments.map((path) => path.replace(/^attachments\/[0-9a-f]{8}-/, ""));
+  assert.deepEqual([update.body, names(update)], ["Here is the chart so far.", ["chart.png"]]);
+  assert.deepEqual([answer.body, names(answer)], ["Both are here.", ["chart.png", "Week-47-report.pdf"]]);
+  assert.deepEqual([fromJob.body, names(fromJob)], ["Your week so far.", ["week.png"]]);
+
+  const open = async (path: string, who = ME) => app.request(`/agents/${agent.id}/${path}`, { headers: phoneOf(who) });
+  assert.equal(await (await open(update.attachments[0])).text(), "first draft");
+  assert.equal(await (await open(answer.attachments[0])).text(), "final");
+  const report = await open(answer.attachments[1]);
+  assert.equal(report.headers.get("Content-Type"), "application/pdf");
+  assert.equal(await report.text(), "the report");
+  assert.equal((await open(answer.attachments[1], HER)).status, 404);
+  assert.match(readFileSync(join(store.agentHome(agent.id), "CLAUDE.md"), "utf8"), /To send Alex a file, use your `send_files` tool\./);
+});
+
 test("a job's run can't send updates", async () => {
   let time = new Date(2026, 10, 16, 9, 0).getTime();
   const updates: boolean[] = [];

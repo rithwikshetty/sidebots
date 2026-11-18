@@ -5,7 +5,7 @@ import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import { PROVIDERS, scheduleWords } from "./contract.ts";
 import type { Agent, Effort, Found, Job, Message, Model, Provider, Schedule } from "./contract.ts";
-import type { Person, Store } from "./store.ts";
+import type { Person, Store, Upload } from "./store.ts";
 
 /** A job as an agent asks for one: what to do on each run, and one of three ways to say when. */
 export type JobRequest = { what: string; every_minutes?: number; daily_at?: string; weekdays?: number[]; once_at?: string };
@@ -46,6 +46,8 @@ export type Turn = {
   scheduleJob: (request: JobRequest) => string;
   listJobs: () => string;
   cancelJob: (id: string) => string;
+  /** Adds files, by their paths, to the next message the agent sends: its reply, or an update that comes first. Answers in words the agent reads. */
+  sendFiles: (paths: string[]) => string;
   /** Sends the person a short update while the agent works, for a turn they are waiting on. Answers in words the agent reads. */
   sendUpdate?: (text: string) => string;
 };
@@ -111,6 +113,13 @@ export function toolsFor(turn: Turn): Tool[] {
       input: { id: z.string().describe("The job's id, as list_jobs gives it") },
       run: ({ id }) => turn.cancelJob(id),
     }),
+    define({
+      name: "send_files",
+      description:
+        "Send the person files: a photo, a chart, a PDF, anything you made or found for them. The files go with the next message you send, which is your reply unless you send an update first, and show above its text: a picture as a picture, any other file as a card that opens it. Use it whenever the person should have the file itself and not only your words about it. Up to 95 MB to a message.",
+      input: { paths: z.array(z.string()).describe("Each file's path, in full or from your home folder") },
+      run: ({ paths }) => turn.sendFiles(paths),
+    }),
     ...(sendUpdate
       ? [
           define({
@@ -139,6 +148,8 @@ const CLOCK_MS = 15_000;
 // How long a turn runs before the agent may send an update, and how long between updates.
 const FIRST_UPDATE_MS = 60_000;
 const UPDATE_GAP_MS = 3 * 60_000;
+// The most a message from the agent carries in files, which is what one from the person can.
+const MESSAGE_FILE_BYTES = 95 * 1024 * 1024;
 /** What a job's run replies when it has nothing to tell the person. */
 const SILENT = "SILENT";
 function found(messages: Found[]): string {
@@ -242,6 +253,8 @@ export function createQueue(store: Store, drivers: Drivers, now: () => number = 
       const apiKey = store.apiKey(person.id, agent.provider);
       const message = store.nextQueued(agentId);
       const job = message ? undefined : store.dueJob(agentId, now());
+      // The files the agent has asked to send, which its next message takes.
+      const files: Upload[] = [];
       const turn = async (text: string, rest: Pick<Turn, "followUps" | "seen" | "replied" | "sendUpdate"> & { id?: string; ofJob?: boolean }) => {
         if (!account) throw new Error(`${person.name} hasn't set up ${PROVIDERS[agent.provider].name} on this computer.`);
         return driver.runTurn({
@@ -271,6 +284,15 @@ export function createQueue(store: Store, drivers: Drivers, now: () => number = 
             return `${jobs.join("\n\n") || "You have no jobs."}\n\nIt is now ${clock(now())}.`;
           },
           cancelJob: (id) => (store.removeJob(agent.id, id) ? "Removed." : "You have no job with that id."),
+          sendFiles: (paths) => {
+            const named = paths.map((path) => store.fileToSend(agent.id, path));
+            const missing = paths.filter((_, at) => !named[at]);
+            if (missing.length) return `There is no file at ${missing.join(", ")}. Nothing was added, so give the paths again.`;
+            const bytes = [...files.map((file) => file.bytes.byteLength), ...named.map((file) => file!.size)].reduce((total, size) => total + size, 0);
+            if (bytes > MESSAGE_FILE_BYTES) return "A message carries up to 95 MB of files. Nothing was added, so send fewer or smaller ones.";
+            files.push(...named.map((file) => file!.read()));
+            return "Added. They go with the next message you send.";
+          },
         });
       };
       // Why a turn failed, as the chat says it. An error can quote what the turn ran with, and the person's API key never goes with it.
@@ -284,7 +306,7 @@ export function createQueue(store: Store, drivers: Drivers, now: () => number = 
           const replies: string[] = [];
           await turn(jobPrompt(job, person), { ofJob: true, seen: () => undefined, replied: (reply) => replies.push(reply) });
           const reply = replies.at(-1) ?? "";
-          if (!silent(reply)) store.addMessage(agent.id, "agent", reply, "done", { jobId: job.id });
+          if (!silent(reply)) store.addMessage(agent.id, "agent", reply, "done", { jobId: job.id, files });
         } catch (error) {
           if (stop.signal.aborted) return;
           // A job that keeps failing says so once, not on every run.
@@ -336,7 +358,7 @@ export function createQueue(store: Store, drivers: Drivers, now: () => number = 
         if (at - started < FIRST_UPDATE_MS) return "Too soon for an update. Carry on, and send one only if the work runs well past a minute.";
         if (lastUpdate !== null && at - lastUpdate < UPDATE_GAP_MS) return "You sent an update moments ago. Carry on, and tell the rest in your reply.";
         lastUpdate = at;
-        store.addMessage(agent.id, "agent", update.trim(), "done", { interim: true });
+        store.addMessage(agent.id, "agent", update.trim(), "done", { interim: true, files: files.splice(0) });
         return "Sent. Carry on with the work.";
       };
       try {
@@ -352,7 +374,7 @@ export function createQueue(store: Store, drivers: Drivers, now: () => number = 
             sendUpdate,
             seen: (ids) => store.markSeen(ids),
             replied: (reply, ids) => {
-              store.addMessage(agent.id, "agent", reply, "done");
+              store.addMessage(agent.id, "agent", reply, "done", { files: files.splice(0) });
               store.markSeen(ids);
               ids.forEach((id) => store.setStatus(id, "done"));
             },
