@@ -246,12 +246,15 @@ export function createQueue(store: Store, drivers: Drivers, now: () => number = 
       if (!agent || !person) return;
       const stop = new AbortController();
       stops.set(agentId, stop);
-      // A turn the person stopped says so in the chat. The messages it had read are done with, and those the agent still hadn't read when it ended are left to send again.
-      const stopped = (ids: Iterable<string> = []) => {
+      // A turn the person stopped. Its messages that the agent had read are done with, and the messages the stop named that are still unread are left to send again.
+      const stopped = (ids?: Iterable<string>) => {
         if (removed.has(agentId)) return;
-        store.addMessage(agent.id, "sidebots", STOPPED, "done");
-        for (const id of ids) if (store.message(agent.id, id)?.status === "running") store.setStatus(id, "done");
-        for (const id of stop.signal.reason as string[]) if (store.message(agent.id, id)?.status === "queued") store.setStatus(id, "failed");
+        const read = [...(ids ?? [])].filter((id) => store.message(agent.id, id)?.status === "running");
+        const unread = (stop.signal.reason as string[]).filter((id) => store.message(agent.id, id)?.status === "queued");
+        // The chat says so, unless the stop came as the turn's last reply landed and changed nothing.
+        if (!ids || read.length || unread.length) store.addMessage(agent.id, "sidebots", STOPPED, "done");
+        for (const id of read) store.setStatus(id, "done");
+        for (const id of unread) store.setStatus(id, "failed");
       };
       const driver = drivers[agent.provider];
       const account = store.account(person.id, agent.provider);
@@ -386,8 +389,7 @@ export function createQueue(store: Store, drivers: Drivers, now: () => number = 
           for (const id of sent) if (store.message(agent.id, id)?.status !== "done") store.setStatus(id, "failed");
         }
       }
-      // A stop that came as the last reply landed cut nothing short, and the chat says nothing of it.
-      if (stop.signal.aborted && [...sent].some((id) => store.message(agent.id, id)?.status !== "done")) stopped(sent);
+      if (stop.signal.aborted) stopped(sent);
     }
   }
 

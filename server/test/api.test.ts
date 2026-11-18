@@ -1068,3 +1068,43 @@ test("a message the agent never answered is sent again as it was, with its file 
   assert.ok(prompts[2].startsWith('Replying to your message: "It is a receipt."') && prompts[2].endsWith(`Sent with this message: ${photo.attachments[0]}`));
   assert.equal(prompts[2], prompts[1]);
 });
+
+test("a stop that lands as the last reply comes in says nothing, unless a message of the person's was still unread", async () => {
+  let end: (() => void) | undefined;
+  let turns = 0;
+  // Each turn replies, then takes a moment to end, in which it takes no more messages.
+  const { queue, call, say } = setup(async (turn) => {
+    turns++;
+    turn.replied("Booked.", [turn.prompt.id]);
+    await new Promise<void>((resolve) => (end = resolve));
+    return { sessionId: "session-1", contextTokens: 0 };
+  });
+  const agent = (await call(ME, "POST", "/agents", { name: "Wedding", avatarId: "mochi" })).json;
+  const shown = async () => (await call(ME, "GET", `/agents/${agent.id}/messages`)).json.map((m: { sender: string; body: string; status: string }) => [m.sender, m.body, m.status]);
+
+  await say(ME, agent.id, "book the band");
+  let working = queue.kick(agent.id);
+  await call(ME, "POST", `/agents/${agent.id}/stop`);
+  end!();
+  await working;
+  const replied = [
+    ["person", "book the band", "done"],
+    ["agent", "Booked.", "done"],
+  ];
+  assert.deepEqual(await shown(), replied);
+
+  await say(ME, agent.id, "and the florist");
+  working = queue.kick(agent.id);
+  await say(ME, agent.id, "and a cake");
+  await call(ME, "POST", `/agents/${agent.id}/stop`);
+  end!();
+  await working;
+  assert.deepEqual(await shown(), [
+    ...replied,
+    ["person", "and the florist", "done"],
+    ["agent", "Booked.", "done"],
+    ["person", "and a cake", "failed"],
+    ["sidebots", "Stopped", "done"],
+  ]);
+  assert.equal(turns, 2);
+});
