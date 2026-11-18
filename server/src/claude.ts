@@ -4,8 +4,9 @@
 
 import { rmSync } from "node:fs";
 import { join } from "node:path";
+import { stripVTControlCharacters } from "node:util";
 import { createSdkMcpServer, query, tool, type SDKMessage, type SDKUserMessage } from "@anthropic-ai/claude-agent-sdk";
-import { toolsFor, type Driver, type Prompt, type RunTurn } from "./runner.ts";
+import { toolsFor, type Driver, type Prompt, type Question, type RunTurn } from "./runner.ts";
 
 // The longest a session stays open, after its replies are in, for background work the agent started.
 const BACKGROUND_WAIT_MS = 30 * 60_000;
@@ -41,6 +42,29 @@ function inbox() {
 }
 
 /**
+ * What a call to one of Claude Code's tools would do, for the person to say
+ * yes or no to: the command, the page, or the file with what would be written
+ * to it. Any other tool is named, with what it was given. `connection` is the
+ * person's connection the tool comes from, when it comes from one.
+ */
+function question(toolName: string, input: Record<string, unknown>, connection: string | undefined, why: string | undefined): Question {
+  const given = (name: string) => (typeof input[name] === "string" ? input[name] : "");
+  const file = given("file_path");
+  // Claude Code's reason can carry a terminal's colour codes.
+  const ask = (what: string, detail: string): Question => ({ what, detail, why: why && stripVTControlCharacters(why) });
+  const lines = (mark: string, text: string) => text.split("\n").map((line) => `${mark} ${line}`).join("\n");
+  if (toolName === "Bash") return ask("run this command", given("command"));
+  if (toolName === "WebFetch") return ask("open this page", given("url"));
+  if (toolName === "Read") return ask("read this file", file);
+  if (toolName === "Write") return ask("write this file", `${file}\n\n${given("content")}`);
+  if (toolName === "Edit") {
+    return ask(input.replace_all === true ? "change every match in this file" : "change this file", `${file}\n\n${lines("-", given("old_string"))}\n${lines("+", given("new_string"))}`);
+  }
+  // A connection's tool is named mcp__<connection>__<tool>.
+  return ask(connection ? `use ${toolName.split("__").slice(2).join("__")} from ${connection}` : `use ${toolName}`, JSON.stringify(input, null, 2));
+}
+
+/**
  * Runs a turn through Claude Code. A message the person sends while the turn
  * runs goes into its session: Claude Code reads it at its next pause between
  * steps, and its reply answers both. One that arrives as the turn is finishing
@@ -51,7 +75,7 @@ function inbox() {
  * session waits for that work for half an hour at most.
  */
 const runTurn: RunTurn = async (turn) => {
-  const { prompt, followUps, seen, replied, cwd, sessionId, configDir, apiKey, model, effort, keepSession, stop } = turn;
+  const { prompt, followUps, seen, replied, ask, cwd, sessionId, configDir, apiKey, model, effort, keepSession, stop } = turn;
   const tools = toolsFor(turn);
   const sidebots = createSdkMcpServer({
     name: "sidebots",
@@ -111,12 +135,13 @@ const runTurn: RunTurn = async (turn) => {
       mcpServers: { sidebots },
       allowedTools: tools.filter((each) => !each.checked).map((each) => `mcp__sidebots__${each.name}`),
       permissionMode: "auto",
-      // Auto mode asks here when its classifier can't decide. Nobody is at
-      // the keyboard, so the agent carries on without the action.
-      canUseTool: async () => ({
-        behavior: "deny",
-        message: "Nobody is available to approve this. Skip it, finish the rest, and say in your reply what you couldn't do.",
-      }),
+      // The agent asks the person in its reply, as anyone does in a chat.
+      disallowedTools: ["AskUserQuestion"],
+      // Auto mode asks here when its classifier can't decide, and the person answers on their phone.
+      canUseTool: async (toolName, input, { signal, mcpServer, decisionReason }) => {
+        const answer = await ask(question(toolName, input, mcpServer?.name, decisionReason), signal);
+        return answer.allowed ? { behavior: "allow", updatedInput: input } : { behavior: "deny", message: answer.words };
+      },
     },
   });
   let contextTokens = 0;

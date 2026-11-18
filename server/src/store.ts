@@ -7,7 +7,7 @@ import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
 
 import { COLOR, DEFAULT_PROVIDER, PROVIDERS, readableColor } from "./contract.ts";
-import type { About, Agent, AgentWithLatest, Avatar, Found, Job, Memory, Message, Provider, PushToken, Schedule, Sender, Status } from "./contract.ts";
+import type { About, Agent, AgentWithLatest, Ask, Avatar, Found, Job, Memory, Message, Provider, PushToken, Schedule, Sender, Status } from "./contract.ts";
 
 export type Person = { id: string; name: string };
 /** How a person's agents sign in to a provider: the provider's config folder of the person's own, which holds their login, rules, skills and sessions. */
@@ -18,11 +18,11 @@ export type Device = { id: string; person_id: string; name: string; paired_at: n
 export type PushTarget = PushToken & { notificationKey: string };
 /** A file as it arrives with a message. */
 export type Upload = { name: string; bytes: Uint8Array };
-/** What a message can carry besides its text: files, the message it answers, and the job that sent it. */
-export type Extras = { files?: Upload[]; replyTo?: string; jobId?: string; interim?: boolean };
+/** What a message can carry besides its text: files, the message it answers, the job that sent it, and where its ask stands when it is one. */
+export type Extras = { files?: Upload[]; replyTo?: string; jobId?: string; interim?: boolean; ask?: Ask };
 /** What the person can change about an agent. */
 export type AgentChanges = Partial<Pick<Agent, "name" | "avatar_id" | "model" | "effort" | "muted" | "hidden" | "color">>;
-/** What the store tells its listeners about: a message that was added or changed status, or an agent that was added or deleted. */
+/** What the store tells its listeners about: a message that was added, changed status or had its ask closed, or an agent that was added or deleted. */
 export type Change = { message: Message } | { agent: Agent; deleted: boolean };
 /** How this server is known to the relay: its signing key, and the id, the address phones reach it at and the token its tunnel runs with, which the relay gives it once it has registered. */
 export type Machine = { privateKey: string; id?: string; address?: string; tunnelToken?: string };
@@ -41,6 +41,7 @@ const TABLE_CHANGES = [
   "insert into accounts (person_id, provider, config_dir) select id, 'claude', claude_config_dir from people",
   "alter table people drop column claude_config_dir",
   "alter table agents add column provider text not null default 'claude'",
+  "alter table messages add column ask text check (ask in ('waiting', 'allowed', 'refused', 'unanswered'))",
 ];
 
 const SCHEMA = `
@@ -80,6 +81,7 @@ create table if not exists messages (
   reply_to    text,
   job_id      text,
   interim     integer not null default 0,
+  ask         text check (ask in ('waiting', 'allowed', 'refused', 'unanswered')),
   created_at  integer not null
 );
 create table if not exists jobs (
@@ -187,7 +189,7 @@ export function openStore(home: string) {
   const many = (sql: string, ...values: (string | number)[]): Message[] => (db.prepare(sql).all(...values) as Row[]).map(toMessage);
 
   const pendingTurn = db.prepare("select 1 from messages where agent_id = ? and status in ('queued', 'running') limit 1");
-  // What waits to be read: the agent's replies and Sidebots' failure notices.
+  // What waits to be read: the agent's replies and asks, and Sidebots' failure notices.
   const unread = db.prepare(
     "select count(*) as unread from messages where agent_id = ? and created_at > ? and ((sender = 'agent' and interim = 0) or (sender = 'sidebots' and status = 'failed'))",
   );
@@ -207,7 +209,7 @@ export function openStore(home: string) {
   return {
     agentHome,
 
-    /** Calls `listener` with every message that is added or changes status, and every agent that is added or deleted. Returns a function that stops it. */
+    /** Calls `listener` with every message that is added, changes status or has its ask closed, and every agent that is added or deleted. Returns a function that stops it. */
     onChange(listener: (change: Change) => void): () => void {
       listeners.add(listener);
       return () => listeners.delete(listener);
@@ -441,11 +443,11 @@ export function openStore(home: string) {
 
     /**
      * Saves a message, with any files sent with it written into the agent's
-     * `attachments/` folder. A reply or a failure notice brings a hidden agent
-     * back to the home screen, unless the agent is muted. An update while the
-     * agent works doesn't.
+     * `attachments/` folder. A reply, an ask or a failure notice brings a hidden
+     * agent back to the home screen, unless the agent is muted. An update while
+     * the agent works doesn't.
      */
-    addMessage(agentId: string, sender: Sender, body: string, status: Status, { files = [], replyTo, jobId, interim = false }: Extras = {}): Message {
+    addMessage(agentId: string, sender: Sender, body: string, status: Status, { files = [], replyTo, jobId, interim = false, ask }: Extras = {}): Message {
       const attachments = files.map((file) => {
         // A name keeps its letters, digits, dots and dashes. Anything else becomes a dash, as does a %20 the phone wrote for a space.
         const name = `${randomUUID().slice(0, 8)}-${basename(file.name).replace(/(?:%[0-9a-f]{2}|[^\w.-])+/gi, "-")}`;
@@ -463,9 +465,10 @@ export function openStore(home: string) {
         reply_to: replyTo ?? null,
         job_id: jobId ?? null,
         interim,
+        ask: ask ?? null,
         created_at: Date.now(),
       };
-      db.prepare("insert into messages (id, agent_id, sender, body, attachments, status, reply_to, job_id, interim, created_at) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)").run(
+      db.prepare("insert into messages (id, agent_id, sender, body, attachments, status, reply_to, job_id, interim, ask, created_at) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)").run(
         message.id,
         message.agent_id,
         message.sender,
@@ -475,6 +478,7 @@ export function openStore(home: string) {
         message.reply_to,
         message.job_id,
         Number(interim),
+        message.ask,
         message.created_at,
       );
       if ((sender === "agent" && !interim) || (sender === "sidebots" && status === "failed")) {
@@ -513,6 +517,13 @@ export function openStore(home: string) {
     setStatus(messageId: string, status: Status): void {
       db.prepare("update messages set status = ? where id = ?").run(status, messageId);
       const message = one("select * from messages where id = ?", messageId);
+      if (message) changed({ message });
+    },
+
+    /** Records where an ask that was waiting now stands. */
+    answerAsk(messageId: string, answer: Exclude<Ask, "waiting">): void {
+      const answered = db.prepare("update messages set ask = ? where id = ? and ask = 'waiting'").run(answer, messageId).changes > 0;
+      const message = answered ? one("select * from messages where id = ?", messageId) : undefined;
       if (message) changed({ message });
     },
 
@@ -588,9 +599,10 @@ export function openStore(home: string) {
       return one("select * from messages where agent_id = ? and status = 'queued' order by rowid limit 1", agentId);
     },
 
-    /** Puts turns that a stopped server left running back in the queue, and lists the agents with queued turns. */
+    /** Puts turns that a stopped server left running back in the queue, with the asks they left waiting closed, and lists the agents with queued turns. */
     requeueInterrupted(): string[] {
       db.prepare("update messages set status = 'queued' where status = 'running'").run();
+      db.prepare("update messages set ask = 'unanswered' where ask = 'waiting'").run();
       const rows = db.prepare("select distinct agent_id from messages where status = 'queued'").all() as { agent_id: string }[];
       return rows.map((row) => row.agent_id);
     },

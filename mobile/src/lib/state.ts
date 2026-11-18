@@ -144,12 +144,16 @@ function forget(agentId: string): void {
 /**
  * Fetches the newest page of a chat. It joins onto the older messages already
  * saved when they run up to it. When the chat has moved on by more than a
- * page, the page stands alone and the chat pages back from there.
+ * page, the page stands alone and the chat pages back from there. An ask
+ * never goes back to waiting, so one the phone knows has closed stays closed
+ * when the page was fetched before it did.
  */
 export async function loadMessages(agentId: string): Promise<void> {
-  const page = await request<Message[]>(`/agents/${agentId}/messages`);
-  if (page.length === 0) return;
+  const fetched = await request<Message[]>(`/agents/${agentId}/messages`);
+  if (fetched.length === 0) return;
   const known = state.messages[agentId] ?? NO_MESSAGES;
+  const closed = (message: Message) => known.find((had) => had.id === message.id && had.ask && had.ask !== "waiting");
+  const page = fetched.map((message) => (message.ask === "waiting" ? (closed(message) ?? message) : message));
   const joins = known.findIndex((message) => message.id === page[0].id);
   set({ messages: { ...state.messages, [agentId]: joins < 0 ? page : [...known.slice(0, joins), ...page] } });
 }
@@ -207,6 +211,13 @@ export async function send(agentId: string, body: string, files: Picked[] = [], 
   // Expo's fetch takes a file as its name, its type and a way to read its bytes, which it does as the message goes.
   for (const file of files) form.append("files", { name: file.name, type: file.type, bytes: () => new File(file.uri).bytes() } as unknown as Blob);
   keep(await request<Message>(`/agents/${agentId}/messages`, { method: "POST", body: form }));
+}
+
+/** Answers an agent's ask: whether it may do what it asked about. It fails when the agent has stopped waiting. */
+export async function answerAsk(ask: Message, allow: boolean): Promise<void> {
+  const answered = await request<Message>(`/agents/${ask.agent_id}/asks/${ask.id}`, { method: "POST", body: { allow } });
+  const known = state.messages[ask.agent_id];
+  if (known) set({ messages: { ...state.messages, [ask.agent_id]: upsert(known, answered) } });
 }
 
 /** Replaces the agent's session. The chat stays, and the agent saves what is worth keeping first. */
