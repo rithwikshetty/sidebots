@@ -79,6 +79,8 @@ enum SignIn {
 /// from the server's own commands.
 @MainActor @Observable final class Server {
   private(set) var status: ServerStatus?
+  /// Whether the server's `status` command failed when it was last run, as when the server can't open its data. Nothing is known of the person or the server while it does.
+  private(set) var failed = false
   private(set) var phones: [Phone] = []
   /// Each provider's program on this computer. A provider has none until the server has looked.
   private(set) var programs: [Provider: Program] = [:]
@@ -162,7 +164,13 @@ enum SignIn {
   /// Reads the server's state and the paired phones.
   func refresh() async {
     status = try? Self.decode(await command(["status", "--json"]))
+    failed = status == nil
     if let phones: [Phone] = try? Self.decode(await command(["devices", "--json"])) { self.phones = phones }
+  }
+
+  /// Opens the server's log, which says why it stopped.
+  func showLog() {
+    NSWorkspace.shared.open(Self.log)
   }
 
   /// Looks for each provider's program on this computer.

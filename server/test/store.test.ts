@@ -50,6 +50,25 @@ test("a database made before the table changes gets them and keeps what it holds
   assert.deepEqual(again.accounts("me"), store.accounts("me"));
 });
 
+test("a database a newer Sidebots has changed keeps its count of changes when an older one opens it", () => {
+  const home = mkdtempSync(join(tmpdir(), "sidebots-store-test-"));
+  openStore(home).close();
+  const database = () => new DatabaseSync(join(home, "sidebots.sqlite"));
+  const count = () => {
+    const db = database();
+    const { user_version } = db.prepare("pragma user_version").get() as { user_version: number };
+    db.close();
+    return user_version;
+  };
+  // A newer Sidebots made one change more than this one knows.
+  const newer = count() + 1;
+  const db = database();
+  db.exec(`pragma user_version = ${newer}`);
+  db.close();
+  openStore(home).close();
+  assert.equal(count(), newer);
+});
+
 test("a database that counted turns without their tokens keeps the turns, and counts tokens from the next turn of a session", () => {
   const home = mkdtempSync(join(tmpdir(), "sidebots-store-test-"));
   const fresh = openStore(home);

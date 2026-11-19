@@ -36,7 +36,9 @@ const DEFAULT_COLOR = "#1F5FD6";
  * SCHEMA, which has every change in it, starts with all of them. A change to
  * a table that SCHEMA brought in after the first published version names the
  * table: a database that only now gets the table from SCHEMA has the change
- * in it, and skips it.
+ * in it, and skips it. A database that a newer Sidebots has changed keeps the
+ * newer count when this one opens it, so the newer one doesn't make its
+ * changes a second time.
  */
 const TABLE_CHANGES: (string | { table: string; change: string })[] = [
   "alter table devices add column app text",
@@ -216,7 +218,7 @@ export function openStore(home: string) {
     if (typeof change === "string") db.exec(change);
     else if (had.has(change.table)) db.exec(change.change);
   }
-  db.exec(`pragma user_version = ${TABLE_CHANGES.length}`);
+  db.exec(`pragma user_version = ${Math.max(version, TABLE_CHANGES.length)}`);
   db.exec("commit");
 
   const agentHome = (agentId: string) => join(home, "agents", agentId);
