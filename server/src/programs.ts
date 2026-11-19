@@ -179,18 +179,19 @@ export async function signIn(provider: Provider, folder: string, stop?: AbortSig
 
 /**
  * The login in a provider's config folder, as its program itself reports it:
- * whether it is signed in, and as whom when the program says. Claude Code
- * prints both. Codex says whether it is signed in by how its command ends.
+ * whether it is signed in, as whom when the program says, and whether the
+ * login is an API key the person saved there, which is billed for what each
+ * turn uses and has no plan. Claude Code prints whether and as whom. Codex
+ * says whether it is signed in by how its command ends, and what with in the
+ * words it prints as errors. `path` is where the program is looked for, when
+ * one is given.
  */
-export async function login(provider: Provider, folder: string): Promise<{ logged_in: boolean; email: string | null }> {
+export async function login(provider: Provider, folder: string, path?: string): Promise<{ logged_in: boolean; email: string | null; api_key: boolean }> {
   const env = inFolder(provider, folder, await environment());
-  const said = await run(await program(provider), PROGRAMS[provider].signedIn, { env, timeout: 30_000 }).then(
-    ({ stdout }) => stdout,
-    () => undefined,
-  );
-  if (provider === "codex" || said === undefined) return { logged_in: said !== undefined, email: null };
-  const { loggedIn, email } = JSON.parse(said) as { loggedIn: boolean; email?: string };
-  return { logged_in: loggedIn, email: email ?? null };
+  const said = await run(await program(provider, path), PROGRAMS[provider].signedIn, { env, timeout: 30_000 }).catch(() => undefined);
+  if (provider === "codex" || said === undefined) return { logged_in: said !== undefined, email: null, api_key: /^API key configured/m.test(said?.stderr ?? "") };
+  const { loggedIn, email } = JSON.parse(said.stdout) as { loggedIn: boolean; email?: string };
+  return { logged_in: loggedIn, email: email ?? null, api_key: false };
 }
 
 /** Runs the installer the provider's maker publishes, with this process's terminal, and answers how it ended. */

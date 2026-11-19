@@ -4,7 +4,7 @@
 // whether the server is running and how each person's agents sign in to their providers.
 // `providers` says which providers' programs are on this computer, `install` runs a provider's own
 // installer, `sign-in` runs a provider's own sign-in in a config folder, and `signed-in` says whether
-// that folder is signed in. With `--json`, `pair`, `devices`, `status`, `providers` and `signed-in`
+// that folder is signed in, and whether with an API key. With `--json`, `pair`, `devices`, `status`, `providers` and `signed-in`
 // print what the Mac app reads.
 
 import { execFileSync } from "node:child_process";
@@ -202,7 +202,7 @@ if (process.argv[2] === "sign-in" || process.argv[2] === "signed-in") {
     }
     const signedIn = await login(provider, folder);
     if (options.json) console.log(JSON.stringify(signedIn));
-    else console.log(signedIn.logged_in ? `Signed in${signedIn.email ? ` as ${signedIn.email}` : ""}.` : "Signed out.");
+    else console.log(signedIn.logged_in ? `Signed in${signedIn.email ? ` as ${signedIn.email}` : ""}${signedIn.api_key ? " with an API key" : ""}.` : "Signed out.");
     process.exit(0);
   } catch (error) {
     console.error((error as Error).message);

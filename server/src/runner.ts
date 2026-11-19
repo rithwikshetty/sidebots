@@ -87,13 +87,14 @@ export type RunTurn = (turn: Turn) => Promise<TurnResult>;
  * provider keeps for the agent that works in `cwd`, once the agent is deleted.
  * `limits` asks the provider where the limits of the plan on the login in
  * `configDir` stand, with no turn run, and ends what it started for that once
- * `giveUp` aborts.
+ * `giveUp` aborts. It answers null when that login is an API key, which has
+ * no plan.
  */
 export type Driver = {
   runTurn: RunTurn;
   failure: (words: string) => string;
   forget: (cwd: string, configDir: string) => void | Promise<void>;
-  limits: (configDir: string, giveUp: AbortSignal) => Promise<Limit[]>;
+  limits: (configDir: string, giveUp: AbortSignal) => Promise<Limit[] | null>;
 };
 /** A driver for each provider. */
 export type Drivers = Record<Provider, Driver>;
@@ -325,6 +326,8 @@ export function createQueue(store: Store, drivers: Drivers, now: () => number = 
   const asks = new Map<string, { agentId: string; answer: (allow: boolean) => void; close: (words: string) => void }>();
   // The last time each person's provider was asked where the limits of their plan stand: when, and the ask itself, which ends once what it said is kept.
   const limitsAsked = new Map<string, { at: number; done: Promise<void> }>();
+  // The logins a provider last said are API keys, each as the person and the provider.
+  const keyLogins = new Set<string>();
   /** Closes the asks an agent has waiting, unanswered. */
   const stopWaiting = (agentId: string, words: string) => {
     for (const ask of [...asks.values()]) if (ask.agentId === agentId) ask.close(words);
@@ -653,14 +656,17 @@ export function createQueue(store: Store, drivers: Drivers, now: () => number = 
     },
 
     /**
-     * Asks each provider the person is on a plan with where the plan's limits
-     * stand, and keeps what it says. A provider asked in the last minute
-     * isn't asked again: a call made while that ask is out waits for it. One
-     * that fails or doesn't answer in time leaves what it last said.
+     * Asks each provider the person's agents sign in to with the login in
+     * their config folder where the limits of that login's plan stand, and
+     * keeps what it says. A provider asked in the last minute isn't asked
+     * again: a call made while that ask is out waits for it. One that fails
+     * or doesn't answer in time leaves what it last said. Answers the
+     * providers whose login is an API key, which has no plan.
      */
-    async askLimits(personId: string): Promise<void> {
+    async askLimits(personId: string): Promise<Provider[]> {
+      const accounts = store.accounts(personId);
       await Promise.all(
-        store.accounts(personId).map(async ({ provider, config_dir }) => {
+        accounts.map(async ({ provider, config_dir }) => {
           if (store.apiKey(personId, provider) !== undefined) return;
           const key = `${personId} ${provider}`;
           const last = limitsAsked.get(key);
@@ -668,13 +674,19 @@ export function createQueue(store: Store, drivers: Drivers, now: () => number = 
           const giveUp = AbortSignal.timeout(LIMITS_WAIT_MS);
           const late = new Promise<never>((_, reject) => giveUp.addEventListener("abort", () => reject(giveUp.reason)));
           const done = Promise.race([drivers[provider].limits(config_dir, giveUp), late]).then(
-            (limits) => store.setLimits(personId, provider, limits),
+            (limits) => {
+              if (limits) {
+                keyLogins.delete(key);
+                store.setLimits(personId, provider, limits);
+              } else keyLogins.add(key);
+            },
             () => undefined,
           );
           limitsAsked.set(key, { at: now(), done });
           return done;
         }),
       );
+      return accounts.map(({ provider }) => provider).filter((provider) => keyLogins.has(`${personId} ${provider}`));
     },
 
     /** Starts the clock that runs each job when its time comes. Returns a function that stops it. */

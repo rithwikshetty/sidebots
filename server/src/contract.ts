@@ -199,8 +199,9 @@ export const USAGE_DAYS = 7;
  * last `USAGE_DAYS` days, added up by agent and by day, and how they sign in
  * to each provider. `days` has every one of the days, the oldest first, one
  * with no turns too. An account on an API key is billed for what its turns
- * cost. One on a plan has the plan's limits once the provider has said where
- * they stand.
+ * cost, whether the person gave Sidebots the key or saved it as the login in
+ * their config folder. One on a plan has the plan's limits once the provider
+ * has said where they stand.
  */
 export type Usage = { used: Used[]; days: Day[]; accounts: { provider: Provider; apiKey: boolean; limits: Limit[] }[] };
 

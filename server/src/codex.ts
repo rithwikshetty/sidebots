@@ -425,12 +425,14 @@ const forget = (start: () => Promise<Start>) => async (cwd: string, configDir: s
   }
 };
 
-/** Asks Codex where the plan's limits stand, with no thread started. It lists every limit by its id, the plan's own among them. */
+/** Asks Codex where the plan's limits stand, with no thread started. It lists every limit by its id, the plan's own among them. A login that is an API key has no plan, and Codex refuses to say of one. */
 const limitsNow = (start: () => Promise<Start>): Driver["limits"] => async (configDir, giveUp) => {
   const codex = connect(await start(), configDir);
   giveUp.addEventListener("abort", codex.close);
   try {
     await greet(codex);
+    const { account } = await codex.request<{ account: { type: string } | null }>("account/read", { refreshToken: false });
+    if (account?.type === "apiKey") return null;
     const { rateLimits, rateLimitsByLimitId } = await codex.request<{ rateLimits: Said; rateLimitsByLimitId: Record<string, Said> | null }>("account/rateLimits/read", {});
     return limitsIn(rateLimitsByLimitId?.codex ?? rateLimits, Date.now());
   } finally {
