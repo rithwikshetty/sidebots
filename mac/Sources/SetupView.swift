@@ -106,8 +106,8 @@ struct SetupView: View {
       guard let version = program.version else { return "\(provider.name) isn't on this Mac. Your agents run on the \(provider.name) you install, and Sidebots carries none of its own." }
       return "\(provider.name) \(version) is on this Mac, and Sidebots needs \(program.oldest) or later. Update it, then check again."
     }
-    guard let account else { return "Agents on \(provider.name) run on this computer. Choose how they sign in to \(provider.account)." }
-    let now = account.signIn == "api-key" ? "They use an API key now." : "They use your \(provider.account) plan now."
+    guard account != nil else { return "Agents on \(provider.name) run on this computer. Choose how they sign in to \(provider.account)." }
+    let now = server.billsKey(provider) ? "They use an API key now." : "They use your \(provider.account) plan now."
     return "Your agents on \(provider.name) run on this computer. \(now) Choose how they sign in to \(provider.account)."
   }
 
@@ -160,7 +160,7 @@ struct SetupView: View {
         Choice(
           symbol: "checkmark.seal",
           title: current == "login" ? "Keep using \(provider.name) on this computer" : "Use \(provider.name) on this computer",
-          detail: "\(who)Your agents use the same \(provider.account) plan."
+          detail: who + (login?.apiKey == true ? "It is an API key, so \(provider.maker) bills it for what your agents use." : "Your agents use the same \(provider.account) plan.")
         ) { save(.login) }
       } else {
         Choice(

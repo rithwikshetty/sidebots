@@ -89,5 +89,5 @@ test("a database that counted turns without their tokens keeps the turns, and co
   // Nobody can tell how many of the session's 900,000 tokens the next turn used, so it counts from the one after.
   store.addUsage(agent.id, "reply", { sessionId: "chat", cost: 3, tokens: 900_000 }, true);
   store.addUsage(agent.id, "reply", { sessionId: "chat", cost: 3.5, tokens: 950_000 }, true);
-  assert.deepEqual(store.usage(person.id).used.map((used) => ({ ...used })), [{ agent_id: agent.id, kind: "reply", turns: 3, cost: 3.5, tokens: 50_000 }]);
+  assert.deepEqual(store.usage(person.id, []).used.map((used) => ({ ...used })), [{ agent_id: agent.id, kind: "reply", turns: 3, cost: 3.5, tokens: 50_000 }]);
 });

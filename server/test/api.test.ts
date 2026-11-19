@@ -32,7 +32,7 @@ function setup(answer: (turn: Turn) => Promise<Answer>, now: () => number = Date
   const store = openStore(home);
   store.addPerson({ name: "Alex", provider: "claude", configDir: "/config/alex" });
   store.addPerson({ name: "Robin", provider: "claude", configDir: "/config/robin" });
-  const plan = { limits: async (): Promise<Limit[]> => [] };
+  const plan = { limits: async (): Promise<Limit[] | null> => [] };
   const limits = () => plan.limits();
   const queue = createQueue(store, { claude: { ...claude, runTurn, limits }, codex: { ...codex, runTurn, forget: () => undefined, limits } }, now);
   const app = createApi(store, queue, "Test computer", true);
@@ -909,6 +909,31 @@ test("asking for usage asks the provider where the plan's limits stand, once a m
   t.mock.timers.tick(60_000);
   assert.deepEqual(await limits(), []);
   assert.equal(asked, 3);
+});
+
+test("a login that is an API key is billed as one, with no plan, until the provider says of a plan again", async (t) => {
+  const start = new Date(2026, 10, 16, 9, 0).getTime();
+  t.mock.timers.enable({ apis: ["Date"], now: start });
+  const { call, plan } = setup(async () => reply("ok"), () => Date.now());
+  const accounts = async () => (await call(ME, "GET", "/usage")).json.accounts;
+  const weekly = { name: "Weekly limit", used: 0.1, resets_at: start + 48 * 60 * 60_000, at: start };
+  plan.limits = async () => [weekly];
+  assert.deepEqual(await accounts(), [{ provider: "claude", apiKey: false, limits: [weekly] }]);
+
+  // The person saves a key as the login. The limits of the plan they left are no longer theirs to see.
+  plan.limits = async () => null;
+  t.mock.timers.tick(60_000);
+  assert.deepEqual(await accounts(), [{ provider: "claude", apiKey: true, limits: [] }]);
+  // A provider that fails to answer leaves what it last said.
+  plan.limits = async () => {
+    throw new Error("Codex stopped without a reply");
+  };
+  t.mock.timers.tick(60_000);
+  assert.deepEqual(await accounts(), [{ provider: "claude", apiKey: true, limits: [] }]);
+
+  plan.limits = async () => [{ ...weekly, at: Date.now() }];
+  t.mock.timers.tick(60_000);
+  assert.deepEqual(await accounts(), [{ provider: "claude", apiKey: false, limits: [{ ...weekly, at: start + 180_000 }] }]);
 });
 
 test("an agent runs on a provider its owner has set up: the one they pick, or the first they set up", async () => {

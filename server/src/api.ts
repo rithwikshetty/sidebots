@@ -244,8 +244,7 @@ export function createApi(store: Store, queue: Queue, machine: string, pushes: b
 
   /** Where the person's plan or API credit goes, with the plan's limits as its provider says they stand now. */
   app.get("/usage", async (c) => {
-    await queue.askLimits(c.var.person.id);
-    return c.json(store.usage(c.var.person.id));
+    return c.json(store.usage(c.var.person.id, await queue.askLimits(c.var.person.id)));
   });
 
   /** The phone says where Apple delivers its notifications, once it allows them. */

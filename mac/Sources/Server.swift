@@ -84,8 +84,8 @@ enum SignIn {
   private(set) var phones: [Phone] = []
   /// Each provider's program on this computer. A provider has none until the server has looked.
   private(set) var programs: [Provider: Program] = [:]
-  /// Whether the login the person's agents run on is signed in, for each provider. A provider has none until it is known, and for agents on an API key.
-  private(set) var signedIn: [Provider: Bool] = [:]
+  /// The login the person's agents run on, for each provider. A provider has none until it is known, and for agents on an API key the person gave Sidebots.
+  private(set) var logins: [Provider: Login] = [:]
 
   @ObservationIgnored private var process: Process?
   /// Set once the app is quitting: called when the server has stopped.
@@ -106,6 +106,9 @@ enum SignIn {
 
   /// How the person's agents sign in to a provider, once they have set it up.
   func account(_ provider: Provider) -> ServerStatus.Account? { person?.accounts.first { $0.provider == provider.rawValue } }
+
+  /// Whether the provider's maker bills an API key for what the person's agents use: one the person gave Sidebots, or one saved as the login the agents run on.
+  func billsKey(_ provider: Provider) -> Bool { account(provider)?.signIn == "api-key" || logins[provider]?.apiKey == true }
 
   /// What the server and its commands run with: the app's own
   /// environment, so that `SIDEBOTS_HOME`, `PORT` and `SIDEBOTS_RELAY` pass
@@ -179,16 +182,16 @@ enum SignIn {
     programs = Dictionary(uniqueKeysWithValues: found.compactMap { program in Provider(rawValue: program.provider).map { ($0, program) } })
   }
 
-  /// Looks for the providers' programs, and at whether the login the person's agents run on is signed in, for each provider they use one with.
+  /// Looks for the providers' programs, and at the login the person's agents run on, for each provider they use one with.
   func checkSignIn() async {
     await findPrograms()
-    var signedIn: [Provider: Bool] = [:]
+    var logins: [Provider: Login] = [:]
     for provider in Provider.allCases {
       if let account = account(provider), account.signIn == "login", programs[provider]?.ready == true {
-        signedIn[provider] = await login(provider, configDir: account.configDir)?.loggedIn
+        logins[provider] = await login(provider, configDir: account.configDir)
       }
     }
-    self.signedIn = signedIn
+    self.logins = logins
   }
 
   /// Runs the installer a provider's maker publishes, then looks for its program again.
@@ -274,8 +277,9 @@ enum SignIn {
   }
 }
 
-/// The login in a provider's config folder, as the server's `signed-in --json` command reports it: whether it is signed in, and as whom when the provider says.
+/// The login in a provider's config folder, as the server's `signed-in --json` command reports it: whether it is signed in, as whom when the provider says, and whether it is an API key saved there, which has no plan.
 struct Login: Decodable {
   let loggedIn: Bool
   let email: String?
+  let apiKey: Bool
 }

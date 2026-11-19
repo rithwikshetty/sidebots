@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { chmodSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
-import { inFolder, installed, later, locate, program, shellPath } from "../src/programs.ts";
+import { inFolder, installed, later, locate, login, program, shellPath } from "../src/programs.ts";
 
 /** A folder with a program in it that prints `says` when it is run. */
 function folderWith(command: string, says: string, mode = 0o755): string {
@@ -65,4 +65,17 @@ test("a program is pointed at a config folder, except the one it uses by itself"
   assert.deepEqual(inFolder("claude", join(homedir(), ".claude"), env), { PATH: "/usr/bin", CODEX_HOME: "/inherited" });
   assert.deepEqual(inFolder("claude", "/people/robin/claude", env), { PATH: "/usr/bin", CODEX_HOME: "/inherited", CLAUDE_CONFIG_DIR: "/people/robin/claude" });
   assert.deepEqual(inFolder("codex", join(homedir(), ".codex"), env), { PATH: "/usr/bin", CLAUDE_CONFIG_DIR: "/inherited" });
+});
+
+test("a Codex login is signed in when its status ends well, and is an API key when Codex says so", async () => {
+  /** A folder with a Codex in it whose `login status` prints `says` as errors, as Codex does, and ends with `status`. */
+  const codexThatSays = (says: string, status = 0) => {
+    const folder = mkdtempSync(join(tmpdir(), "sidebots-programs-"));
+    writeFileSync(join(folder, "codex"), `#!/bin/sh\n[ "$1" = "--version" ] && echo "codex-cli 0.170.0" && exit 0\necho "${says}" >&2\nexit ${status}\n`, { mode: 0o755 });
+    return folder;
+  };
+  const said = (says: string, status?: number) => login("codex", "/people/alex/codex", codexThatSays(says, status));
+  assert.deepEqual(await said("Logged in using ChatGPT"), { logged_in: true, email: null, api_key: false });
+  assert.deepEqual(await said("API key configured - sk-proj-***abcde"), { logged_in: true, email: null, api_key: true });
+  assert.deepEqual(await said("Not logged in", 1), { logged_in: false, email: null, api_key: false });
 });

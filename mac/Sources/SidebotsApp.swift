@@ -167,8 +167,8 @@ struct MenuContent: View {
                 Button(program.path == nil ? "Install" : "Check") { app.showSetup(provider) }.controlSize(.small)
               }
             } else {
-              let signedOut = account.signIn == "login" && server.signedIn[provider] == false
-              PanelRow(symbol: account.signIn == "api-key" ? "key.fill" : "person.crop.circle.fill", title: signIn(provider, account, signedOut), detail: signInDetail(provider, account, signedOut), warning: signedOut) {
+              let signedOut = account.signIn == "login" && server.logins[provider]?.loggedIn == false
+              PanelRow(symbol: server.billsKey(provider) ? "key.fill" : "person.crop.circle.fill", title: signIn(provider, signedOut), detail: signInDetail(provider, signedOut), warning: signedOut) {
                 Button(signedOut ? "Sign in" : "Change") { app.showSetup(provider) }.controlSize(.small)
               }
             }
@@ -254,13 +254,13 @@ struct MenuContent: View {
     }
   }
 
-  private func signIn(_ provider: Provider, _ account: ServerStatus.Account, _ signedOut: Bool) -> String {
-    if account.signIn == "api-key" { return "API key" }
+  private func signIn(_ provider: Provider, _ signedOut: Bool) -> String {
+    if server.billsKey(provider) { return "API key" }
     return signedOut ? "Signed out of \(provider.account)" : "Your \(provider.account) plan"
   }
 
-  private func signInDetail(_ provider: Provider, _ account: ServerStatus.Account, _ signedOut: Bool) -> String {
-    if account.signIn == "api-key" { return "Agents bill your \(provider.maker) API key" }
+  private func signInDetail(_ provider: Provider, _ signedOut: Bool) -> String {
+    if server.billsKey(provider) { return "Agents bill your \(provider.maker) API key" }
     return signedOut ? "Agents can't answer until you sign in" : "Agents use your \(provider.account) subscription"
   }
 }
