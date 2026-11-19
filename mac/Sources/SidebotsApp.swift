@@ -36,7 +36,8 @@ import SwiftUI
     _ = updater
     Task {
       await server.refresh()
-      if server.person == nil { showSetup() }
+      // A server that can't say who is set up is no sign that nobody is.
+      if !server.failed, server.person == nil { showSetup() }
       // Every two seconds until the server answers, then every fifteen. Each provider's program and sign-in are looked at once a minute.
       var lookedAtSignIn = ContinuousClock.now - .seconds(60)
       while true {
@@ -119,7 +120,8 @@ import SwiftUI
  * panels are: whether phones can reach this computer at the top, then the paired
  * phones with a way to pair another, then how the agents sign in to each provider
  * the person has set up, or that its program is missing from this Mac, with a way to set up one they haven't, and Open at login,
- * Check for updates and Quit at the foot. Rows light up under the pointer.
+ * Check for updates and Quit at the foot. When the server can't start, the panel says so in place of the phones and
+ * providers, with a way to its log. Rows light up under the pointer.
  * A phone's row asks before it unpairs the phone, since the phone needs a new code to pair again.
  */
 struct MenuContent: View {
@@ -174,6 +176,11 @@ struct MenuContent: View {
             PanelRow(symbol: "plus", title: "Set up \(provider.name)…") { app.showSetup(provider) }
           }
         }
+      } else if server.failed {
+        Divider().padding(.vertical, 6)
+        PanelRow(symbol: "exclamationmark.triangle.fill", title: "Its server stopped with an error", detail: "Your agents and phones are as you left them", warning: true) {
+          Button("Show log", action: server.showLog).controlSize(.small)
+        }
       } else {
         Divider().padding(.vertical, 6)
         PanelRow(symbol: "sparkles", title: "Finish setting up…") { app.showSetup() }
@@ -218,6 +225,7 @@ struct MenuContent: View {
 
   /// Whether Sidebots is running and phones can reach it, and the color of its light.
   private var state: (words: String, color: Color) {
+    if server.failed { return ("Sidebots can't start", .red) }
     guard let status = server.status, status.running else { return ("Starting…", .gray) }
     if server.person == nil { return ("Not set up yet", .orange) }
     switch status.reachable {
