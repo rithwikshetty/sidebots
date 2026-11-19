@@ -20,6 +20,8 @@ import { useAgents } from "./state";
 // The chat open on the stack, which openChat closes sheets down to or puts another in place of, and what listens for it.
 let chatOnScreen: string | null = null;
 const listeners = new Set<() => void>();
+// What hears that a chat is being opened, as the side menu, which shuts.
+const opening = new Set<() => void>();
 const SILENT = { shouldShowBanner: false, shouldShowList: false, shouldPlaySound: false, shouldSetBadge: false };
 
 /** The agent a notification is about, which the server sends as its data. */
@@ -66,14 +68,22 @@ export async function askForPush(): Promise<void> {
 }
 
 /**
- * Opens an agent's chat. A sheet over home or over the chat already open
- * closes, and a different agent's chat takes that one's place, so Back still
- * goes home and a split window keeps one chat beside the agents.
+ * Opens an agent's chat. The side menu shuts, a sheet over home or over the
+ * chat already open closes, and a different agent's chat takes that one's
+ * place, so Back still goes home and a split window keeps one chat beside
+ * the agents.
  */
 export function openChat(agentId: string): void {
+  opening.forEach((listener) => listener());
   router.dismissTo(chatOnScreen ? `/chat/${chatOnScreen}` : "/");
   if (!chatOnScreen) router.push(`/chat/${agentId}`);
   else if (agentId !== chatOnScreen) router.replace(`/chat/${agentId}`);
+}
+
+/** Tells `listener` each time a chat is opened, the one already open included, until the returned call. */
+export function onOpenChat(listener: () => void): () => void {
+  opening.add(listener);
+  return () => opening.delete(listener);
 }
 
 function setChatOnScreen(agentId: string | null): void {

@@ -12,6 +12,7 @@ import { BAR_HEIGHT } from "@/components/ChatHeader";
 import { SideMenu, SideMenuContext } from "@/components/SideMenu";
 import { usePaired } from "@/lib/api";
 import { haptics } from "@/lib/haptics";
+import { onOpenChat } from "@/lib/push";
 import { SIDEBAR_WIDTH, useWindowLayout, WindowLayout } from "@/lib/layout";
 import { startSync } from "@/lib/state";
 import { useTheme } from "@/lib/theme";
@@ -66,9 +67,7 @@ export default function Layout() {
   useEffect(() => {
     if (!paired) setMenuOpen(false);
   }, [paired]);
-  useEffect(() => {
-    if (pathname.startsWith("/chat/")) setMenuOpen(false);
-  }, [pathname]);
+  useEffect(() => onOpenChat(() => setMenuOpen(false)), []);
 
   const base = theme.dark ? DarkTheme : DefaultTheme;
   const navigation = {
