@@ -223,7 +223,7 @@ One manual check per slice, on a real phone: pair by scanning, reach the compute
 ## Rollout
 
 - The relay and the zone rule go live before any server depends on them.
-- The phone app reaches TestFlight once pairing, the relay and the tunnel work, and the App Store once the Mac app can be downloaded. App Review gets a pairing link to a machine kept running for it, made with a longer life than ten minutes by `pair --days <n>`.
+- The phone app reaches TestFlight once pairing, the relay and the tunnel work, and the App Store once the Mac app can be downloaded. App Review pairs with the demo computer inside the app, by the link in the review notes.
 - The README is rewritten in two parts as the slices land: using Sidebots, and building it yourself.
 
 ## Out of scope
@@ -247,4 +247,4 @@ Each slice ends with something that works on its own.
 5. **Contract version.** The header, and the two "update" screens.
 6. **Mac app.** The menu bar app, the bundle, first run with the Claude sign-in or an API key, the QR window, open at login, and the signed, notarised download.
 7. **Updates and the site.** Sparkle, the update feed and the page at `sidebots.app`.
-8. **TestFlight, then the App Store.** The App Store record, the review machine, the privacy policy and the listing.
+8. **TestFlight, then the App Store.** The App Store record, the demo computer for App Review, the privacy policy and the listing.
