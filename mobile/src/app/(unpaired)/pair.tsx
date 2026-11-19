@@ -9,6 +9,7 @@ import { FadingText } from "@/components/FadingText";
 import { IconButton } from "@/components/IconButton";
 import { keepPairing, readPairingLink, requestPairing } from "@/lib/api";
 import { haptics } from "@/lib/haptics";
+import { useWindowControls } from "@/lib/layout";
 import { useTheme } from "@/lib/theme";
 
 const NOT_A_CODE = "That isn't a Sidebots pairing code.";
@@ -16,6 +17,8 @@ const NOT_A_CODE = "That isn't a Sidebots pairing code.";
 const PAIRED_MS = 1200;
 // How long before a code the camera still sees is tried again.
 const RETRY_MS = 3000;
+// How far Back and the link button sit in from the screen's sides.
+const BAR_INSET = 16;
 
 /**
  * The scanner, opened from the welcome screen and laid out as the chat's
@@ -30,6 +33,7 @@ const RETRY_MS = 3000;
 export default function Pair() {
   const theme = useTheme();
   const insets = useSafeAreaInsets();
+  const controls = useWindowControls();
   const opened = useLocalSearchParams<{ host?: string; code?: string }>();
   const [permission, askForCamera] = useCameraPermissions();
   const [busy, setBusy] = useState(false);
@@ -95,7 +99,7 @@ export default function Pair() {
 
   return (
     <View style={[styles.screen, { backgroundColor: theme.viewer, paddingBottom: insets.bottom + 12 }]}>
-      <View style={[styles.bar, { paddingTop: insets.top + 8 }]}>
+      <View style={[styles.bar, { paddingTop: insets.top + 8, paddingLeft: BAR_INSET + controls }]}>
         <IconButton icon={ChevronLeft} label="Back" variant="overlay" size={40} iconSize={22} disabled={busy || machine !== null} onPress={() => router.back()} />
         <IconButton icon={Link} label="Enter a link instead" variant="overlay" size={40} iconSize={19} disabled={busy || machine !== null} onPress={enterLink} />
       </View>
@@ -125,7 +129,7 @@ export default function Pair() {
 
 const styles = StyleSheet.create({
   screen: { flex: 1 },
-  bar: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingHorizontal: 16, paddingBottom: 12 },
+  bar: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingRight: BAR_INSET, paddingBottom: 12 },
   stage: { flex: 1, paddingHorizontal: 12 },
   refused: { flex: 1, alignItems: "center", justifyContent: "center" },
   settings: { minHeight: 48, paddingHorizontal: 20, borderRadius: 999, justifyContent: "center" },

@@ -69,7 +69,7 @@ function show(agents: AgentWithLatest[]): void {
 }
 
 /**
- * The app's side of Live Activities, kept by the home screen: working agents
+ * The app's side of Live Activities, kept by the agents' list: working agents
  * show as activities, and the computer gets each activity's token. An
  * activity whose token the computer doesn't take could never be ended from
  * there, so the app ends it. That covers a computer too old to know of

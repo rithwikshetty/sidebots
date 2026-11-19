@@ -8,7 +8,8 @@ const PREVIEW_RATIO = 3 / 4;
 const QR_ONLY = { barcodeTypes: ["qr" as const] };
 
 /**
- * The live camera, in the largest 3:4 frame that fits the room it is given.
+ * The live camera, in the largest 3:4 frame that fits the room it is given,
+ * on its side when the room is, as on an iPad held in landscape.
  * The camera starts at once and fades in over `backdrop` once it is ready.
  * With `onScanned` it reads QR codes, and hands over what each one holds, many
  * times a second while a code is in view. `children` are drawn over the frame.
@@ -27,10 +28,11 @@ export function CameraPreview({ ref, facing = "back", flash = false, backdrop, o
   const shown = useSharedValue(0);
   const previewStyle = useAnimatedStyle(() => ({ opacity: shown.value }));
 
-  // The largest 3:4 frame that fits the room.
+  // The largest 3:4 frame that fits the room, on its side in a wide one.
   const fit = ({ nativeEvent: { layout } }: LayoutChangeEvent) => {
-    const width = Math.min(layout.width, layout.height * PREVIEW_RATIO);
-    setFrame({ width, height: width / PREVIEW_RATIO });
+    const ratio = layout.width > layout.height ? 1 / PREVIEW_RATIO : PREVIEW_RATIO;
+    const width = Math.min(layout.width, layout.height * ratio);
+    setFrame({ width, height: width / ratio });
   };
 
   return (

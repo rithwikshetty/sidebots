@@ -5,6 +5,7 @@ import { PROVIDERS, type Provider } from "@server/contract";
 import { AvatarPicker } from "@/components/AvatarPicker";
 import { Choices } from "@/components/Choices";
 import { FadingText } from "@/components/FadingText";
+import { openChat } from "@/lib/push";
 import { createAgent, loadUsage, useAvatars, useUsage } from "@/lib/state";
 import { useTheme } from "@/lib/theme";
 
@@ -49,7 +50,7 @@ export default function NewAgent() {
     try {
       const agent = await createAgent(trimmed, avatarId, provider);
       router.dismiss();
-      router.push(`/chat/${agent.id}`);
+      openChat(agent.id);
     } catch (failure) {
       setError(failure instanceof Error ? failure.message : "Something went wrong.");
       setBusy(false);

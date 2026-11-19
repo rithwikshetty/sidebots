@@ -1,0 +1,7 @@
+{
+  "name": "window-controls",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Says how much room iPadOS's window controls take at the top of the window.",
+  "main": "src/index.ts"
+}
