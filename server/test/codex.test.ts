@@ -71,6 +71,7 @@ function setup({ signedIn = true } = {}) {
     replied: (reply, ids) => replies.push([reply, ids]),
     cwd: "/agents/scout",
     sessionId: null,
+    spent: 0,
     configDir,
     model: "sol",
     effort: "medium",
@@ -138,8 +139,10 @@ test("a turn starts a thread with the agent's tools, on the newest model of its 
 
 test("a later turn resumes the thread, and a job's run has a thread that isn't kept", async () => {
   const { driver, turn, requests } = setup();
-  const result = await driver.runTurn(turn("hello", { sessionId: "thread-9" }));
+  // The thread had used three million tokens and cost $10. This turn's million are read on Luna, whatever the ones before were read on.
+  const result = await driver.runTurn(turn("hello", { sessionId: "thread-9", spent: 10, model: "luna" }));
   assert.equal(result.sessionId, "thread-9");
+  assert.equal(result.cost.toFixed(2), "10.10");
   const methods = () => requests().map((each) => each.method);
   assert.ok(methods().includes("thread/resume") && !methods().includes("thread/start"));
   assert.equal(requests().find((each) => each.method === "thread/resume")!.params.threadId, "thread-9");

@@ -39,7 +39,7 @@ export const PROGRAMS: Record<Provider, { command: string; oldest: string; insta
 };
 
 /** A provider's program as it is on this computer: where, which version, and whether its driver works with that version. */
-export type Installed = { path: string; version: string; supported: boolean };
+type Installed = { path: string; version: string; supported: boolean };
 
 const run = promisify(execFile);
 const MARK = "__sidebots__";
@@ -82,7 +82,7 @@ let read: { path: Promise<string>; at: number } | undefined;
  * usually installed in. `again` reads the shell's PATH anew once the last
  * reading is old, for a program installed since.
  */
-export function searchPath(again = false): Promise<string> {
+function searchPath(again = false): Promise<string> {
   if (!read || (again && Date.now() - read.at > PATH_FRESH_MS)) {
     read = { at: Date.now(), path: shellPath().then((shell) => [...new Set([...shell.split(delimiter), ...(process.env.PATH ?? "").split(delimiter), ...USUAL])].filter(Boolean).join(delimiter)) };
   }
@@ -197,7 +197,8 @@ export async function login(provider: Provider, folder: string): Promise<{ logge
 export async function install(provider: Provider): Promise<number> {
   const env = await environment();
   return new Promise((resolve) => {
-    const child = spawn("/bin/sh", ["-c", PROGRAMS[provider].installer], { env, stdio: "inherit" });
+    // Each installer is a download piped to a shell, which ends well on nothing when the download fails, so the pipe fails with it.
+    const child = spawn("/bin/bash", ["-o", "pipefail", "-c", PROGRAMS[provider].installer], { env, stdio: "inherit" });
     child.on("error", () => resolve(1));
     child.on("close", (status) => resolve(status ?? 1));
   });

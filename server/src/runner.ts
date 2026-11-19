@@ -33,6 +33,8 @@ export type Turn = {
   replied: (text: string, ids: string[]) => void;
   cwd: string;
   sessionId: string | null;
+  /** What the session has cost up to this turn, in US dollars. A provider that counts a turn's tokens and not its money adds this turn's to it. */
+  spent: number;
   /** The person's config folder for the provider. */
   configDir: string;
   /** The person's API key for the provider. Without one, the turn runs on the login in `configDir`. */
@@ -379,6 +381,7 @@ export function createQueue(store: Store, drivers: Drivers, now: () => number = 
           limits: (limits) => store.setLimits(person.id, agent.provider, limits),
           cwd: store.agentHome(agent.id),
           sessionId,
+          spent: (sessionId !== null && store.sessionCost(agent.id, sessionId)) || 0,
           configDir: account.config_dir,
           apiKey,
           model: agent.model,
@@ -630,9 +633,9 @@ export function createQueue(store: Store, drivers: Drivers, now: () => number = 
       removed.add(agent.id);
       stops.get(agent.id)?.abort();
       await busy.get(agent.id)?.catch(() => undefined);
-      removed.delete(agent.id);
       const account = store.account(agent.person_id, agent.provider);
       if (account) await drivers[agent.provider].forget(store.agentHome(agent.id), account.config_dir);
+      removed.delete(agent.id);
     },
 
     /** Starts the clock that runs each job when its time comes. Returns a function that stops it. */

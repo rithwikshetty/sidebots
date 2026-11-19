@@ -43,7 +43,7 @@ export default function NewAgent() {
   const avatarId = picked ?? avatars[hash(trimmed) % Math.max(avatars.length, 1)]?.id;
 
   async function onCreate() {
-    if (!trimmed || !avatarId) return;
+    if (!trimmed || !avatarId || !provider) return;
     setBusy(true);
     setError(null);
     try {
@@ -83,8 +83,8 @@ export default function NewAgent() {
       <FadingText style={[styles.hint, { color: error ? theme.danger : theme.ink2 }]}>{error ?? "Tell it what it's for in the chat."}</FadingText>
       <Pressable
         onPress={onCreate}
-        disabled={busy || !trimmed || !avatarId}
-        style={({ pressed }) => [styles.button, { backgroundColor: theme.tint, opacity: pressed || busy || !trimmed ? 0.5 : 1 }]}>
+        disabled={busy || !trimmed || !avatarId || !provider}
+        style={({ pressed }) => [styles.button, { backgroundColor: theme.tint, opacity: pressed || busy || !trimmed || !provider ? 0.5 : 1 }]}>
         {busy ? <ActivityIndicator color={theme.onTint} /> : <Text style={[styles.buttonText, { color: theme.onTint }]}>Create agent</Text>}
       </Pressable>
     </ScrollView>

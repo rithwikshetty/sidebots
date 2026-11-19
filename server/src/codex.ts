@@ -39,7 +39,9 @@ const PRICES: Record<keyof typeof PROVIDERS.codex.models, { input: number; cache
 };
 
 /** The tokens a session has used, as Codex counts them. It counts the ones read from the cache and written to it among the ones read. */
-export type Tokens = { totalTokens: number; inputTokens: number; cachedInputTokens: number; cacheWriteInputTokens: number; outputTokens: number };
+type Tokens = { totalTokens: number; inputTokens: number; cachedInputTokens: number; cacheWriteInputTokens: number; outputTokens: number };
+/** Where Codex's count of a thread stands after one of its turns: all the thread has used, and what its last step held. */
+type Count = { turnId: string; tokenUsage: { total: Tokens; last: Tokens } };
 
 /** What tokens cost on a kind of model, in US dollars at OpenAI's API prices. Codex counts tokens and says nothing of money. */
 export function costOf(tokens: Tokens, model: string): number {
@@ -233,14 +235,20 @@ const said = (words: string, success = true) => ({ contentItems: [{ type: "input
  * stopped. The thread stays whole, so the next turn resumes it.
  */
 const runTurn = (start: () => Promise<Start>): RunTurn => async (turn) => {
-  const { prompt, followUps, seen, replied, ask, limits, cwd, sessionId, configDir, apiKey, model, effort, keepSession, stop } = turn;
+  const { prompt, followUps, seen, replied, ask, limits, cwd, sessionId, spent, configDir, apiKey, model, effort, keepSession, stop } = turn;
   const codex = connect(await start(), configDir, apiKey !== undefined);
   // The thread the turn runs in, and whether Codex has anything of it to come back to: a new one is kept from its first turn.
   let threadId: string | null = null;
   let kept = sessionId !== null;
-  let used: { total: Tokens; last: Tokens } | undefined;
-  // Codex counts a thread's tokens from its start, the turns before this one included, and says where the count stands as it resumes one.
-  const result = (sessionId: string) => ({ sessionId, contextTokens: used?.last.totalTokens ?? 0, cost: used ? costOf(used.total, model) : 0 });
+  // Codex counts a thread's tokens from its start, the turns before this run included, and says after which turn each count stands. The first it
+  // says and the latest: as it resumes a thread, the first is where the count stood after a turn before this run.
+  let counted: { first: Count; latest: Count } | undefined;
+  // The turns this run started. The tokens they used are the run's own, and cost what its model does.
+  const mine = new Set<string>();
+  const result = (sessionId: string) => {
+    const before = counted && !mine.has(counted.first.turnId) ? costOf(counted.first.tokenUsage.total, model) : 0;
+    return { sessionId, contextTokens: counted?.latest.tokenUsage.last.totalTokens ?? 0, cost: spent + (counted ? costOf(counted.latest.tokenUsage.total, model) - before : 0) };
+  };
   // The turn of Codex's that is running.
   let running: string | null = null;
   const interrupt = () => void (running && codex.request("turn/interrupt", { threadId, turnId: running }).catch(() => undefined));
@@ -274,6 +282,8 @@ const runTurn = (start: () => Promise<Start>): RunTurn => async (turn) => {
     // A thread keeps the tools it starts with, so it starts with them all, and `send_update` answers for itself in a turn nobody waits on.
     const tools = toolsFor({ ...turn, sendUpdate: turn.sendUpdate ?? (() => "Nobody is waiting on this turn, so there is nobody to update. Carry on.") });
     const dynamicTools = tools.map((each) => ({ type: "function", name: each.name, description: each.description, inputSchema: z.toJSONSchema(z.object(each.input)) }));
+    // Codex says where a thread's count stands straight after it resumes it.
+    codex.on<Count>("thread/tokenUsage/updated", (count) => void (counted = { first: counted?.first ?? count, latest: count }));
     const { thread } = await (sessionId
       ? codex.request<{ thread: { id: string } }>("thread/resume", { threadId: sessionId, ...settings })
       : codex.request<{ thread: { id: string } }>("thread/start", { ...settings, dynamicTools, ephemeral: !keepSession }));
@@ -294,7 +304,6 @@ const runTurn = (start: () => Promise<Start>): RunTurn => async (turn) => {
     codex.serve<Asked>("item/commandExecution/requestApproval", decide);
     codex.serve<{ itemId: string; reason?: string | null }>("item/fileChange/requestApproval", ({ itemId, reason }, withdrawn) => decide({ changes: changes.get(itemId) ?? [], reason }, withdrawn));
 
-    codex.on<{ tokenUsage: NonNullable<typeof used> }>("thread/tokenUsage/updated", ({ tokenUsage }) => void (used = tokenUsage));
     codex.on<{ rateLimits: Parameters<typeof limitsIn>[0] }>("account/rateLimits/updated", ({ rateLimits }) => limits(limitsIn(rateLimits, Date.now())));
 
     // The messages that wait for Codex's next turn, and those in the turn that is running: the ones Codex took into it, and the ones the agent has read.
@@ -340,6 +349,7 @@ const runTurn = (start: () => Promise<Start>): RunTurn => async (turn) => {
       const ended = new Promise<Ended>((resolve) => (finish = resolve));
       const started = await codex.request<{ turn: { id: string } }>("turn/start", { threadId, clientUserMessageId: first.id, input: text(first.text), effort });
       running = started.turn.id;
+      mine.add(running);
       kept = true;
       if (stop.signal.aborted) interrupt();
       rest.forEach(steer);

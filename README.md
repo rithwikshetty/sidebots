@@ -124,7 +124,7 @@ The code carries the machine's address. To have the phone reach the server at an
 
 It prints a QR code, and the same code as a link. The person scans the code in the app, or taps the link button above the camera and pastes the link. The app and the server must speak the same version of their contract, `CONTRACT_VERSION` in `server/src/contract.ts`. When they don't, the app says which one to update. A code pairs one phone, once, within ten minutes. The phone gets a key of its own, which it keeps in the Keychain and sends with every request, and the server keeps only a hash of it. It also gets the key its notifications are encrypted with, so neither the relay nor Apple can read them.
 
-`pnpm devices` lists the paired phones with their ids, and `pnpm remove-device <id>` unpairs one at once. `pnpm status` says whether the server is running, whether phones reach it, and how each person's agents sign in. `pnpm providers` says which providers' programs the server finds, and their versions. With `--json`, `status`, `devices` and `pair` print JSON, which is what the Mac app reads.
+`pnpm devices` lists the paired phones with their ids, and `pnpm remove-device <id>` unpairs one at once. `pnpm status` says whether the server is running, whether phones reach it, and how each person's agents sign in. `pnpm providers` says which providers' programs the server finds, and their versions. With `--json`, `status`, `devices`, `pair`, `providers` and `signed-in` print JSON, which is what the Mac app reads.
 
 ## Who pays for the model
 

@@ -491,6 +491,12 @@ export function openStore(home: string) {
       return rows.map((row) => row.agent_id);
     },
 
+    /** What a session had cost in all as of the last turn recorded in it, or nothing when none is. */
+    sessionCost(agentId: string, sessionId: string): number | undefined {
+      const last = db.prepare("select session_cost from usage where agent_id = ? and session_id = ? order by rowid desc limit 1").get(agentId, sessionId) as { session_cost: number } | undefined;
+      return last?.session_cost;
+    },
+
     /**
      * Records a turn the agent ran, with what it cost. A provider says what a
      * session has cost in all, so a turn costs what its session has cost since
@@ -500,10 +506,7 @@ export function openStore(home: string) {
      * this turn's, and the turn is recorded as costing nothing.
      */
     addUsage(agentId: string, kind: TurnKind, session: { sessionId: string; cost: number }, resumed: boolean): void {
-      const last = db.prepare("select session_cost from usage where agent_id = ? and session_id = ? order by rowid desc limit 1").get(agentId, session.sessionId) as
-        | { session_cost: number }
-        | undefined;
-      const before = last ? last.session_cost : resumed ? session.cost : 0;
+      const before = this.sessionCost(agentId, session.sessionId) ?? (resumed ? session.cost : 0);
       db.prepare("insert into usage (agent_id, kind, cost, session_id, session_cost, at) values (?, ?, ?, ?, ?, ?)").run(
         agentId,
         kind,

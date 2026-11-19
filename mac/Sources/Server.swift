@@ -12,8 +12,6 @@ struct ServerStatus: Decodable {
   struct Account: Decodable {
     /// The provider's id, such as `claude`.
     let provider: String
-    /// The provider's name, such as Claude Code.
-    let name: String
     let configDir: String
     /// `login` for the login in the person's config folder, or `api-key`.
     let signIn: String
@@ -240,7 +238,7 @@ enum SignIn {
   }
 
   /// Runs a program to its end and returns its exit status, what it printed, and what it printed as errors.
-  nonisolated static func run(_ program: URL, _ arguments: [String], in folder: URL? = nil, environment: [String: String] = environment) async
+  nonisolated static func run(_ program: URL, _ arguments: [String], in folder: URL? = nil) async
     -> (Int32, Data, String)
   {
     await Task.detached {
@@ -248,7 +246,7 @@ enum SignIn {
       process.executableURL = program
       process.arguments = arguments
       process.currentDirectoryURL = folder
-      process.environment = environment
+      process.environment = Self.environment
       let output = Pipe()
       let errors = Pipe()
       process.standardOutput = output

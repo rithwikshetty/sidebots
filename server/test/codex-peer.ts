@@ -18,6 +18,8 @@ if (process.argv[2] === "app-server") {
   // The turn that is running: its id, the messages the agent has read in it, and whether it waits for another before it ends.
   let turn: { id: string; read: string[]; holding: boolean } | null = null;
   let turns = 0;
+  // The tokens a thread it resumes had used before, which it says as it resumes it.
+  let before = 0;
   let asked = 0;
   const answers = new Map<number, (result: never) => void>();
   /** Asks the driver something, as Codex asks its client. */
@@ -31,7 +33,7 @@ if (process.argv[2] === "app-server") {
       note("item/completed", { item: { type: "agentMessage", id: "said", text: "Working on it.", phase: "commentary" } });
       note("item/completed", { item: { type: "agentMessage", id: "answer", text: answer, phase: "final_answer" } });
     }
-    note("thread/tokenUsage/updated", { tokenUsage: { total: usage(1_000_000 * turns), last: usage(5000), modelContextWindow: 258400 } });
+    note("thread/tokenUsage/updated", { turnId: turn!.id, tokenUsage: { total: usage(before + 1_000_000 * turns), last: usage(5000), modelContextWindow: 258400 } });
     note("account/rateLimits/updated", { rateLimits: { limitId: "codex", primary: { usedPercent: 25, windowDurationMins: 300, resetsAt: 1795111200 }, secondary: null } });
     note("turn/completed", { turn: { id: turn!.id, status, error: error ? { message: error } : null } });
     turn = null;
@@ -44,7 +46,11 @@ if (process.argv[2] === "app-server") {
     "account/login/start": () => ((signedIn = true), { type: "apiKey" }),
     "model/list": () => ({ data: ["gpt-6-sol", "gpt-6.2-sol", "gpt-6.1-sol", "gpt-6-luna"].map((model) => ({ model })), nextCursor: null }),
     "thread/start": () => ({ thread: { id: "thread-1" } }),
-    "thread/resume": ({ threadId }) => ({ thread: { id: threadId } }),
+    "thread/resume": ({ threadId }) => {
+      before = 3_000_000;
+      setImmediate(() => note("thread/tokenUsage/updated", { turnId: "turn-before", tokenUsage: { total: usage(before), last: usage(5000), modelContextWindow: 258400 } }));
+      return { thread: { id: threadId } };
+    },
     "thread/list": () => ({ data: existsSync(join(home, "deleted")) ? [] : [{ id: "thread-1" }, { id: "thread-2" }] }),
     "thread/delete": () => (appendFileSync(join(home, "deleted"), "x"), {}),
     "turn/start": ({ clientUserMessageId, input }) => {
