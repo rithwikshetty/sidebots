@@ -2,7 +2,7 @@
 // requests the driver makes, runs a turn by what its first message says, and writes every request
 // it gets to `requests.jsonl` in its config folder. It does nothing unless it is run as Codex is.
 
-import { appendFileSync, existsSync } from "node:fs";
+import { appendFileSync, existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { createInterface } from "node:readline";
 
@@ -15,6 +15,8 @@ if (process.argv[2] === "app-server") {
   const usage = (tokens: number) => ({ totalTokens: tokens, inputTokens: tokens, cachedInputTokens: 0, cacheWriteInputTokens: 0, outputTokens: 0 });
   // Signed in with the login in the config folder, unless it was started to keep a login in its memory.
   let signedIn = !process.argv.includes('cli_auth_credentials_store="ephemeral"') && existsSync(join(home, "auth.json"));
+  // That login is an API key when the folder has one saved, as `codex login --with-api-key` saves it.
+  const keyLogin = signedIn && "OPENAI_API_KEY" in JSON.parse(readFileSync(join(home, "auth.json"), "utf8"));
   // The turn that is running: its id, the messages the agent has read in it, and whether it waits for another before it ends.
   let turn: { id: string; read: string[]; holding: boolean } | null = null;
   let turns = 0;
@@ -42,7 +44,7 @@ if (process.argv[2] === "app-server") {
 
   const handlers: Record<string, (params: Record<string, never>) => object | Promise<object>> = {
     initialize: () => ({ userAgent: "peer" }),
-    "account/read": () => ({ account: signedIn ? { type: "chatgpt" } : null, requiresOpenaiAuth: true }),
+    "account/read": () => ({ account: signedIn ? { type: keyLogin ? "apiKey" : "chatgpt" } : null, requiresOpenaiAuth: true }),
     "account/login/start": () => ((signedIn = true), { type: "apiKey" }),
     "account/rateLimits/read": () => {
       const weekly = { limitId: "codex", primary: { usedPercent: 3, windowDurationMins: 10080, resetsAt: 1795623087 }, secondary: null };

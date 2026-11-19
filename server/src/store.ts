@@ -549,10 +549,12 @@ export function openStore(home: string) {
     /**
      * Where the person's plan or API credit goes: the turns their agents ran
      * in the last days, added up by agent and by day, and how they sign in to
-     * each provider. A limit whose time to reset has passed is left out,
-     * since nobody knows where it has stood since.
+     * each provider. `keyLogins` are the providers whose login in the
+     * person's config folder is an API key, as they just said. A limit whose
+     * time to reset has passed is left out, since nobody knows where it has
+     * stood since.
      */
-    usage(personId: string): Usage {
+    usage(personId: string, keyLogins: Provider[]): Usage {
       const now = Date.now();
       const today = new Date(now);
       // Each day's midnight on the computer, and the one that ends today. A change of the clocks makes a day an hour off 24.
@@ -572,7 +574,7 @@ export function openStore(home: string) {
       );
       const providers = db.prepare("select provider from accounts where person_id = ? order by rowid").all(personId) as Pick<Account, "provider">[];
       const accounts = providers.map(({ provider }) => {
-        const apiKey = apiKeys()[personId]?.[provider] !== undefined;
+        const apiKey = apiKeys()[personId]?.[provider] !== undefined || keyLogins.includes(provider);
         return { provider, apiKey, limits: apiKey ? [] : (limits.all(personId, provider, now) as Limit[]) };
       });
       return { used, days, accounts };

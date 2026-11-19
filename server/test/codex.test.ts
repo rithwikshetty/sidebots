@@ -56,9 +56,9 @@ test("what Codex asks leads with plain words and keeps the thing itself as its d
 });
 
 /** The Codex driver, run against the stand-in for Codex in a config folder of its own. */
-function setup({ signedIn = true } = {}) {
+function setup({ signedIn = true, keyLogin = false } = {}) {
   const configDir = mkdtempSync(join(tmpdir(), "sidebots-codex-"));
-  if (signedIn) writeFileSync(join(configDir, "auth.json"), "{}");
+  if (signedIn) writeFileSync(join(configDir, "auth.json"), keyLogin ? '{"OPENAI_API_KEY":"sk-saved-key"}' : "{}");
   const driver = codexOn(async () => ({ command: [process.execPath, fileURLToPath(new URL("./codex-peer.ts", import.meta.url))], env: process.env }));
   const seen: string[] = [];
   const replies: [string, string[]][] = [];
@@ -231,8 +231,14 @@ test("a failed turn says why in words for the phone", async () => {
 test("asked where a plan's limits stand, Codex says with no thread started, and the plan's own limit is the one that counts", async () => {
   const { driver, configDir, requests } = setup();
   const limits = await driver.limits(configDir, new AbortController().signal);
-  assert.deepEqual(limits.map(({ name, used, resets_at }) => [name, used, resets_at]), [["Weekly limit", 0.03, 1795623087000]]);
-  assert.deepEqual(requests().map((each) => each.method), ["initialize", "initialized", "account/rateLimits/read"]);
+  assert.deepEqual(limits!.map(({ name, used, resets_at }) => [name, used, resets_at]), [["Weekly limit", 0.03, 1795623087000]]);
+  assert.deepEqual(requests().map((each) => each.method), ["initialize", "initialized", "account/read", "account/rateLimits/read"]);
+});
+
+test("a login that is an API key has no plan, so Codex isn't asked for its limits", async () => {
+  const { driver, configDir, requests } = setup({ keyLogin: true });
+  assert.equal(await driver.limits(configDir, new AbortController().signal), null);
+  assert.deepEqual(requests().map((each) => each.method), ["initialize", "initialized", "account/read"]);
 });
 
 test("a deleted agent's threads go, the ones Codex lists for its folder", async () => {
