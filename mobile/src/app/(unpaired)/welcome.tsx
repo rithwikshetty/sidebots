@@ -7,7 +7,7 @@ import { wasRemoved } from "@/lib/api";
 import { useTheme } from "@/lib/theme";
 
 const ICON = 96;
-// The words and the button keep to a phone's width, centred in a wider window.
+// The page keeps to a large phone's width, centred in a wider window.
 const COLUMN = 480;
 const STEP = 26;
 // A step's number fits its round mark up to this text size.
@@ -25,25 +25,27 @@ export default function Welcome() {
   const insets = useSafeAreaInsets();
   return (
     <View style={[styles.screen, { backgroundColor: theme.bg, paddingTop: insets.top, paddingBottom: insets.bottom + 12 }]}>
-      <ScrollView style={styles.column} contentContainerStyle={styles.page}>
-        <Image source={require("../../../assets/icon.png")} style={styles.icon} accessibilityIgnoresInvertColors />
-        <Text style={[styles.title, { color: theme.ink }]}>Sidebots</Text>
-        <Text style={[styles.lead, { color: theme.ink2 }]}>Text your agents. They run on your computer and reply when they're done.</Text>
-        <View style={[styles.card, { backgroundColor: theme.field }]}>
-          <Step number={1}>
-            Get Sidebots for your computer from <Text style={[styles.strong, { color: theme.ink }]}>sidebots.app</Text>, and open it.
-          </Step>
-          <View style={[styles.rule, { backgroundColor: theme.line }]} />
-          <Step number={2}>Scan the code it shows.</Step>
-        </View>
-        {wasRemoved() ? <Text style={[styles.removed, { color: theme.danger }]}>Your computer removed this phone. Scan a new code to pair again.</Text> : null}
-      </ScrollView>
-      <Pressable
-        onPress={() => router.push("/pair")}
-        accessibilityRole="button"
-        style={({ pressed }) => [styles.column, styles.button, { backgroundColor: theme.tint, opacity: pressed ? 0.75 : 1 }]}>
-        <Text style={[styles.buttonText, { color: theme.onTint }]}>Scan the code</Text>
-      </Pressable>
+      <View style={styles.column}>
+        <ScrollView contentContainerStyle={styles.page}>
+          <Image source={require("../../../assets/icon.png")} style={styles.icon} accessibilityIgnoresInvertColors />
+          <Text style={[styles.title, { color: theme.ink }]}>Sidebots</Text>
+          <Text style={[styles.lead, { color: theme.ink2 }]}>Text your agents. They run on your computer and reply when they're done.</Text>
+          <View style={[styles.card, { backgroundColor: theme.field }]}>
+            <Step number={1}>
+              Get Sidebots for your computer from <Text style={[styles.strong, { color: theme.ink }]}>sidebots.app</Text>, and open it.
+            </Step>
+            <View style={[styles.rule, { backgroundColor: theme.line }]} />
+            <Step number={2}>Scan the code it shows.</Step>
+          </View>
+          {wasRemoved() ? <Text style={[styles.removed, { color: theme.danger }]}>Your computer removed this phone. Scan a new code to pair again.</Text> : null}
+        </ScrollView>
+        <Pressable
+          onPress={() => router.push("/pair")}
+          accessibilityRole="button"
+          style={({ pressed }) => [styles.button, { backgroundColor: theme.tint, opacity: pressed ? 0.75 : 1 }]}>
+          <Text style={[styles.buttonText, { color: theme.onTint }]}>Scan the code</Text>
+        </Pressable>
+      </View>
     </View>
   );
 }
@@ -62,9 +64,9 @@ function Step({ number, children }: { number: number; children: ReactNode }) {
 }
 
 const styles = StyleSheet.create({
-  screen: { flex: 1, alignItems: "center", paddingHorizontal: 24 },
-  column: { width: "100%", maxWidth: COLUMN },
-  page: { flexGrow: 1, justifyContent: "center", paddingVertical: 24 },
+  screen: { flex: 1, alignItems: "center" },
+  column: { flex: 1, width: "100%", maxWidth: COLUMN },
+  page: { flexGrow: 1, justifyContent: "center", paddingHorizontal: 24, paddingVertical: 24 },
   icon: { width: ICON, height: ICON, borderRadius: ICON * 0.225, borderCurve: "continuous", alignSelf: "center" },
   title: { fontSize: 28, fontWeight: "700", textAlign: "center", marginTop: 20 },
   lead: { fontSize: 17, lineHeight: 23, textAlign: "center", marginTop: 8 },
@@ -76,6 +78,6 @@ const styles = StyleSheet.create({
   strong: { fontWeight: "600" },
   rule: { height: StyleSheet.hairlineWidth, marginLeft: 16 + STEP + 14 },
   removed: { fontSize: 15, lineHeight: 20, textAlign: "center", marginTop: 20 },
-  button: { minHeight: 50, borderRadius: 14, borderCurve: "continuous", alignItems: "center", justifyContent: "center", paddingVertical: 12 },
+  button: { minHeight: 50, borderRadius: 14, borderCurve: "continuous", alignItems: "center", justifyContent: "center", marginHorizontal: 24, paddingVertical: 12 },
   buttonText: { fontSize: 17, fontWeight: "600" },
 });

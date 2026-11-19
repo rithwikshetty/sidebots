@@ -34,8 +34,6 @@ const PHOTO_BOX = 228;
 const PHOTO_TILE = 104;
 const FILE_CARD_WIDTH = 280;
 const VIEWER_TOP_BAR = 56;
-// How far the viewer's buttons sit in from the screen's sides.
-const VIEWER_INSET = 16;
 /** How far a picture at rest is pulled down before the viewer lets it go. */
 const DISMISS_PULL = 90;
 // A page in the chat is as tall as what it holds, between these, and the third until it is measured. Full screen shows the rest of a longer one.
@@ -190,7 +188,7 @@ function PhotoViewer({ photos, start, onClose }: { photos: Shown[]; start: numbe
             <ViewerPage photo={item} width={width} height={height} reservedTop={topRoom} reservedBottom={bottomRoom} onClose={onClose} />
           )}
         />
-        <View style={[styles.viewerTop, { paddingTop: insets.top + 6, paddingLeft: VIEWER_INSET + controls }]} pointerEvents="box-none">
+        <View style={[styles.viewerTop, { paddingTop: insets.top + 6, marginLeft: controls }]} pointerEvents="box-none">
           <IconButton icon={X} label="Close" onPress={onClose} variant="overlay" iconSize={18} />
           <Text numberOfLines={1} style={[styles.viewerTitle, { color: theme.viewerInk }]}>
             {photos.length > 1 ? `${index + 1} of ${photos.length}` : (current?.name ?? "")}
@@ -403,7 +401,7 @@ function FullScreenPage({ page, title, html, onClose }: { page: Shown; title: st
   return (
     <Modal visible animationType={reduceMotion ? "none" : "slide"} presentationStyle="fullScreen" onRequestClose={onClose}>
       <View style={[styles.viewer, { backgroundColor: theme.bg, paddingTop: insets.top, paddingBottom: insets.bottom }]}>
-        <View style={[styles.pageBar, { paddingLeft: VIEWER_INSET + controls }]}>
+        <View style={[styles.pageBar, { marginLeft: controls }]}>
           <IconButton icon={X} label="Close" onPress={onClose} />
           <Text numberOfLines={1} style={[styles.viewerTitle, { color: theme.ink }]}>
             {title}
@@ -423,7 +421,7 @@ const styles = StyleSheet.create({
   tile: { borderRadius: 16, borderCurve: "continuous", overflow: "hidden" },
   page: { flexGrow: 1, alignItems: "center", justifyContent: "center" },
   viewer: { flex: 1 },
-  viewerTop: { position: "absolute", left: 0, right: 0, top: 0, flexDirection: "row", alignItems: "center", paddingRight: VIEWER_INSET, gap: 12 },
+  viewerTop: { position: "absolute", left: 0, right: 0, top: 0, flexDirection: "row", alignItems: "center", paddingHorizontal: 16, gap: 12 },
   viewerTitle: { flex: 1, textAlign: "center", fontWeight: "500", fontSize: 15, lineHeight: 20 },
   viewerSpacer: { width: 36 },
   viewerBar: { position: "absolute", left: 0, right: 0, bottom: 0, flexDirection: "row", justifyContent: "space-evenly", alignItems: "center", paddingTop: 12 },
@@ -449,6 +447,6 @@ const styles = StyleSheet.create({
   pageName: { flex: 1, fontSize: 13, lineHeight: 18 },
   pageView: { flex: 1 },
   pageWeb: { flex: 1, backgroundColor: "transparent" },
-  pageBar: { height: VIEWER_TOP_BAR, flexDirection: "row", alignItems: "center", paddingRight: VIEWER_INSET, gap: 12 },
+  pageBar: { height: VIEWER_TOP_BAR, flexDirection: "row", alignItems: "center", paddingHorizontal: 16, gap: 12 },
   pageRoom: { flex: 1, paddingHorizontal: 16 },
 });

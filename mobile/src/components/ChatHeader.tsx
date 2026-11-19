@@ -54,7 +54,7 @@ export function ChatHeader({ name, avatarId, avatarState, dimmed, onBack, onAbou
           onPress={onBack}
           accessibilityRole="button"
           accessibilityLabel="Back"
-          style={[styles.back, { top: insets.top + (BAR_HEIGHT - BAR_BUTTON) / 2, left: BAR_INSET + controls }]}>
+          style={[styles.back, { top: insets.top + (BAR_HEIGHT - BAR_BUTTON) / 2, marginLeft: controls }]}>
           <Glass interactive style={styles.glass}>
             <ChevronLeft size={24} strokeWidth={2.25} color={theme.tintInk} />
           </Glass>
@@ -90,7 +90,7 @@ export function ChatHeader({ name, avatarId, avatarState, dimmed, onBack, onAbou
 }
 
 const styles = StyleSheet.create({
-  back: { position: "absolute", zIndex: 3 },
+  back: { position: "absolute", left: BAR_INSET, zIndex: 3 },
   more: { position: "absolute", right: BAR_INSET, zIndex: 3 },
   glass: { width: BAR_BUTTON, height: BAR_BUTTON, borderRadius: BAR_BUTTON / 2, alignItems: "center", justifyContent: "center", overflow: "hidden" },
   header: { position: "absolute", left: 0, right: 0, alignItems: "center", paddingTop: 2, zIndex: 2 },

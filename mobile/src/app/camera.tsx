@@ -14,8 +14,6 @@ import { useWindowControls } from "@/lib/layout";
 import { useTheme } from "@/lib/theme";
 
 const SHUTTER = 76;
-// How far Close and the flash sit in from the screen's sides.
-const BAR_INSET = 16;
 const FAILED = "The photo wasn't taken. Try again.";
 
 /**
@@ -108,7 +106,7 @@ function Viewfinder({ id, limit }: { id: string | undefined; limit: number }) {
 
   return (
     <View style={[styles.screen, { backgroundColor: theme.viewer, paddingBottom: insets.bottom + 12 }]}>
-      <View style={[styles.bar, { paddingTop: insets.top + 8, paddingLeft: BAR_INSET + controls }]}>
+      <View style={[styles.bar, { paddingTop: insets.top + 8, marginLeft: controls }]}>
         <IconButton icon={X} label="Close" variant="overlay" size={40} iconSize={20} onPress={() => router.back()} />
         {facing === "back" ? (
           <IconButton
@@ -178,7 +176,7 @@ function Viewfinder({ id, limit }: { id: string | undefined; limit: number }) {
 const styles = StyleSheet.create({
   screen: { flex: 1 },
   empty: { alignItems: "center", justifyContent: "center", gap: 16 },
-  bar: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingRight: BAR_INSET, paddingBottom: 12 },
+  bar: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingHorizontal: 16, paddingBottom: 12 },
   stage: { flex: 1, paddingHorizontal: 12 },
   notice: { textAlign: "center", paddingTop: 12, fontSize: 15, lineHeight: 20 },
   row: { height: TRAY_HEIGHT },

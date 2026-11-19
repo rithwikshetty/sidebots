@@ -3,7 +3,9 @@
 // the extension in targets/notifications opens it as it arrives. The app says
 // whether they may come, which phone takes them, and what a tap on one opens.
 // They are for when the person is away: while the app is open none shows or
-// sounds, and the chat list carries the unread counts.
+// sounds, and the chat list carries the unread counts. A tap on one opens its
+// chat through openChat, the one way into a chat, which knows the chat open
+// on the stack.
 
 import { useEffect, useSyncExternalStore } from "react";
 import { AppState } from "react-native";
@@ -15,9 +17,9 @@ import type { PushToken } from "@server/contract";
 import { isPaired, request } from "./api";
 import { useAgents } from "./state";
 
-// The chat open on the stack, which a tapped notification for it has no need to open, and what follows it.
+// The chat open on the stack, which openChat closes sheets down to or puts another in place of, and what listens for it.
 let chatOnScreen: string | null = null;
-const watchers = new Set<() => void>();
+const listeners = new Set<() => void>();
 const SILENT = { shouldShowBanner: false, shouldShowList: false, shouldPlaySound: false, shouldSetBadge: false };
 
 /** The agent a notification is about, which the server sends as its data. */
@@ -64,28 +66,29 @@ export async function askForPush(): Promise<void> {
 }
 
 /**
- * Opens an agent's chat. From another chat the new one takes its place, so
- * Back still goes home, and a split window keeps one chat beside the agents.
+ * Opens an agent's chat. A sheet over the chat already open closes, and a
+ * different agent's chat takes that one's place, so Back still goes home and
+ * a split window keeps one chat beside the agents.
  */
 export function openChat(agentId: string): void {
-  if (agentId === chatOnScreen) return;
-  if (chatOnScreen) router.replace(`/chat/${agentId}`);
-  else router.push(`/chat/${agentId}`);
+  if (!chatOnScreen) return router.push(`/chat/${agentId}`);
+  router.dismissTo(`/chat/${chatOnScreen}`);
+  if (agentId !== chatOnScreen) router.replace(`/chat/${agentId}`);
 }
 
 function setChatOnScreen(agentId: string | null): void {
   chatOnScreen = agentId;
-  watchers.forEach((watcher) => watcher());
+  listeners.forEach((listener) => listener());
 }
 
-function watchChatOnScreen(watcher: () => void): () => void {
-  watchers.add(watcher);
-  return () => watchers.delete(watcher);
+function onChatOnScreen(listener: () => void): () => void {
+  listeners.add(listener);
+  return () => listeners.delete(listener);
 }
 
 /** The agent whose chat is open on the stack, as the agents' column beside it marks it. */
 export function useChatOnScreen(): string | null {
-  return useSyncExternalStore(watchChatOnScreen, () => chatOnScreen);
+  return useSyncExternalStore(onChatOnScreen, () => chatOnScreen);
 }
 
 /** Marks a chat as the one open on the stack until the returned release runs, and clears its notifications from the phone. */
@@ -104,7 +107,7 @@ export function showChatOnScreen(agentId: string): () => void {
 }
 
 /**
- * The app's side of notifications, kept by the agents' list: none shows while
+ * The app's side of notifications, kept by the home screen: none shows while
  * the app is open, the app's icon carries the number of unread messages, the
  * phone's token is kept with the server and sent again on each return to the
  * app, and a tapped notification opens its chat.

@@ -34,11 +34,11 @@ export default function Chat() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const router = useRouter();
   const agent = useAgent(id);
-  // A chat whose agent is deleted, here or on the computer, closes. One opened before the agents have loaded waits for them.
+  // A chat whose agent is deleted, here or on the computer, closes with anything over it. One opened before the agents have loaded waits for them.
   const seen = useRef(false);
   if (agent) seen.current = true;
   useEffect(() => {
-    if (!agent && seen.current && router.canGoBack()) router.back();
+    if (!agent && seen.current) router.dismissTo("/");
   }, [agent, router]);
   // The chat takes the agent's colour, for the person's messages and the send button.
   const color = useChatColor(agent);

@@ -17,17 +17,14 @@ import { useWorkingLine } from "@/lib/lines";
 import { preview } from "@/lib/messages";
 import { EASE, HIDE, MOVE, POP_IN, POP_OUT, SHOW } from "@/lib/motion";
 import { changeAgent, findMessages, useAgent, useAgents, useAvatars, useBehind, useOnline, type AgentChanges } from "@/lib/state";
-import { useActivities } from "@/lib/activity";
 import { useSplit, useWindowControls } from "@/lib/layout";
-import { openChat, useChatOnScreen, usePush } from "@/lib/push";
+import { openChat, useChatOnScreen } from "@/lib/push";
 import { useTheme } from "@/lib/theme";
 import { listTime } from "@/lib/time";
 import { ScrollWaitsForMenuSwipe } from "../../modules/side-menu-swipe/src";
 
 // The height of the bar that floats at the top, which is the size of each round button in it.
 const BAR = 44;
-// How far the bar's buttons sit in from the screen's sides.
-const BAR_INSET = 16;
 // The search field and an unread count keep their size, and their text fits it up to this text size.
 const FIXED_MAX_SCALE = 1.3;
 // How long the person rests from typing before the server is asked.
@@ -84,8 +81,6 @@ export function AgentList() {
   // The agent whose chat is open beside the list.
   const chat = useChatOnScreen();
   const open = useSplit() ? chat : null;
-  usePush();
-  useActivities();
 
   const rows: Row[] = behind
     ? []
@@ -158,7 +153,7 @@ export function AgentList() {
       </LayoutAnimationConfig>
       <EdgeFade edge="top" height={insets.top + BAR + 16} solid={insets.top} />
       {searching ? (
-        <Animated.View key="search" entering={SHOW} exiting={HIDE} style={[styles.bar, { top: insets.top, left: BAR_INSET + controls }]}>
+        <Animated.View key="search" entering={SHOW} exiting={HIDE} style={[styles.bar, { top: insets.top, marginLeft: controls }]}>
           <Glass style={styles.searchGlass}>
             <Search size={18} strokeWidth={2.25} color={theme.ink2} />
             <TextInput
@@ -185,7 +180,7 @@ export function AgentList() {
           />
         </Animated.View>
       ) : (
-        <Animated.View key="buttons" entering={SHOW} exiting={HIDE} pointerEvents="box-none" style={[styles.bar, { top: insets.top, left: BAR_INSET + controls }]}>
+        <Animated.View key="buttons" entering={SHOW} exiting={HIDE} pointerEvents="box-none" style={[styles.bar, { top: insets.top, marginLeft: controls }]}>
           <BarButton icon={Menu} label="Menu" onPress={menu.open} />
           <View style={styles.barEnd}>
             {behind || empty ? null : <BarButton icon={Search} label="Search" onPress={() => setSearching(true)} />}
@@ -371,7 +366,7 @@ function foundLine(found: Found, search: string): string {
 
 const styles = StyleSheet.create({
   screen: { flex: 1 },
-  bar: { position: "absolute", right: BAR_INSET, zIndex: 2, flexDirection: "row", justifyContent: "space-between", gap: 8 },
+  bar: { position: "absolute", left: 16, right: 16, zIndex: 2, flexDirection: "row", justifyContent: "space-between", gap: 8 },
   barEnd: { flexDirection: "row", gap: 8 },
   barButton: { width: BAR, height: BAR, borderRadius: BAR / 2, alignItems: "center", justifyContent: "center", overflow: "hidden" },
   searchGlass: { flex: 1, height: BAR, borderRadius: BAR / 2, flexDirection: "row", alignItems: "center", gap: 8, paddingLeft: 14, paddingRight: 8, overflow: "hidden" },

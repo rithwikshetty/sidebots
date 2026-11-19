@@ -8,10 +8,11 @@ import { KeyboardProvider } from "react-native-keyboard-controller";
 import Animated, { interpolate, useAnimatedStyle } from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { AgentList } from "@/components/AgentList";
+import { BAR_HEIGHT } from "@/components/ChatHeader";
 import { SideMenu, SideMenuContext } from "@/components/SideMenu";
 import { usePaired } from "@/lib/api";
 import { haptics } from "@/lib/haptics";
-import { SIDEBAR_WIDTH, useSplit, WindowControls } from "@/lib/layout";
+import { SIDEBAR_WIDTH, useWindowLayout, WindowLayout } from "@/lib/layout";
 import { startSync } from "@/lib/state";
 import { useTheme } from "@/lib/theme";
 import { WindowControlsRoom } from "../../modules/window-controls/src";
@@ -39,9 +40,10 @@ export default function Layout() {
   const paired = usePaired();
   const pathname = usePathname();
   const { width } = useWindowDimensions();
-  const split = useSplit() && paired;
   const insets = useSafeAreaInsets();
   const [controls, setControls] = useState(0);
+  const layout = useWindowLayout(controls);
+  const split = layout.split && paired;
   const [menuOpen, setMenuOpen] = useState(false);
   const [swipeHeld, setSwipeHeld] = useState(false);
   const menu = useMemo(() => ({ open: () => setMenuOpen(true), holdSwipe: setSwipeHeld }), []);
@@ -76,7 +78,7 @@ export default function Layout() {
     <GestureHandlerRootView style={{ flex: 1 }}>
       <KeyboardProvider>
         <ThemeProvider value={navigation}>
-          <WindowControls.Provider value={controls}>
+          <WindowLayout.Provider value={layout}>
             <StatusBar style="auto" />
             <SideMenuContext.Provider value={menu}>
               <Drawer
@@ -125,15 +127,13 @@ export default function Layout() {
               </Drawer>
             </SideMenuContext.Provider>
             <WindowControlsRoom pointerEvents="none" onRoom={({ nativeEvent }) => setControls(nativeEvent.leading)} style={[styles.controls, { top: insets.top }]} />
-          </WindowControls.Provider>
+          </WindowLayout.Provider>
         </ThemeProvider>
       </KeyboardProvider>
     </GestureHandlerRootView>
   );
 }
 
-// The height of the bar of buttons at the top of a screen, under the status bar.
-const TOP_BAR = 44;
 // A chat beside the agents' column shows in place, and has no swipe back to the empty side.
 const CHAT_BESIDE_AGENTS = { animation: "none", gestureEnabled: false } as const;
 
@@ -164,7 +164,7 @@ function Shell({ children }: { children: ReactNode }) {
 
 const styles = StyleSheet.create({
   overlay: { backgroundColor: "transparent" },
-  controls: { position: "absolute", left: 0, right: 0, height: TOP_BAR },
+  controls: { position: "absolute", left: 0, right: 0, height: BAR_HEIGHT },
   columns: { flex: 1, flexDirection: "row" },
   sidebar: { width: SIDEBAR_WIDTH, borderRightWidth: StyleSheet.hairlineWidth },
   stack: { flex: 1 },

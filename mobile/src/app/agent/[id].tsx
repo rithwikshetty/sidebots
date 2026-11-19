@@ -151,7 +151,6 @@ function caption(agent: AgentWithLatest): string {
 
 function SettingsTab({ agent, change }: { agent: AgentWithLatest; change: (changes: AgentChanges) => void }) {
   const theme = useTheme();
-  const router = useRouter();
   const provider: Offered = PROVIDERS[agent.provider];
   return (
     <>
@@ -173,7 +172,7 @@ function SettingsTab({ agent, change }: { agent: AgentWithLatest; change: (chang
       </Section>
 
       <Section>
-        <Pressable onPress={() => confirmDelete(agent, () => router.dismissAll())} accessibilityRole="button" style={styles.row}>
+        <Pressable onPress={() => confirmDelete(agent)} accessibilityRole="button" style={styles.row}>
           <Text style={[styles.rowTitle, { color: theme.danger }]}>Delete agent</Text>
         </Pressable>
       </Section>
