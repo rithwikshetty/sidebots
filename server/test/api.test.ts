@@ -112,6 +112,14 @@ test("a phone pairs once with a code, and only a paired phone is let in", async 
   assert.equal(late.expiresAt, Date.now() + 10 * 60_000);
   t.mock.timers.tick(10 * 60_000);
   assert.equal((await pairWith(late.code)).status, 401);
+
+  // A code made to work for longer pairs until its own time is up.
+  const DAY = 24 * 60 * 60_000;
+  const [used, unused] = [store.addPairing(alex.id, 14 * DAY), store.addPairing(alex.id, 14 * DAY)];
+  t.mock.timers.tick(14 * DAY - 1);
+  assert.equal((await pairWith(used.code)).status, 201);
+  t.mock.timers.tick(1);
+  assert.equal((await pairWith(unused.code)).status, 401);
 });
 
 test("a phone that pairs again with the key it had takes the place of its earlier pairing", async () => {

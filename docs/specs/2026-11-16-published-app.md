@@ -61,7 +61,7 @@ The repository gains two folders beside `server/` and `mobile/`: `relay/`, the C
 
 ### Pairing
 
-`node src/main.ts pair <person>` makes a pairing code and prints it as a QR code and as a link. The Mac app runs the same command and draws the QR code in its window. The code is 32 random bytes. The store keeps only its hash, with the person it is for and when it expires, ten minutes later.
+`node src/main.ts pair <person>` makes a pairing code and prints it as a QR code and as a link. The Mac app runs the same command and draws the QR code in its window. The code is 32 random bytes. The store keeps only its hash, with the person it is for and when it expires: ten minutes later, or as many days later as `--days <n>` says.
 
 The QR code holds one link:
 
