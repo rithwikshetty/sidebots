@@ -236,10 +236,6 @@ One manual check per slice, on a real phone: pair by scanning, reach the compute
 - An Android app
 - A second person set up from the Mac app's window
 
-## Open questions
-
-- **Does Sidebots ask Anthropic for approval to offer the Claude login?** It ships either way. Rithwik decides whether to ask.
-
 ## Work breakdown
 
 Each slice ends with something that works on its own.
