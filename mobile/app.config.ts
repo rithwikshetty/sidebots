@@ -17,7 +17,11 @@ const config: ExpoConfig = {
   icon: development ? "./assets/icon-dev.png" : "./assets/icon.png",
   userInterfaceStyle: "automatic",
   ios: {
-    supportsTablet: false,
+    // A native iPad app. `orientation` above keeps the iPhone upright; for the
+    // iPad, Expo lists all four orientations under
+    // UISupportedInterfaceOrientations~ipad, as iPadOS needs for windows it
+    // can resize.
+    supportsTablet: true,
     bundleIdentifier: identifier,
     appleTeamId: process.env.SIDEBOTS_APPLE_TEAM_ID,
     // The app's build number, and its extensions'. testflight.sh sets it, since App Store Connect takes each number once.

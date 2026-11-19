@@ -10,6 +10,7 @@ import { CameraPreview } from "@/components/CameraPreview";
 import { IconButton } from "@/components/IconButton";
 import { cameraRequestLimit, FILE_LIMIT_NOTICE, pickedPhoto, settleCameraRequest, type Picked } from "@/lib/files";
 import { haptics } from "@/lib/haptics";
+import { useWindowControls } from "@/lib/layout";
 import { useTheme } from "@/lib/theme";
 
 const SHUTTER = 76;
@@ -45,6 +46,7 @@ export default function Camera() {
 function Viewfinder({ id, limit }: { id: string | undefined; limit: number }) {
   const theme = useTheme();
   const insets = useSafeAreaInsets();
+  const controls = useWindowControls();
   const navigation = useNavigation();
   const camera = useRef<CameraView>(null);
   const leaving = useRef(false);
@@ -104,7 +106,7 @@ function Viewfinder({ id, limit }: { id: string | undefined; limit: number }) {
 
   return (
     <View style={[styles.screen, { backgroundColor: theme.viewer, paddingBottom: insets.bottom + 12 }]}>
-      <View style={[styles.bar, { paddingTop: insets.top + 8 }]}>
+      <View style={[styles.bar, { paddingTop: insets.top + 8, marginLeft: controls }]}>
         <IconButton icon={X} label="Close" variant="overlay" size={40} iconSize={20} onPress={() => router.back()} />
         {facing === "back" ? (
           <IconButton

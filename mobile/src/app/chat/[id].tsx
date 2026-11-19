@@ -21,6 +21,7 @@ import { problem } from "@/lib/alerts";
 import { attachment } from "@/lib/api";
 import { fitsInMessage, isImage, isPage, MAX_FILES, pick, SIZE_LIMIT_NOTICE, type Picked, type PickSource } from "@/lib/files";
 import { haptics } from "@/lib/haptics";
+import { useReadingMargin, useSplit } from "@/lib/layout";
 import { useWorkingLine } from "@/lib/lines";
 import { preview } from "@/lib/messages";
 import { HIDE, MOVE, SHOW, arrive } from "@/lib/motion";
@@ -31,7 +32,14 @@ import { dayLabel, listTime, sameDay } from "@/lib/time";
 
 export default function Chat() {
   const { id } = useLocalSearchParams<{ id: string }>();
+  const router = useRouter();
   const agent = useAgent(id);
+  // A chat whose agent is deleted, here or on the computer, closes with anything over it. One opened before the agents have loaded waits for them.
+  const seen = useRef(false);
+  if (agent) seen.current = true;
+  useEffect(() => {
+    if (!agent && seen.current) router.dismissTo("/");
+  }, [agent, router]);
   // The chat takes the agent's colour, for the person's messages and the send button.
   const color = useChatColor(agent);
   return agent ? (
@@ -46,6 +54,9 @@ function ChatWith({ agent }: { agent: AgentWithLatest }) {
   const insets = useSafeAreaInsets();
   const router = useRouter();
   const online = useOnline();
+  // Beside the agents' column the chat has no Back, and its messages keep to the reading column in a wide one.
+  const split = useSplit();
+  const margin = useReadingMargin();
   const avatarState = avatarStateOf(agent);
   const messages = useMessages(agent.id);
   // The agent this one asked something and hasn't heard back from.
@@ -78,7 +89,7 @@ function ChatWith({ agent }: { agent: AgentWithLatest }) {
   const latest = agent.latest?.id;
   useFocusEffect(useCallback(() => markRead(agent.id), [agent.id, latest]));
   // Opening the chat clears its notifications from the phone.
-  useFocusEffect(useCallback(() => showChatOnScreen(agent.id), [agent.id]));
+  useEffect(() => showChatOnScreen(agent.id), [agent.id]);
 
   // The list is Assist's: drawn upside down, so it opens at the newest message
   // and holds the end as messages arrive, inside the keyboard's own scroll
@@ -196,7 +207,7 @@ function ChatWith({ agent }: { agent: AgentWithLatest }) {
         onEndReached={onOldestReached}
         onEndReachedThreshold={1.5}
         // Upside down, the list's header is its foot, and its bottom padding is the room at the top of the screen for the floating header.
-        contentContainerStyle={{ paddingBottom: insets.top + BAR_HEIGHT + HEADER_OVERHANG + HEADER_CLEARANCE }}
+        contentContainerStyle={{ paddingBottom: insets.top + BAR_HEIGHT + HEADER_OVERHANG + HEADER_CLEARANCE, paddingHorizontal: margin }}
         ListHeaderComponent={
           <View>
             <View style={styles.foot}>
@@ -262,13 +273,13 @@ function ChatWith({ agent }: { agent: AgentWithLatest }) {
         avatarId={agent.avatar_id}
         avatarState={online ? (avatarState === "replied" ? "resting" : avatarState) : "resting"}
         dimmed={!online}
-        onBack={() => router.back()}
+        onBack={split ? undefined : () => router.back()}
         onAbout={() => router.push(`/agent/${agent.id}`)}
         onFreshStart={() => void freshStart(agent.id).catch((failure) => problem("Couldn't start fresh", failure))}
       />
       <KeyboardStickyView offset={{ closed: 0, opened: keyboardOffset }} style={styles.sticky}>
         {/* The composer's strip is the page colour, as Assist's, so the messages pass under it instead of showing through. */}
-        <View style={{ paddingBottom: insets.bottom, backgroundColor: theme.bg }} onLayout={(event) => setComposerHeight(Math.round(event.nativeEvent.layout.height))}>
+        <View style={{ paddingBottom: insets.bottom, paddingHorizontal: margin, backgroundColor: theme.bg }} onLayout={(event) => setComposerHeight(Math.round(event.nativeEvent.layout.height))}>
           {replyTo ? (
             <Animated.View entering={SHOW} exiting={HIDE} layout={MOVE} style={styles.above}>
               <Glass style={styles.replying}>

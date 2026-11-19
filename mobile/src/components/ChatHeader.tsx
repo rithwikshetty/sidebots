@@ -5,6 +5,7 @@ import type { AvatarState } from "@server/contract";
 import { Glass } from "@/components/Glass";
 import { AvatarView } from "@/components/AvatarView";
 import { EdgeFade } from "@/components/EdgeFade";
+import { useWindowControls } from "@/lib/layout";
 import { useTheme } from "@/lib/theme";
 import { MessageMenuView, type MessageMenuAction } from "../../modules/message-menu/src";
 
@@ -26,7 +27,8 @@ const MENU_ACTIONS: MessageMenuAction[] = [
 
 /**
  * The top of a chat, as Messages draws a conversation's: no bar, only
- * floating parts. A glass back button at the left, the agent's avatar in the
+ * floating parts. A glass back button at the left, given `onBack`, which a
+ * chat beside the agents' column has no need of. The agent's avatar in the
  * middle with its name in a glass pill under it, which a tap opens the
  * agent's page from, and a glass button at the right that opens the chat's menu. Behind them the screen fades from the
  * page colour, so messages scrolling up pass softly under them.
@@ -36,25 +38,28 @@ export function ChatHeader({ name, avatarId, avatarState, dimmed, onBack, onAbou
   avatarId: string;
   avatarState: AvatarState;
   dimmed: boolean;
-  onBack: () => void;
+  onBack?: () => void;
   onAbout: () => void;
   onFreshStart: () => void;
 }) {
   const theme = useTheme();
   const insets = useSafeAreaInsets();
+  const controls = useWindowControls();
   const height = insets.top + BAR_HEIGHT + HEADER_OVERHANG + HEADER_CLEARANCE;
   return (
     <>
       <EdgeFade edge="top" height={height} solid={insets.top} />
-      <Pressable
-        onPress={onBack}
-        accessibilityRole="button"
-        accessibilityLabel="Back"
-        style={[styles.back, { top: insets.top + (BAR_HEIGHT - BAR_BUTTON) / 2 }]}>
-        <Glass interactive style={styles.glass}>
-          <ChevronLeft size={24} strokeWidth={2.25} color={theme.tintInk} />
-        </Glass>
-      </Pressable>
+      {onBack ? (
+        <Pressable
+          onPress={onBack}
+          accessibilityRole="button"
+          accessibilityLabel="Back"
+          style={[styles.back, { top: insets.top + (BAR_HEIGHT - BAR_BUTTON) / 2, marginLeft: controls }]}>
+          <Glass interactive style={styles.glass}>
+            <ChevronLeft size={24} strokeWidth={2.25} color={theme.tintInk} />
+          </Glass>
+        </Pressable>
+      ) : null}
       {/* The native menu button over the glass takes the tap and reads to VoiceOver. */}
       <MessageMenuView
         actions={MENU_ACTIONS}

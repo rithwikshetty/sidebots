@@ -8,14 +8,14 @@ export function problem(title: string, failure: unknown): void {
   Alert.alert(title, failure instanceof Error ? failure.message : "Something went wrong.");
 }
 
-/** Asks before deleting an agent, since nothing of it can be brought back. `then` runs once it is gone. */
-export function confirmDelete(agent: Agent, then?: () => void): void {
+/** Asks before deleting an agent, since nothing of it can be brought back. Its chat closes once it is gone. */
+export function confirmDelete(agent: Agent): void {
   Alert.alert(`Delete ${agent.name}?`, "Its chat, its memory, its jobs and its files are removed for good.", [
     { text: "Cancel", style: "cancel" },
     {
       text: "Delete",
       style: "destructive",
-      onPress: () => void deleteAgent(agent.id).then(then, (failure) => problem("Couldn't delete it", failure)),
+      onPress: () => void deleteAgent(agent.id).catch((failure) => problem("Couldn't delete it", failure)),
     },
   ]);
 }

@@ -22,6 +22,7 @@ import { Maximize2, Share as ShareIcon, X } from "lucide-react-native";
 import { IconButton } from "@/components/IconButton";
 import { FILE_ICONS, fileKind, fileKindWord, formatFileSize } from "@/lib/files";
 import { haptics } from "@/lib/haptics";
+import { useWindowControls } from "@/lib/layout";
 import { openLink } from "@/lib/links";
 import { type Theme, useTheme } from "@/lib/theme";
 
@@ -164,6 +165,7 @@ function PhotoViewer({ photos, start, onClose }: { photos: Shown[]; start: numbe
   const reduceMotion = useReducedMotion();
   const { width, height } = useWindowDimensions();
   const insets = useSafeAreaInsets();
+  const controls = useWindowControls();
   const [index, setIndex] = useState(start);
   const current = photos[index];
   const topRoom = insets.top + VIEWER_TOP_BAR;
@@ -186,7 +188,7 @@ function PhotoViewer({ photos, start, onClose }: { photos: Shown[]; start: numbe
             <ViewerPage photo={item} width={width} height={height} reservedTop={topRoom} reservedBottom={bottomRoom} onClose={onClose} />
           )}
         />
-        <View style={[styles.viewerTop, { paddingTop: insets.top + 6 }]} pointerEvents="box-none">
+        <View style={[styles.viewerTop, { paddingTop: insets.top + 6, marginLeft: controls }]} pointerEvents="box-none">
           <IconButton icon={X} label="Close" onPress={onClose} variant="overlay" iconSize={18} />
           <Text numberOfLines={1} style={[styles.viewerTitle, { color: theme.viewerInk }]}>
             {photos.length > 1 ? `${index + 1} of ${photos.length}` : (current?.name ?? "")}
@@ -395,10 +397,11 @@ function FullScreenPage({ page, title, html, onClose }: { page: Shown; title: st
   const theme = useTheme();
   const reduceMotion = useReducedMotion();
   const insets = useSafeAreaInsets();
+  const controls = useWindowControls();
   return (
     <Modal visible animationType={reduceMotion ? "none" : "slide"} presentationStyle="fullScreen" onRequestClose={onClose}>
       <View style={[styles.viewer, { backgroundColor: theme.bg, paddingTop: insets.top, paddingBottom: insets.bottom }]}>
-        <View style={styles.pageBar}>
+        <View style={[styles.pageBar, { marginLeft: controls }]}>
           <IconButton icon={X} label="Close" onPress={onClose} />
           <Text numberOfLines={1} style={[styles.viewerTitle, { color: theme.ink }]}>
             {title}

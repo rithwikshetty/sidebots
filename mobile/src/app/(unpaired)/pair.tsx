@@ -9,6 +9,7 @@ import { FadingText } from "@/components/FadingText";
 import { IconButton } from "@/components/IconButton";
 import { keepPairing, readPairingLink, requestPairing } from "@/lib/api";
 import { haptics } from "@/lib/haptics";
+import { useWindowControls } from "@/lib/layout";
 import { useTheme } from "@/lib/theme";
 
 const NOT_A_CODE = "That isn't a Sidebots pairing code.";
@@ -30,6 +31,7 @@ const RETRY_MS = 3000;
 export default function Pair() {
   const theme = useTheme();
   const insets = useSafeAreaInsets();
+  const controls = useWindowControls();
   const opened = useLocalSearchParams<{ host?: string; code?: string }>();
   const [permission, askForCamera] = useCameraPermissions();
   const [busy, setBusy] = useState(false);
@@ -95,7 +97,7 @@ export default function Pair() {
 
   return (
     <View style={[styles.screen, { backgroundColor: theme.viewer, paddingBottom: insets.bottom + 12 }]}>
-      <View style={[styles.bar, { paddingTop: insets.top + 8 }]}>
+      <View style={[styles.bar, { paddingTop: insets.top + 8, marginLeft: controls }]}>
         <IconButton icon={ChevronLeft} label="Back" variant="overlay" size={40} iconSize={22} disabled={busy || machine !== null} onPress={() => router.back()} />
         <IconButton icon={Link} label="Enter a link instead" variant="overlay" size={40} iconSize={19} disabled={busy || machine !== null} onPress={enterLink} />
       </View>

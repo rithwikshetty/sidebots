@@ -11,6 +11,7 @@ import { confirmDisconnect } from "@/lib/alerts";
 import { UPDATE, useMachine } from "@/lib/api";
 import { openLink } from "@/lib/links";
 import { useBehind, useOnline } from "@/lib/state";
+import { useWindowControls } from "@/lib/layout";
 import { useTheme } from "@/lib/theme";
 
 const PRIVACY = "https://sidebots.app/privacy";
@@ -42,6 +43,7 @@ export function SideMenu() {
   const theme = useTheme();
   const router = useRouter();
   const insets = useSafeAreaInsets();
+  const controls = useWindowControls();
   const progress = useDrawerProgress();
   const fade = useAnimatedStyle(() => ({ opacity: interpolate(progress.value, [0, 1], [0.3, 1], "clamp") }));
   const online = useOnline();
@@ -55,7 +57,7 @@ export function SideMenu() {
 
   return (
     <Animated.View style={[styles.menu, { paddingTop: insets.top + 8, paddingBottom: Math.max(insets.bottom, 16) }, fade]}>
-      <Text accessibilityRole="header" style={[styles.wordmark, { color: theme.ink }]}>
+      <Text accessibilityRole="header" style={[styles.wordmark, { color: theme.ink, marginLeft: controls }]}>
         Sidebots
       </Text>
       <View style={styles.computer}>
