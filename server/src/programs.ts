@@ -189,7 +189,7 @@ export async function signIn(provider: Provider, folder: string, stop?: AbortSig
 export async function login(provider: Provider, folder: string, path?: string): Promise<{ logged_in: boolean; email: string | null; api_key: boolean }> {
   const env = inFolder(provider, folder, await environment());
   const said = await run(await program(provider, path), PROGRAMS[provider].signedIn, { env, timeout: 30_000 }).catch(() => undefined);
-  if (provider === "codex" || said === undefined) return { logged_in: said !== undefined, email: null, api_key: /API key/i.test(said?.stderr ?? "") };
+  if (provider === "codex" || said === undefined) return { logged_in: said !== undefined, email: null, api_key: /^API key configured/m.test(said?.stderr ?? "") };
   const { loggedIn, email } = JSON.parse(said.stdout) as { loggedIn: boolean; email?: string };
   return { logged_in: loggedIn, email: email ?? null, api_key: false };
 }

@@ -106,8 +106,10 @@ struct SetupView: View {
       guard let version = program.version else { return "\(provider.name) isn't on this Mac. Your agents run on the \(provider.name) you install, and Sidebots carries none of its own." }
       return "\(provider.name) \(version) is on this Mac, and Sidebots needs \(program.oldest) or later. Update it, then check again."
     }
-    guard account != nil else { return "Agents on \(provider.name) run on this computer. Choose how they sign in to \(provider.account)." }
-    let now = server.billsKey(provider) ? "They use an API key now." : "They use your \(provider.account) plan now."
+    guard let account else { return "Agents on \(provider.name) run on this computer. Choose how they sign in to \(provider.account)." }
+    // The login the window has just looked at, which is newer than the one the server last checked.
+    let key = if case .choosing(let login?) = step, account.signIn == "login" { login.apiKey } else { server.billsKey(provider) }
+    let now = key ? "They use an API key now." : "They use your \(provider.account) plan now."
     return "Your agents on \(provider.name) run on this computer. \(now) Choose how they sign in to \(provider.account)."
   }
 
