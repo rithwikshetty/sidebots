@@ -35,7 +35,7 @@ type State = {
 export type AgentChanges = { name?: string; avatarId?: string; model?: Model; effort?: Effort; muted?: boolean; hidden?: boolean; color?: string | null };
 
 // The number changes when the shape of what is saved does.
-const CACHE_KEY = "cache-5";
+const CACHE_KEY = "cache-6";
 const SAVE_DELAY_MS = 300;
 const NO_MESSAGES: Message[] = [];
 

@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { homedir } from "node:os";
-import { limitsIn, question } from "../src/claude.ts";
+import { limitsAnswered, limitsIn, question } from "../src/claude.ts";
 
 /** What Claude Code says of a plan's limits as a turn runs, with the limits it lists as the SDK's types leave them out. */
 const said = (info: object) => limitsIn(info as Parameters<typeof limitsIn>[0], 5);
@@ -20,6 +20,17 @@ test("a plan's limits are the ones Claude Code lists and the one it names, and t
   ]);
   // Credit bought beyond the plan is none of its limits.
   assert.deepEqual(said({ status: "allowed", rateLimitType: "overage" }), []);
+});
+
+test("asked where a plan's limits stand, Claude Code lists each with a hundredth of it as one, and a model's own under the model's name", () => {
+  const resets_at = "2026-11-25T21:00:00.570191+00:00";
+  const answered = (rate_limits: object | null) => limitsAnswered({ rate_limits } as Parameters<typeof limitsAnswered>[0], 5);
+  assert.deepEqual(answered({ five_hour: null, seven_day: { utilization: 1, resets_at }, seven_day_opus: { utilization: null, resets_at: null }, model_scoped: [{ display_name: "Fable", utilization: 54, resets_at }] }), [
+    { name: "Weekly limit", used: 0.01, resets_at: Date.parse(resets_at), at: 5 },
+    { name: "Fable limit", used: 0.54, resets_at: Date.parse(resets_at), at: 5 },
+  ]);
+  // A login with no plan.
+  assert.deepEqual(answered(null), []);
 });
 
 test("an ask leads with plain words, lists the facts that matter, and keeps the thing itself as its detail", () => {

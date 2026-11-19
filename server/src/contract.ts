@@ -8,7 +8,7 @@
  * its own. The app sends its own in the same header, and the server refuses
  * to pair an app on another version.
  */
-export const CONTRACT_VERSION = 3;
+export const CONTRACT_VERSION = 4;
 export const CONTRACT_HEADER = "Sidebots-Contract";
 
 export type Sender = "person" | "agent" | "sidebots";
@@ -175,8 +175,15 @@ export type About = { instructions: string; memories: Memory[]; jobs: Job[] };
 
 /** What a turn was for: a reply to the person, a run of one of the agent's jobs, or the memory save before a fresh start. */
 export type TurnKind = "reply" | "job" | "memory";
-/** The turns of one kind that an agent ran: how many, and what they cost in US dollars at its provider's prices. */
-export type Used = { agent_id: string; kind: TurnKind; turns: number; cost: number };
+/**
+ * The turns of one kind that an agent ran: how many, what they cost in US
+ * dollars at its provider's prices, and the tokens they used. A turn's tokens
+ * are all its model read and wrote, what it read again from its cache among
+ * them.
+ */
+export type Used = { agent_id: string; kind: TurnKind; turns: number; cost: number; tokens: number };
+/** One day of a person's turns: its date on the computer, as `2026-11-19`, with what the turns cost and the tokens they used. */
+export type Day = { day: string; cost: number; tokens: number };
 /**
  * One limit of a person's plan with a provider, as the provider last said it
  * stood: what the provider calls it, how much of it is used, as a fraction that
@@ -185,15 +192,17 @@ export type Used = { agent_id: string; kind: TurnKind; turns: number; cost: numb
  * too.
  */
 export type Limit = { name: string; used: number | null; resets_at: number | null; at: number };
-/** How many days of turns `Usage` counts. */
+/** How many days of turns `Usage` counts, today among them. A day runs from midnight on the computer. */
 export const USAGE_DAYS = 7;
 /**
  * Where a person's plan or API credit goes: the turns their agents ran in the
- * last `USAGE_DAYS` days, and how they sign in to each provider. An account on
- * an API key is billed for what its turns cost. One on a plan has the plan's
- * limits once the provider has said where they stand.
+ * last `USAGE_DAYS` days, added up by agent and by day, and how they sign in
+ * to each provider. `days` has every one of the days, the oldest first, one
+ * with no turns too. An account on an API key is billed for what its turns
+ * cost. One on a plan has the plan's limits once the provider has said where
+ * they stand.
  */
-export type Usage = { used: Used[]; accounts: { provider: Provider; apiKey: boolean; limits: Limit[] }[] };
+export type Usage = { used: Used[]; days: Day[]; accounts: { provider: Provider; apiKey: boolean; limits: Limit[] }[] };
 
 const WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 

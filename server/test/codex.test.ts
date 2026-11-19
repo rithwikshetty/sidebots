@@ -71,7 +71,7 @@ function setup({ signedIn = true } = {}) {
     replied: (reply, ids) => replies.push([reply, ids]),
     cwd: "/agents/scout",
     sessionId: null,
-    spent: 0,
+    spent: { cost: 0, tokens: 0 },
     configDir,
     model: "sol",
     effort: "medium",
@@ -122,7 +122,7 @@ test("a turn starts a thread with the agent's tools, on the newest model of its 
   // What the agent said as it worked is no part of the reply.
   assert.deepEqual(replies, [["Read: hello", ["first"]]]);
   // A million tokens read on Sol, as Codex counts the thread so far, and the 5,000 its last step held.
-  assert.deepEqual(result, { sessionId: "thread-1", contextTokens: 5000, cost: 2 });
+  assert.deepEqual(result, { sessionId: "thread-1", contextTokens: 5000, cost: 2, tokens: 1_000_000 });
   assert.deepEqual(limits.at(-1)!.map(({ name, used, resets_at }) => [name, used, resets_at]), [["5-hour limit", 0.25, 1795111200000]]);
 
   const started = requests().find((each) => each.method === "thread/start")!.params;
@@ -140,9 +140,10 @@ test("a turn starts a thread with the agent's tools, on the newest model of its 
 test("a later turn resumes the thread, and a job's run has a thread that isn't kept", async () => {
   const { driver, turn, requests } = setup();
   // The thread had used three million tokens and cost $10. This turn's million are read on Luna, whatever the ones before were read on.
-  const result = await driver.runTurn(turn("hello", { sessionId: "thread-9", spent: 10, model: "luna" }));
+  const result = await driver.runTurn(turn("hello", { sessionId: "thread-9", spent: { cost: 10, tokens: 3_000_000 }, model: "luna" }));
   assert.equal(result.sessionId, "thread-9");
   assert.equal(result.cost.toFixed(2), "10.10");
+  assert.equal(result.tokens, 4_000_000);
   const methods = () => requests().map((each) => each.method);
   assert.ok(methods().includes("thread/resume") && !methods().includes("thread/start"));
   assert.equal(requests().find((each) => each.method === "thread/resume")!.params.threadId, "thread-9");
@@ -168,6 +169,7 @@ test("a message that arrives as the turn is ending gets a turn and a reply of it
   assert.deepEqual(requests().filter((each) => each.method === "turn/start").map((each) => each.params.clientUserMessageId), ["first", "second"]);
   // Two turns of a million tokens each, as Codex counts the thread.
   assert.equal(result.cost, 4);
+  assert.equal(result.tokens, 2_000_000);
 });
 
 test("the agent's tools answer in words, and a call that is wrong says so to the agent", async () => {
@@ -224,6 +226,13 @@ test("a failed turn says why in words for the phone", async () => {
   assert.equal(await words(driver.runTurn(turn("hello", { model: "astra" })), driver), "Codex offers this account no Astra model.");
   assert.equal(driver.failure("Incorrect API key provided: sk-12345."), "OpenAI refused your API key. Save a new one on your computer.");
   assert.equal(driver.failure("stream disconnected before completion"), "stream disconnected before completion");
+});
+
+test("asked where a plan's limits stand, Codex says with no thread started, and the plan's own limit is the one that counts", async () => {
+  const { driver, configDir, requests } = setup();
+  const limits = await driver.limits(configDir, new AbortController().signal);
+  assert.deepEqual(limits.map(({ name, used, resets_at }) => [name, used, resets_at]), [["Weekly limit", 0.03, 1795623087000]]);
+  assert.deepEqual(requests().map((each) => each.method), ["initialize", "initialized", "account/rateLimits/read"]);
 });
 
 test("a deleted agent's threads go, the ones Codex lists for its folder", async () => {

@@ -64,6 +64,8 @@ export function newest(models: { model: string }[], kind: string): string | unde
 }
 
 type Window = { usedPercent: number; windowDurationMins: number | null; resetsAt: number | null };
+/** What Codex says of one limit: its id, and the windows it runs in. */
+type Said = { limitId: string | null; primary: Window | null; secondary: Window | null };
 const HOUR = 60;
 const DAY = 24 * HOUR;
 /** What a limit is called, from how long it runs before it resets. */
@@ -79,7 +81,7 @@ function limitName(minutes: number): string {
  * it resets. Codex speaks of the plan's own limits under the id `codex`, and
  * of a limit one model has apart from them under another, which is left out.
  */
-export function limitsIn(said: { limitId: string | null; primary: Window | null; secondary: Window | null }, at: number): Limit[] {
+export function limitsIn(said: Said, at: number): Limit[] {
   if (said.limitId !== null && said.limitId !== "codex") return [];
   return [said.primary, said.secondary].flatMap((window) =>
     window?.windowDurationMins ? [{ name: limitName(window.windowDurationMins), used: window.usedPercent / 100, resets_at: window.resetsAt === null ? null : window.resetsAt * 1000, at }] : [],
@@ -246,8 +248,15 @@ const runTurn = (start: () => Promise<Start>): RunTurn => async (turn) => {
   // The turns this run started. The tokens they used are the run's own, and cost what its model does.
   const mine = new Set<string>();
   const result = (sessionId: string) => {
-    const before = counted && !mine.has(counted.first.turnId) ? costOf(counted.first.tokenUsage.total, model) : 0;
-    return { sessionId, contextTokens: counted?.latest.tokenUsage.last.totalTokens ?? 0, cost: spent + (counted ? costOf(counted.latest.tokenUsage.total, model) - before : 0) };
+    const before = counted && !mine.has(counted.first.turnId) ? counted.first.tokenUsage.total : undefined;
+    // What the run added to a count of the thread's tokens.
+    const added = (count: (tokens: Tokens) => number) => (counted ? count(counted.latest.tokenUsage.total) - (before ? count(before) : 0) : 0);
+    return {
+      sessionId,
+      contextTokens: counted?.latest.tokenUsage.last.totalTokens ?? 0,
+      cost: spent.cost + added((tokens) => costOf(tokens, model)),
+      tokens: spent.tokens + added((tokens) => tokens.totalTokens),
+    };
   };
   // The turn of Codex's that is running.
   let running: string | null = null;
@@ -416,9 +425,22 @@ const forget = (start: () => Promise<Start>) => async (cwd: string, configDir: s
   }
 };
 
+/** Asks Codex where the plan's limits stand, with no thread started. It lists every limit by its id, the plan's own among them. */
+const limitsNow = (start: () => Promise<Start>): Driver["limits"] => async (configDir, giveUp) => {
+  const codex = connect(await start(), configDir);
+  giveUp.addEventListener("abort", codex.close);
+  try {
+    await greet(codex);
+    const { rateLimits, rateLimitsByLimitId } = await codex.request<{ rateLimits: Said; rateLimitsByLimitId: Record<string, Said> | null }>("account/rateLimits/read", {});
+    return limitsIn(rateLimitsByLimitId?.codex ?? rateLimits, Date.now());
+  } finally {
+    codex.close();
+  }
+};
+
 /** A driver that starts Codex as `start` says. */
 export function codexOn(start: () => Promise<Start>): Driver {
-  return { runTurn: runTurn(start), failure, forget: forget(start) };
+  return { runTurn: runTurn(start), failure, forget: forget(start), limits: limitsNow(start) };
 }
 
 /** The Codex on this computer. */
