@@ -7,6 +7,7 @@ import { join } from "node:path";
 import { openStore } from "../src/store.ts";
 import { createQueue, type Turn, type TurnResult } from "../src/runner.ts";
 import { claude } from "../src/claude.ts";
+import { codex } from "../src/codex.ts";
 import { createApi } from "../src/api.ts";
 import { CONTRACT_VERSION, MESSAGE_BYTES, type AgentWithLatest, type Message, type Question } from "../src/contract.ts";
 import { startPush, type Ended, type Notice, type Sealed } from "../src/push.ts";
@@ -15,9 +16,9 @@ import { startPush, type Ended, type Notice, type Sealed } from "../src/push.ts"
 type Answer = TurnResult & { reply?: string };
 
 /**
- * A Sidebots whose turns `answer` runs instead of Claude Code, which still
- * words the failures and forgets the sessions. The fake reads the turn's
- * first message, then replies to it.
+ * A Sidebots whose turns `answer` runs instead of Claude Code and Codex,
+ * which still word the failures. Claude Code forgets the sessions too. The
+ * fake reads the turn's first message, then replies to it.
  */
 function setup(answer: (turn: Turn) => Promise<Answer>, now: () => number = Date.now) {
   const runTurn = async (turn: Turn): Promise<TurnResult> => {
@@ -30,7 +31,7 @@ function setup(answer: (turn: Turn) => Promise<Answer>, now: () => number = Date
   const store = openStore(home);
   store.addPerson({ name: "Alex", provider: "claude", configDir: "/config/alex" });
   store.addPerson({ name: "Robin", provider: "claude", configDir: "/config/robin" });
-  const queue = createQueue(store, { claude: { ...claude, runTurn } }, now);
+  const queue = createQueue(store, { claude: { ...claude, runTurn }, codex: { ...codex, runTurn, forget: () => undefined } }, now);
   const app = createApi(store, queue, "Test computer", true);
   const notificationKeys = new Map<string, string>();
   /** Pairs another phone as the person, and returns what it sends with each request. */
@@ -822,6 +823,37 @@ test("a plan's limits stand as the provider last said while a turn ran, even one
 
   store.setApiKey(store.personByName(ME)!.id, "claude", "sk-ant-alexs-key");
   assert.deepEqual(await accounts(ME), [{ provider: "claude", apiKey: true, limits: [] }]);
+});
+
+test("an agent runs on a provider its owner has set up: the one they pick, or the first they set up", async () => {
+  const ranIn: string[] = [];
+  const { home, store, queue, call, say } = setup(async (turn) => {
+    ranIn.push(turn.configDir);
+    return reply("ok");
+  });
+  // Alex has set up Claude Code alone.
+  const refused = await call(ME, "POST", "/agents", { name: "Scout", avatarId: "moss", provider: "codex" });
+  assert.deepEqual([refused.status, refused.json.error], [400, "Codex isn't set up on your computer."]);
+  assert.equal((await call(ME, "POST", "/agents", { name: "Scout", avatarId: "moss", provider: "abacus" })).json.error, "That isn't set up on your computer.");
+
+  store.addAccount(store.personByName(ME)!.id, "codex", "/config/alex-codex");
+  const scout = (await call(ME, "POST", "/agents", { name: "Scout", avatarId: "moss", provider: "codex" })).json;
+  assert.deepEqual([scout.provider, scout.model, scout.effort], ["codex", "sol", "medium"]);
+  // Its instructions are in the file Codex reads.
+  assert.match(readFileSync(join(home, "agents", scout.id, "AGENTS.md"), "utf8"), /^# Scout\n/);
+  // It takes Codex's models, and none of Claude Code's.
+  assert.equal((await call(ME, "PATCH", `/agents/${scout.id}`, { model: "opus" })).status, 400);
+  assert.equal((await call(ME, "PATCH", `/agents/${scout.id}`, { model: "luna" })).json.model, "luna");
+
+  const gym = (await call(ME, "POST", "/agents", { name: "Gym", avatarId: "hop" })).json;
+  assert.equal(gym.provider, "claude");
+  // Each runs on its own provider's config folder.
+  for (const agent of [scout, gym]) {
+    await say(ME, agent.id, "hello");
+    await queue.kick(agent.id);
+  }
+  assert.deepEqual(ranIn, ["/config/alex-codex", "/config/alex"]);
+  assert.deepEqual((await call(ME, "GET", "/usage")).json.accounts.map((account: { provider: string }) => account.provider), ["claude", "codex"]);
 });
 
 test("a job runs when its time comes, in a session of its own, and only a run with something to say sends a message", async () => {

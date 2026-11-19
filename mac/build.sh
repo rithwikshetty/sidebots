@@ -1,6 +1,7 @@
 #!/bin/bash
 # Builds Sidebots for Mac in mac/build: the menu bar app with Sparkle, Node, the
 # server and its production dependencies, the starter avatars and cloudflared inside it.
+# It carries neither Claude Code nor Codex. The server runs the ones the person installed.
 #
 #   mac/build.sh           Signs with SIDEBOTS_IDENTITY, for use on this Mac, and makes build/Sidebots.zip.
 #   mac/build.sh release   Signs it with the Developer ID, makes build/Sidebots.dmg, signs that, has Apple
@@ -63,19 +64,18 @@ echo "Adding the server"
 cp "$root/server/package.json" "$root/server/pnpm-lock.yaml" "$resources/server/"
 cp -R "$root/server/src" "$resources/server/src"
 cp -R "$root/avatars" "$resources/avatars"
-# A flat node_modules, with no links, which installs Claude Code for this Mac's processor only.
+# A flat node_modules, with no links.
 (cd "$resources/server" && pnpm install --prod --frozen-lockfile --ignore-scripts --config.node-linker=hoisted --reporter=silent)
 rm -rf "$resources/server/node_modules/.bin"
 
 echo "Signing with $identity"
-# Every program in the bundle, then the app around them. Node and Claude Code
-# compile JavaScript as they run, which the runtime entitlements allow.
+# Every program in the bundle, then the app around them. Node compiles
+# JavaScript as it runs, which the runtime entitlements allow.
 timestamp=--timestamp
 [ "$identity" = "-" ] && timestamp=--timestamp=none
 sign() { codesign --force --options runtime "$timestamp" --sign "$identity" "$@"; }
-claude=$resources/server/node_modules/@anthropic-ai/claude-agent-sdk-darwin-arm64/claude
-sign --entitlements "$mac/runtime.entitlements" "$resources/bin/node" "$claude"
-find "$resources" -type f ! -path "$resources/bin/node" ! -path "$claude" -print0 |
+sign --entitlements "$mac/runtime.entitlements" "$resources/bin/node"
+find "$resources" -type f ! -path "$resources/bin/node" -print0 |
   while IFS= read -r -d '' file; do
     if file -b "$file" | grep -q Mach-O; then sign "$file"; fi
   done

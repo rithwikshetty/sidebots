@@ -1,8 +1,11 @@
-// Starts the Sidebots server. `add-person` adds a person, `api-key` has a person's agents on a provider
-// run on an API key, `pair` makes the code a phone pairs with, `devices` lists the paired phones,
-// `remove-device` unpairs one, and `status` says whether the server is running and how each person's
-// agents sign in to their providers. With `--json`, `pair`, `devices` and `status` print what the Mac
-// app reads.
+// Starts the Sidebots server. `add-person` adds a person, `add-account` sets a person up on another
+// provider, `api-key` has a person's agents on a provider run on an API key, `pair` makes the code a
+// phone pairs with, `devices` lists the paired phones, `remove-device` unpairs one, and `status` says
+// whether the server is running and how each person's agents sign in to their providers.
+// `providers` says which providers' programs are on this computer, `install` runs a provider's own
+// installer, `sign-in` runs a provider's own sign-in in a config folder, and `signed-in` says whether
+// that folder is signed in. With `--json`, `pair`, `devices`, `status`, `providers` and `signed-in`
+// print what the Mac app reads.
 
 import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
@@ -16,6 +19,8 @@ import { openStore, type Person } from "./store.ts";
 import { CONTRACT_HEADER, PROVIDERS, type Provider } from "./contract.ts";
 import { createQueue } from "./runner.ts";
 import { claude } from "./claude.ts";
+import { codex } from "./codex.ts";
+import { PROGRAMS, configDir, install, installed, login, signIn } from "./programs.ts";
 import { createApi } from "./api.ts";
 import { startPush } from "./push.ts";
 import { relay } from "./relay.ts";
@@ -61,6 +66,24 @@ if (process.argv[2] === "add-person") {
     process.exit(1);
   }
   console.log(`Added ${store.addPerson({ name, provider, configDir }).name}, whose agents run on ${PROVIDERS[provider].name}.`);
+  process.exit(0);
+}
+
+if (process.argv[2] === "add-account") {
+  const [name, providerId, configDir] = positionals;
+  if (!name || !configDir) {
+    console.error("usage: node src/main.ts add-account <person> <provider> <config-dir>");
+    process.exit(1);
+  }
+  const person = personNamed(name);
+  const provider = providerNamed(providerId);
+  const account = store.account(person.id, provider);
+  if (account) {
+    console.error(`${person.name} has already set up ${PROVIDERS[provider].name}, in ${account.config_dir}.`);
+    process.exit(1);
+  }
+  store.addAccount(person.id, provider, configDir);
+  console.log(`${person.name} can now add agents that run on ${PROVIDERS[provider].name}.`);
   process.exit(0);
 }
 
@@ -127,6 +150,61 @@ if (process.argv[2] === "remove-device") {
   process.exit(0);
 }
 
+if (process.argv[2] === "providers") {
+  // Each provider's program on this computer: its version when it is installed, whether its driver works with that version, the oldest that it does, the installer its maker publishes, and the config folder it uses here.
+  const providers = await Promise.all(
+    (Object.keys(PROVIDERS) as Provider[]).map(async (provider) => {
+      const found = await installed(provider);
+      return {
+        provider,
+        name: PROVIDERS[provider].name,
+        path: found?.path ?? null,
+        version: found?.version ?? null,
+        supported: found?.supported ?? false,
+        oldest: PROGRAMS[provider].oldest,
+        installer: PROGRAMS[provider].installer,
+        config_dir: configDir(provider),
+      };
+    }),
+  );
+  if (options.json) console.log(JSON.stringify(providers));
+  else {
+    for (const { name, path, version, supported, oldest, installer } of providers) {
+      if (!path) console.log(`${name} isn't installed. Its installer: ${installer}`);
+      else console.log(supported ? `${name} ${version} is at ${path}.` : `${name} ${version} is at ${path}. Sidebots needs ${oldest} or later.`);
+    }
+  }
+  process.exit(0);
+}
+
+if (process.argv[2] === "install") {
+  process.exit(await install(providerNamed(positionals[0])));
+}
+
+if (process.argv[2] === "sign-in" || process.argv[2] === "signed-in") {
+  const [providerId, folder] = positionals;
+  if (!folder) {
+    console.error(`usage: node src/main.ts ${process.argv[2]} <provider> <config-dir>`);
+    process.exit(1);
+  }
+  const provider = providerNamed(providerId);
+  try {
+    if (process.argv[2] === "sign-in") {
+      // The sign-in ends with this command when the command is told to stop.
+      const stop = new AbortController();
+      process.once("SIGTERM", () => stop.abort());
+      process.exit(await signIn(provider, folder, stop.signal));
+    }
+    const signedIn = await login(provider, folder);
+    if (options.json) console.log(JSON.stringify(signedIn));
+    else console.log(signedIn.logged_in ? `Signed in${signedIn.email ? ` as ${signedIn.email}` : ""}.` : "Signed out.");
+    process.exit(0);
+  } catch (error) {
+    console.error((error as Error).message);
+    process.exit(1);
+  }
+}
+
 if (process.argv[2] === "status") {
   // Sidebots names its contract version on every answer, refusals included. The address refuses a request with no `Authorization` header before it reaches the server.
   const answers = (origin: string) =>
@@ -169,7 +247,7 @@ if (process.argv[2] === "status") {
 }
 
 store.installStarterAvatars(join(dirname(fileURLToPath(import.meta.url)), "..", "..", "avatars"));
-const queue = createQueue(store, { claude });
+const queue = createQueue(store, { claude, codex });
 for (const agentId of store.requeueInterrupted()) void queue.kick(agentId);
 queue.startClock();
 
