@@ -55,15 +55,17 @@ export function createApi(store: Store, queue: Queue, machine: string, pushes: b
    * Pairs a phone that brings a code made by `pair`. It is the one route a
    * phone can call without a key. An app on another version of the contract
    * is refused before the code is used, so the code still works once one side
-   * is updated. An app that sends no version counts as older.
+   * is updated. An app that sends no version counts as older. `replaces` is
+   * the hash of the key of a pairing the phone had and lost, which this one
+   * takes the place of.
    */
   app.post("/pair", async (c) => {
     if (Number(c.req.header(CONTRACT_HEADER)) !== CONTRACT_VERSION) {
       return c.json({ error: "This app and Sidebots on this computer speak different versions. Update the older one." }, 409);
     }
     const code = credential(c.req.header("Authorization"), "Pairing");
-    const { name } = await c.req.json<{ name?: string }>();
-    const keys = code && store.pair(code, name?.trim() || "Phone");
+    const { name, replaces } = await c.req.json<{ name?: string; replaces?: string }>();
+    const keys = code && store.pair(code, name?.trim() || "Phone", replaces);
     if (!keys) return c.json({ error: "That code has been used or has run out. Make a new one on the computer." }, 401);
     const paired: Paired = { ...keys, machine };
     return c.json(paired, 201);

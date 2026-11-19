@@ -1,6 +1,7 @@
 // Talks to the Sidebots server on the computer this phone has paired with.
 
 import { useSyncExternalStore } from "react";
+import { CryptoDigestAlgorithm, digestStringAsync } from "expo-crypto";
 import { deviceName } from "expo-device";
 import * as SecureStore from "expo-secure-store";
 import Storage from "expo-sqlite/kv-store";
@@ -96,9 +97,18 @@ export function readPairingLink(link: string): { host: string; code: string } | 
   return host && code ? { host, code } : null;
 }
 
-/** Asks the computer at `host` to pair this phone, with a code the computer made. The code works once. */
+/**
+ * Asks the computer at `host` to pair this phone, with a code the computer
+ * made. The code works once. A key still in the Keychain is from a pairing
+ * the app lost, as when it is deleted and installed again, since the Keychain
+ * outlives the app. The phone sends that key's hash, which is all a computer
+ * keeps of a key and lets nobody in, and the computer puts this pairing in
+ * that one's place.
+ */
 export async function requestPairing({ host, code }: { host: string; code: string }): Promise<Pairing> {
-  const paired = await send<Paired>(`https://${host}/pair`, `Pairing ${code}`, { method: "POST", body: { name: deviceName ?? "Phone" } });
+  const lost = SecureStore.getItem(DEVICE_KEY);
+  const replaces = lost ? await digestStringAsync(CryptoDigestAlgorithm.SHA256, lost) : undefined;
+  const paired = await send<Paired>(`https://${host}/pair`, `Pairing ${code}`, { method: "POST", body: { name: deviceName ?? "Phone", replaces } });
   return { host, ...paired };
 }
 

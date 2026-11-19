@@ -772,16 +772,18 @@ export function openStore(home: string) {
     },
 
     /**
-     * Pairs a phone that brings a pairing code, and uses the code up. Returns
-     * the key the phone sends with every request from then on and the key its
-     * notifications are encrypted with, or nothing when the code is unknown,
-     * used or too old.
+     * Pairs a phone that brings a pairing code, and uses the code up. A phone
+     * that pairs again brings the hash of the key it had as `replaces`, and
+     * this pairing takes that one's place. Returns the key the phone sends
+     * with every request from then on and the key its notifications are
+     * encrypted with, or nothing when the code is unknown, used or too old.
      */
-    pair(code: string, name: string): { key: string; notificationKey: string } | undefined {
+    pair(code: string, name: string, replaces?: string): { key: string; notificationKey: string } | undefined {
       const pairing = db.prepare("delete from pairings where code_hash = ? returning person_id, expires_at").get(hashOf(code)) as
         | { person_id: string; expires_at: number }
         | undefined;
       if (!pairing || pairing.expires_at <= Date.now()) return undefined;
+      if (replaces) db.prepare("delete from devices where key_hash = ?").run(replaces);
       const key = secret();
       // The server encrypts with this one, so it keeps the key itself. The phone reads it in base64.
       const notificationKey = randomBytes(32).toString("base64");
