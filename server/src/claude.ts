@@ -1,6 +1,6 @@
 // Claude Code as a provider: the agent's turns run through the Claude Agent
-// SDK, which starts the Claude Code program. It is the only module that
-// imports the SDK.
+// SDK, which starts the Claude Code the person installed. It is the only
+// module that imports the SDK.
 
 import { rmSync } from "node:fs";
 import { homedir } from "node:os";
@@ -17,7 +17,8 @@ import {
   type SDKUserMessage,
 } from "@anthropic-ai/claude-agent-sdk";
 import type { Limit, Question } from "./contract.ts";
-import { toolsFor, type Driver, type Prompt, type RunTurn } from "./runner.ts";
+import { environment, inFolder, program } from "./programs.ts";
+import { short, toolsFor, type Driver, type Prompt, type RunTurn } from "./runner.ts";
 
 // Added to Claude Code's own prompt. An ask leads with a command's `description`, which Claude Code leaves the agent free to skip, and agents skip it unless told.
 const DESCRIBE_COMMANDS =
@@ -150,8 +151,6 @@ const FACTS = 4;
 const FACT_CHARS = 80;
 /** A name as code writes one, as words: `send_email` is "Send email". */
 const words = (name: string) => name.replace(/[_-]+/g, " ").trim().replace(/^./, (first) => first.toUpperCase());
-/** Text cut to a line a card can lead with. */
-const short = (text: string) => (text.length > 120 ? `${text.slice(0, 119)}…` : text);
 
 /**
  * Runs a turn through Claude Code. A message the person sends while the turn
@@ -172,6 +171,7 @@ const short = (text: string) => (text.length > 120 ? `${text.slice(0, 119)}…` 
  */
 const runTurn: RunTurn = async (turn) => {
   const { prompt, followUps, seen, replied, ask, limits, cwd, sessionId, configDir, apiKey, model, effort, keepSession, stop } = turn;
+  const [claudeCode, env] = [await program("claude"), await environment()];
   const tools = toolsFor(turn);
   const sidebots = createSdkMcpServer({
     name: "sidebots",
@@ -221,8 +221,9 @@ const runTurn: RunTurn = async (turn) => {
       model,
       effort,
       abortController: end,
+      pathToClaudeCodeExecutable: claudeCode,
       // Claude Code uses a key in its environment ahead of a login in the config folder.
-      env: { ...process.env, CLAUDE_CONFIG_DIR: configDir, ...(apiKey && { ANTHROPIC_API_KEY: apiKey }) },
+      env: { ...inFolder("claude", configDir, env), ...(apiKey && { ANTHROPIC_API_KEY: apiKey }) },
       settingSources: ["user", "project"],
       // Claude Code's full prompt. Left out, the SDK gives a short one that says nothing of memory.
       systemPrompt: { type: "preset", preset: "claude_code", append: DESCRIBE_COMMANDS },

@@ -29,6 +29,26 @@ struct ServerStatus: Decodable {
   let people: [Person]
 }
 
+/// A provider's program on this computer, as the server's `providers --json` command finds it.
+struct Program: Decodable {
+  /// The provider's id, such as `codex`.
+  let provider: String
+  /// Where the program is. Nil when it isn't installed.
+  let path: String?
+  let version: String?
+  /// Whether the server's driver works with that version.
+  let supported: Bool
+  /// The oldest version it works with.
+  let oldest: String
+  /// The command that runs the installer the program's maker publishes.
+  let installer: String
+  /// The config folder the program uses on this computer.
+  let configDir: String
+
+  /// Whether agents can run on it as it is.
+  var ready: Bool { path != nil && supported }
+}
+
 /// A paired phone, as the server's `devices --json` command lists it.
 struct Phone: Decodable, Identifiable {
   let id: String
@@ -49,9 +69,9 @@ struct Failed: LocalizedError {
   let errorDescription: String?
 }
 
-/// How the person's agents sign in to Claude Code.
+/// How the person's agents sign in to a provider.
 enum SignIn {
-  /// The Claude login in the person's Claude Code config folder.
+  /// The login in the person's config folder for the provider.
   case login
   case apiKey(String)
 }
@@ -62,8 +82,10 @@ enum SignIn {
 @MainActor @Observable final class Server {
   private(set) var status: ServerStatus?
   private(set) var phones: [Phone] = []
-  /// Whether the Claude login the person's agents run on is signed in. Nil until known, and for agents on an API key.
-  private(set) var signedIn: Bool?
+  /// Each provider's program on this computer. A provider has none until the server has looked.
+  private(set) var programs: [Provider: Program] = [:]
+  /// Whether the login the person's agents run on is signed in, for each provider. A provider has none until it is known, and for agents on an API key.
+  private(set) var signedIn: [Provider: Bool] = [:]
 
   @ObservationIgnored private var process: Process?
   /// Set once the app is quitting: called when the server has stopped.
@@ -71,26 +93,21 @@ enum SignIn {
   @ObservationIgnored private var restartDelay = Duration.seconds(1)
 
   nonisolated private static let resources = Bundle.main.resourceURL!
-  nonisolated private static let node = resources.appending(path: "bin/node")
-  nonisolated private static let folder = resources.appending(path: "server")
-  /// The Claude Code program the Agent SDK ships, which the agents run on.
-  nonisolated static let claude = folder.appending(path: "node_modules/@anthropic-ai/claude-agent-sdk-darwin-arm64/claude")
+  nonisolated static let node = resources.appending(path: "bin/node")
+  nonisolated static let folder = resources.appending(path: "server")
   /// The server's output, where Console shows it.
   private static let log = FileManager.default.homeDirectoryForCurrentUser.appending(path: "Library/Logs/Sidebots/server.log")
 
   /// The person the app sets up, named as the computer knows its user.
   static let personName = NSFullUserName().isEmpty ? NSUserName() : NSFullUserName()
 
-  /// The provider the app sets the person's agents up on: Claude Code, which the app carries.
-  static let provider = "claude"
-
   /// The one person the app looks after: the first on the server.
   var person: ServerStatus.Person? { status?.people.first }
 
-  /// How the person's agents sign in to Claude Code.
-  var account: ServerStatus.Account? { person?.accounts.first { $0.provider == Self.provider } }
+  /// How the person's agents sign in to a provider, once they have set it up.
+  func account(_ provider: Provider) -> ServerStatus.Account? { person?.accounts.first { $0.provider == provider.rawValue } }
 
-  /// What the server, its commands and Claude Code run with: the app's own
+  /// What the server and its commands run with: the app's own
   /// environment, so that `SIDEBOTS_HOME`, `PORT` and `SIDEBOTS_RELAY` pass
   /// through, with the bundled Node first on the PATH and the bundled
   /// cloudflared for the tunnel.
@@ -150,20 +167,39 @@ enum SignIn {
     if let phones: [Phone] = try? Self.decode(await command(["devices", "--json"])) { self.phones = phones }
   }
 
-  /// Looks at whether the Claude login the person's agents run on is signed in.
-  func checkSignIn() async {
-    if let account, account.signIn == "login" {
-      signedIn = await Self.claudeAccount(configDir: account.configDir)?.loggedIn
-    } else {
-      signedIn = nil
-    }
+  /// Looks for each provider's program on this computer.
+  func findPrograms() async {
+    guard let found: [Program] = try? Self.decode(await command(["providers", "--json"])) else { return }
+    programs = Dictionary(uniqueKeysWithValues: found.compactMap { program in Provider(rawValue: program.provider).map { ($0, program) } })
   }
 
-  /// Sets up the person the app looks after, or changes how their agents sign in.
-  func setUp(_ signIn: SignIn, configDir: String) async throws {
+  /// Looks for the providers' programs, and at whether the login the person's agents run on is signed in, for each provider they use one with.
+  func checkSignIn() async {
+    await findPrograms()
+    var signedIn: [Provider: Bool] = [:]
+    for provider in Provider.allCases {
+      if let account = account(provider), account.signIn == "login", programs[provider]?.ready == true {
+        signedIn[provider] = await login(provider, configDir: account.configDir)?.loggedIn
+      }
+    }
+    self.signedIn = signedIn
+  }
+
+  /// Runs the installer a provider's maker publishes, then looks for its program again.
+  func install(_ provider: Provider) async throws {
+    try await command(["install", provider.rawValue])
+    await findPrograms()
+  }
+
+  /// Sets up the person the app looks after on a provider, or changes how their agents sign in to it.
+  func setUp(_ provider: Provider, _ signIn: SignIn, configDir: String) async throws {
     let person = self.person
-    if person == nil { try await command(["add-person", Self.personName, Self.provider, configDir]) }
     let name = person?.name ?? Self.personName
+    if person == nil {
+      try await command(["add-person", name, provider.rawValue, configDir])
+    } else if account(provider) == nil {
+      try await command(["add-account", name, provider.rawValue, configDir])
+    }
     switch signIn {
     case .apiKey(let key):
       // The command takes the key in a file, readable only by this user, which goes once the key is saved.
@@ -172,9 +208,9 @@ enum SignIn {
         throw Failed(errorDescription: "Sidebots couldn't save the key.")
       }
       defer { try? FileManager.default.removeItem(at: file) }
-      try await command(["api-key", name, Self.provider, file.path])
+      try await command(["api-key", name, provider.rawValue, file.path])
     case .login:
-      if account?.signIn == "api-key" { try await command(["api-key", name, Self.provider, "--remove"]) }
+      if account(provider)?.signIn == "api-key" { try await command(["api-key", name, provider.rawValue, "--remove"]) }
     }
     await refresh()
     await checkSignIn()
@@ -198,12 +234,9 @@ enum SignIn {
     return output
   }
 
-  /// The Claude login in a Claude Code config folder, as Claude Code itself reports it.
-  static func claudeAccount(configDir: String) async -> ClaudeAccount? {
-    var environment = environment
-    environment["CLAUDE_CONFIG_DIR"] = configDir
-    let (_, output, _) = await run(claude, ["auth", "status", "--json"], environment: environment)
-    return try? decode(output)
+  /// The login in a provider's config folder, as the provider's program itself reports it. Nil when the program isn't there to ask.
+  func login(_ provider: Provider, configDir: String) async -> Login? {
+    try? Self.decode(await command(["signed-in", provider.rawValue, configDir, "--json"]))
   }
 
   /// Runs a program to its end and returns its exit status, what it printed, and what it printed as errors.
@@ -235,8 +268,8 @@ enum SignIn {
   }
 }
 
-/// What `claude auth status --json` says about a Claude Code config folder.
-struct ClaudeAccount: Decodable {
+/// The login in a provider's config folder, as the server's `signed-in --json` command reports it: whether it is signed in, and as whom when the provider says.
+struct Login: Decodable {
   let loggedIn: Bool
   let email: String?
 }

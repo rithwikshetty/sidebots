@@ -8,7 +8,7 @@ import { fetch as streamingFetch } from "expo/fetch";
 import { File } from "expo-file-system";
 import { Image } from "expo-image";
 import Storage from "expo-sqlite/kv-store";
-import type { About, Agent, AgentWithLatest, Avatar, Effort, Found, Message, Model, StreamEvent, Usage } from "@server/contract";
+import type { About, Agent, AgentWithLatest, Avatar, Effort, Found, Message, Model, Provider, StreamEvent, Usage } from "@server/contract";
 import { ApiError, avatarSheet, behind, isPaired, onPairing, remote, request, unpair, type Behind } from "./api";
 import type { Picked } from "./files";
 
@@ -256,8 +256,9 @@ export async function stop(agentId: string): Promise<void> {
   await request(`/agents/${agentId}/stop`, { method: "POST" });
 }
 
-export async function createAgent(name: string, avatarId: string): Promise<Agent> {
-  const agent = await request<Agent>("/agents", { method: "POST", body: { name, avatarId } });
+/** Adds an agent. It runs on `provider`, or with none named, on the first the person set up. */
+export async function createAgent(name: string, avatarId: string, provider?: Provider): Promise<Agent> {
+  const agent = await request<Agent>("/agents", { method: "POST", body: { name, avatarId, provider } });
   // The event stream may have brought the agent already.
   const others = state.agents.filter((each) => each.id !== agent.id);
   set({ agents: [{ ...agent, latest: null, working: false, unread: 0, waiting_on: null }, ...others], messages: { ...state.messages, [agent.id]: [] } });

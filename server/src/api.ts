@@ -6,7 +6,7 @@ import { Hono } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import { streamSSE } from "hono/streaming";
 import { COLOR, CONTRACT_HEADER, CONTRACT_VERSION, MESSAGE_BYTES, PROVIDERS } from "./contract.ts";
-import type { Effort, Model, Paired, PushToken, StreamEvent } from "./contract.ts";
+import type { Effort, Model, Paired, Provider, PushToken, StreamEvent } from "./contract.ts";
 import type { AgentChanges, Device, Person, Store } from "./store.ts";
 import type { Queue } from "./runner.ts";
 
@@ -86,10 +86,13 @@ export function createApi(store: Store, queue: Queue, machine: string, pushes: b
 
   app.get("/agents", (c) => c.json(store.agentsFor(c.var.person.id)));
 
+  /** Adds an agent, on one of the providers the person has set up: the one named, or the first they set up. */
   app.post("/agents", async (c) => {
-    const { name, avatarId } = await c.req.json<{ name?: string; avatarId?: string }>();
+    const { name, avatarId, provider } = await c.req.json<{ name?: string; avatarId?: string; provider?: string }>();
     if (!name?.trim() || !avatarId?.trim()) return c.json({ error: "An agent needs a name and an avatar." }, 400);
-    return c.json(store.createAgent(c.var.person, name.trim(), avatarId.trim()), 201);
+    const account = store.accounts(c.var.person.id).find((each) => provider === undefined || each.provider === provider);
+    if (!account) return c.json({ error: `${Object.hasOwn(PROVIDERS, provider!) ? PROVIDERS[provider as Provider].name : "That"} isn't set up on your computer.` }, 400);
+    return c.json(store.createAgent(c.var.person, name.trim(), avatarId.trim(), account.provider), 201);
   });
 
   /** Changes any of an agent's name, avatar, model, effort and colour, and whether it is muted or hidden. A colour of null takes the avatar's. */

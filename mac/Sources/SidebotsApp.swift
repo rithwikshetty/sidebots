@@ -37,7 +37,7 @@ import SwiftUI
     Task {
       await server.refresh()
       if server.person == nil { showSetup() }
-      // Every two seconds until the server answers, then every fifteen. Claude Code's sign-in is looked at once a minute.
+      // Every two seconds until the server answers, then every fifteen. Each provider's program and sign-in are looked at once a minute.
       var lookedAtSignIn = ContinuousClock.now - .seconds(60)
       while true {
         if ContinuousClock.now - lookedAtSignIn >= .seconds(60) {
@@ -57,11 +57,11 @@ import SwiftUI
     return .terminateLater
   }
 
-  /// Opens the window that asks how the agents sign in. On first run it goes on to the QR code.
-  func showSetup() {
+  /// Opens the window that sets the person up on a provider, or changes how their agents sign in to it. On first run the person picks the provider there, and the window goes on to the QR code.
+  func showSetup(_ provider: Provider? = nil) {
     let firstRun = server.person == nil
     show("setup", title: "Sidebots") {
-      SetupView(server: server, changing: !firstRun) { [weak self] in
+      SetupView(server: server, provider: firstRun ? nil : provider) { [weak self] in
         guard let self else { return }
         self.close("setup")
         if firstRun {
@@ -117,8 +117,9 @@ import SwiftUI
 /**
  * The panel under the menu bar icon, laid out as the system's own menu bar
  * panels are: whether phones can reach this computer at the top, then the paired
- * phones with a way to pair another, then how the agents sign in to Claude Code,
- * and Open at login, Check for updates and Quit at the foot. Rows light up under the pointer.
+ * phones with a way to pair another, then how the agents sign in to each provider
+ * the person has set up, or that its program is missing from this Mac, with a way to set up one they haven't, and Open at login,
+ * Check for updates and Quit at the foot. Rows light up under the pointer.
  * A phone's row asks before it unpairs the phone, since the phone needs a new code to pair again.
  */
 struct MenuContent: View {
@@ -150,15 +151,32 @@ struct MenuContent: View {
         }
         PanelRow(symbol: "qrcode", title: "Pair a phone…", action: app.showPairing)
         Divider().padding(.vertical, 6)
-        if let account = server.account {
-          heading(account.name)
-          PanelRow(symbol: account.signIn == "api-key" ? "key.fill" : "person.crop.circle.fill", title: signIn(account), detail: signInDetail(account), warning: signedOut(account)) {
-            Button(signedOut(account) ? "Sign in" : "Change") { app.showSetup() }.controlSize(.small)
+        ForEach(Provider.allCases) { provider in
+          if let account = server.account(provider) {
+            heading(provider.name)
+            if let program = server.programs[provider], !program.ready {
+              // Agents on it can't run until its program is on this Mac, at a version Sidebots works with.
+              PanelRow(
+                symbol: "exclamationmark.triangle.fill",
+                title: program.path == nil ? "\(provider.name) isn't on this Mac" : "\(provider.name) needs an update",
+                detail: program.path == nil ? "Agents can't answer until you install it" : "Sidebots needs \(program.oldest) or later",
+                warning: true
+              ) {
+                Button(program.path == nil ? "Install" : "Check") { app.showSetup(provider) }.controlSize(.small)
+              }
+            } else {
+              let signedOut = account.signIn == "login" && server.signedIn[provider] == false
+              PanelRow(symbol: account.signIn == "api-key" ? "key.fill" : "person.crop.circle.fill", title: signIn(provider, account, signedOut), detail: signInDetail(provider, account, signedOut), warning: signedOut) {
+                Button(signedOut ? "Sign in" : "Change") { app.showSetup(provider) }.controlSize(.small)
+              }
+            }
+          } else {
+            PanelRow(symbol: "plus", title: "Set up \(provider.name)…") { app.showSetup(provider) }
           }
         }
       } else {
         Divider().padding(.vertical, 6)
-        PanelRow(symbol: "sparkles", title: "Finish setting up…", action: app.showSetup)
+        PanelRow(symbol: "sparkles", title: "Finish setting up…") { app.showSetup() }
       }
       Divider().padding(.vertical, 6)
       Toggle(isOn: Binding(get: { app.openAtLogin }, set: { app.setOpenAtLogin($0) })) {
@@ -228,18 +246,14 @@ struct MenuContent: View {
     }
   }
 
-  private func signedOut(_ account: ServerStatus.Account) -> Bool {
-    account.signIn == "login" && server.signedIn == false
-  }
-
-  private func signIn(_ account: ServerStatus.Account) -> String {
+  private func signIn(_ provider: Provider, _ account: ServerStatus.Account, _ signedOut: Bool) -> String {
     if account.signIn == "api-key" { return "API key" }
-    return signedOut(account) ? "Signed out of Claude" : "Your Claude plan"
+    return signedOut ? "Signed out of \(provider.account)" : "Your \(provider.account) plan"
   }
 
-  private func signInDetail(_ account: ServerStatus.Account) -> String {
-    if account.signIn == "api-key" { return "Agents bill your Anthropic API key" }
-    return signedOut(account) ? "Agents can't answer until you sign in" : "Agents use your Claude subscription"
+  private func signInDetail(_ provider: Provider, _ account: ServerStatus.Account, _ signedOut: Bool) -> String {
+    if account.signIn == "api-key" { return "Agents bill your \(provider.maker) API key" }
+    return signedOut ? "Agents can't answer until you sign in" : "Agents use your \(provider.account) subscription"
   }
 }
 

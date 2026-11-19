@@ -8,7 +8,7 @@
  * its own. The app sends its own in the same header, and the server refuses
  * to pair an app on another version.
  */
-export const CONTRACT_VERSION = 2;
+export const CONTRACT_VERSION = 3;
 export const CONTRACT_HEADER = "Sidebots-Contract";
 
 export type Sender = "person" | "agent" | "sidebots";
@@ -88,9 +88,9 @@ export const MESSAGE_BYTES = 95 * 1024 * 1024;
 
 /**
  * The programs an agent can run on, by id. Each has the name the apps show,
- * the models it answers with and how hard it can think before it answers, by
- * the program's own names for them and the names the app shows, and what a
- * new agent starts on. A more capable model and more effort are slower and use
+ * the models it answers with and how hard it can think before it answers,
+ * each by the id its driver knows it by and the name the app shows, and what
+ * a new agent starts on. A more capable model and more effort are slower and use
  * more of the person's plan or API credit. `instructions` is the file in the
  * agent's folder that the program reads the agent's instructions from.
  */
@@ -103,13 +103,21 @@ export const PROVIDERS = {
     effort: "medium",
     instructions: "CLAUDE.md",
   },
+  codex: {
+    name: "Codex",
+    models: { astra: "Astra", sol: "Sol", terra: "Terra", luna: "Luna" },
+    efforts: { low: "Low", medium: "Medium", high: "High" },
+    model: "sol",
+    effort: "medium",
+    instructions: "AGENTS.md",
+  },
 } as const;
 export type Provider = keyof typeof PROVIDERS;
-/** The provider a new agent runs on. */
-export const DEFAULT_PROVIDER: Provider = "claude";
 /** A model of any provider. Each name always means the newest model of its kind. */
 export type Model = { [P in Provider]: keyof (typeof PROVIDERS)[P]["models"] }[Provider];
 export type Effort = { [P in Provider]: keyof (typeof PROVIDERS)[P]["efforts"] }[Provider];
+/** What a provider offers, read for an agent whichever provider it runs on: its name, and the names the app shows for its models and efforts. */
+export type Offered = { name: string; models: Partial<Record<Model, string>>; efforts: Partial<Record<Effort, string>> };
 
 /**
  * `read_at` is the time up to which the person has read the chat. A `muted`

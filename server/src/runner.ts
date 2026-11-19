@@ -86,7 +86,7 @@ export type RunTurn = (turn: Turn) => Promise<TurnResult>;
 export type Driver = {
   runTurn: RunTurn;
   failure: (words: string) => string;
-  forget: (cwd: string, configDir: string) => void;
+  forget: (cwd: string, configDir: string) => void | Promise<void>;
 };
 /** A driver for each provider. */
 export type Drivers = Record<Provider, Driver>;
@@ -187,6 +187,9 @@ const UPDATE_GAP_MS = 3 * 60_000;
 const ASK_WAIT_MS = 30 * 60_000;
 /** What a job's run replies when it has nothing to tell the person. */
 const SILENT = "SILENT";
+/** Text cut to a line a card can lead with. */
+export const short = (text: string) => (text.length > 120 ? `${text.slice(0, 119)}…` : text);
+
 function found(messages: Found[]): string {
   if (messages.length === 0) return "No messages match.";
   return messages
@@ -629,7 +632,7 @@ export function createQueue(store: Store, drivers: Drivers, now: () => number = 
       await busy.get(agent.id)?.catch(() => undefined);
       removed.delete(agent.id);
       const account = store.account(agent.person_id, agent.provider);
-      if (account) drivers[agent.provider].forget(store.agentHome(agent.id), account.config_dir);
+      if (account) await drivers[agent.provider].forget(store.agentHome(agent.id), account.config_dir);
     },
 
     /** Starts the clock that runs each job when its time comes. Returns a function that stops it. */

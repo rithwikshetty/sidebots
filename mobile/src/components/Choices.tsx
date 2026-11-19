@@ -22,7 +22,7 @@ export function Choices<Id extends string>({
   onChange,
   plain = false,
 }: {
-  options: Record<Id, string>;
+  options: Partial<Record<Id, string>>;
   value: Id;
   onChange: (value: Id) => void;
   plain?: boolean;

@@ -8,11 +8,13 @@
   "scripts": {
     "start": "node src/main.ts",
     "add-person": "node src/main.ts add-person",
+    "add-account": "node src/main.ts add-account",
     "api-key": "node src/main.ts api-key",
     "pair": "node src/main.ts pair",
     "devices": "node src/main.ts devices",
     "remove-device": "node src/main.ts remove-device",
     "status": "node src/main.ts status",
+    "providers": "node src/main.ts providers",
     "test": "node --test",
     "typecheck": "tsc --noEmit"
   },
@@ -27,5 +29,10 @@
     "@types/node": "^26.6.6",
     "@types/qrcode-terminal": "^0.12.2",
     "typescript": "^7.0.2"
+  },
+  "pnpm": {
+    "ignoredOptionalDependencies": [
+      "@anthropic-ai/claude-agent-sdk-*"
+    ]
   }
 }

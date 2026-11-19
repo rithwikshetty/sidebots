@@ -6,7 +6,7 @@ import { basename, join, resolve } from "node:path";
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
 
-import { COLOR, DEFAULT_PROVIDER, PROVIDERS, USAGE_DAYS, betweenAgents, readableColor } from "./contract.ts";
+import { COLOR, PROVIDERS, USAGE_DAYS, betweenAgents, readableColor } from "./contract.ts";
 import type { About, Agent, AgentWithLatest, Ask, Avatar, Found, Job, Limit, Memory, Message, Provider, PushToken, Question, Schedule, Sender, Status, TurnKind, Usage, Used } from "./contract.ts";
 
 export type Person = { id: string; name: string };
@@ -177,7 +177,7 @@ const toAgent = (row: AgentRow): Agent => ({ ...row, muted: row.muted === 1, hid
 type JobRow = Omit<Job, "schedule"> & { schedule: string };
 const toJob = (row: JobRow): Job => ({ ...row, schedule: JSON.parse(row.schedule) as Schedule });
 
-/** A memory file as Claude Code writes one: a name and a description between `---` lines, then the memory itself. */
+/** A memory file as an agent writes one: a name and a description between `---` lines, then the memory itself. */
 function toMemory(file: string, text: string): Memory {
   const [, head = "", body = text] = /^---\n([\s\S]*?)\n---\n?([\s\S]*)$/.exec(text) ?? [];
   const field = (name: string) => new RegExp(`^${name}:\\s*"?(.*?)"?\\s*$`, "m").exec(head)?.[1] ?? "";
@@ -311,7 +311,12 @@ export function openStore(home: string) {
       return person;
     },
 
-    /** How the person's agents sign in to each provider they have set up. */
+    /** Sets a person up on another provider, with the config folder their agents sign in to it with. */
+    addAccount(personId: string, provider: Provider, configDir: string): void {
+      db.prepare("insert into accounts (person_id, provider, config_dir) values (?, ?, ?)").run(personId, provider, configDir);
+    },
+
+    /** How the person's agents sign in to each provider they have set up, the first they set up first. */
     accounts(personId: string): Account[] {
       return db.prepare("select * from accounts where person_id = ? order by rowid").all(personId) as Account[];
     },
@@ -355,16 +360,17 @@ export function openStore(home: string) {
       return apiKeys()[personId]?.[provider];
     },
 
-    createAgent(person: Person, name: string, avatarId: string): Agent {
+    /** Adds an agent that runs on a provider, on the model and effort a new agent starts on there. */
+    createAgent(person: Person, name: string, avatarId: string, provider: Provider): Agent {
       const now = Date.now();
       const agent: Agent = {
         id: randomUUID(),
         person_id: person.id,
         name,
         avatar_id: avatarId,
-        provider: DEFAULT_PROVIDER,
-        model: PROVIDERS[DEFAULT_PROVIDER].model,
-        effort: PROVIDERS[DEFAULT_PROVIDER].effort,
+        provider,
+        model: PROVIDERS[provider].model,
+        effort: PROVIDERS[provider].effort,
         muted: false,
         hidden: false,
         color: null,
@@ -439,7 +445,7 @@ export function openStore(home: string) {
       const folder = agentHome(agent.id);
       const read = (path: string) => (existsSync(path) ? readFileSync(path, "utf8") : "");
       const memory = join(folder, "memory");
-      // MEMORY.md is Claude Code's list of the other files.
+      // MEMORY.md is the agent's list of the other files.
       const files = existsSync(memory) ? readdirSync(memory).filter((file) => file.endsWith(".md") && file !== "MEMORY.md") : [];
       return {
         instructions: read(join(folder, PROVIDERS[agent.provider].instructions)),

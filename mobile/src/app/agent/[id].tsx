@@ -4,7 +4,7 @@ import { useLocalSearchParams, useRouter } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import Animated, { LayoutAnimationConfig } from "react-native-reanimated";
 import { ChevronRight, Trash2 } from "lucide-react-native";
-import { PROVIDERS, USAGE_DAYS, scheduleWords, type AgentWithLatest, type Job } from "@server/contract";
+import { PROVIDERS, USAGE_DAYS, scheduleWords, type AgentWithLatest, type Job, type Offered } from "@server/contract";
 import { AvatarPicker } from "@/components/AvatarPicker";
 import { AvatarView } from "@/components/AvatarView";
 import { Choices } from "@/components/Choices";
@@ -145,14 +145,14 @@ function AgentAbout({ agent }: { agent: AgentWithLatest }) {
 
 /** The line under the agent's name: its model and effort, and whether it is muted or hidden. */
 function caption(agent: AgentWithLatest): string {
-  const { models, efforts } = PROVIDERS[agent.provider];
+  const { models, efforts }: Offered = PROVIDERS[agent.provider];
   return [`${models[agent.model]} · ${efforts[agent.effort]} effort`, agent.muted ? "Muted" : null, agent.hidden ? "Hidden" : null].filter(Boolean).join(" · ");
 }
 
 function SettingsTab({ agent, change }: { agent: AgentWithLatest; change: (changes: AgentChanges) => void }) {
   const theme = useTheme();
   const router = useRouter();
-  const provider = PROVIDERS[agent.provider];
+  const provider: Offered = PROVIDERS[agent.provider];
   return (
     <>
       <Section

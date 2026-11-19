@@ -1,9 +1,11 @@
-import { useState } from "react";
-import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, TextInput } from "react-native";
+import { useEffect, useState } from "react";
+import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
 import { useRouter } from "expo-router";
+import { PROVIDERS, type Provider } from "@server/contract";
 import { AvatarPicker } from "@/components/AvatarPicker";
+import { Choices } from "@/components/Choices";
 import { FadingText } from "@/components/FadingText";
-import { createAgent, useAvatars } from "@/lib/state";
+import { createAgent, loadUsage, useAvatars, useUsage } from "@/lib/state";
 import { useTheme } from "@/lib/theme";
 
 /** A stable number from a name, so a name always suggests the same avatar. */
@@ -14,9 +16,11 @@ function hash(text: string): number {
 }
 
 /**
- * The sheet for a new agent: its name, its avatar, and Create agent. The
- * keyboard covers the sheet's lower part, so the sheet scrolls up from behind
- * it when large text doesn't fit, which keeps Create agent in reach.
+ * The sheet for a new agent: its name, its avatar, and Create agent. A person
+ * who has set up more than one provider on their computer also picks the one
+ * it runs on, which starts as the first they set up. The keyboard covers the
+ * sheet's lower part, so the sheet scrolls up from behind it when large text
+ * doesn't fit, which keeps Create agent in reach.
  */
 export default function NewAgent() {
   const theme = useTheme();
@@ -24,6 +28,13 @@ export default function NewAgent() {
   const avatars = useAvatars();
   const [name, setName] = useState("");
   const [picked, setPicked] = useState<string | null>(null);
+  // The providers the person has set up, which the computer lists with how each is signed in to.
+  const providers = (useUsage()?.accounts ?? []).map((account) => account.provider);
+  const [chosen, setChosen] = useState<Provider | null>(null);
+  const provider = chosen ?? providers[0];
+  useEffect(() => {
+    loadUsage().catch(() => {});
+  }, []);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
@@ -36,7 +47,7 @@ export default function NewAgent() {
     setBusy(true);
     setError(null);
     try {
-      const agent = await createAgent(trimmed, avatarId);
+      const agent = await createAgent(trimmed, avatarId, provider);
       router.dismiss();
       router.push(`/chat/${agent.id}`);
     } catch (failure) {
@@ -64,6 +75,11 @@ export default function NewAgent() {
         style={[styles.name, { color: theme.ink, borderBottomColor: theme.line }]}
       />
       <AvatarPicker value={avatarId} onChange={setPicked} />
+      {providers.length > 1 ? (
+        <View style={[styles.providers, { backgroundColor: theme.field }]}>
+          <Choices options={Object.fromEntries(providers.map((id) => [id, PROVIDERS[id].name]))} value={provider} onChange={setChosen} />
+        </View>
+      ) : null}
       <FadingText style={[styles.hint, { color: error ? theme.danger : theme.ink2 }]}>{error ?? "Tell it what it's for in the chat."}</FadingText>
       <Pressable
         onPress={onCreate}
@@ -79,6 +95,7 @@ const styles = StyleSheet.create({
   page: { paddingHorizontal: 24, paddingTop: 28, paddingBottom: 24, gap: 16 },
   title: { fontSize: 17, fontWeight: "600", textAlign: "center" },
   name: { fontSize: 26, fontWeight: "700", textAlign: "center", paddingVertical: 8, borderBottomWidth: StyleSheet.hairlineWidth },
+  providers: { borderRadius: 16, borderCurve: "continuous" },
   hint: { fontSize: 15, textAlign: "center" },
   button: { minHeight: 50, borderRadius: 14, alignItems: "center", justifyContent: "center", paddingVertical: 12 },
   buttonText: { fontSize: 17, fontWeight: "600" },
