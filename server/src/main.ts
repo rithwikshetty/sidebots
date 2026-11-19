@@ -113,14 +113,15 @@ if (process.argv[2] === "pair") {
   const host = (options.host ?? store.machine()?.address)?.replace(/^https?:\/\//, "").replace(/\/+$/, "");
   // How many days the code works for, for a phone that pairs later than ten minutes from now, as App Review's does.
   const days = options.days === undefined ? undefined : Number(options.days);
-  if (!positionals[0] || !host || (days !== undefined && !(days > 0))) {
+  const life = days === undefined ? undefined : days * 24 * 60 * 60_000;
+  if (!positionals[0] || !host || (life !== undefined && !(life > 0 && Number.isFinite(life)))) {
     console.error(
       "usage: node src/main.ts pair <person> --host <address-the-phone-reaches> --days <how-many-days-the-code-works>. `--host` can be left out once the relay has given this machine an address. Without `--days`, the code works for ten minutes.",
     );
     process.exit(1);
   }
   const person = personNamed(positionals[0]);
-  const { code, expiresAt } = store.addPairing(person.id, days === undefined ? undefined : days * 24 * 60 * 60_000);
+  const { code, expiresAt } = store.addPairing(person.id, life);
   const link = `sidebots://pair?host=${encodeURIComponent(host)}&code=${code}`;
   if (options.json) {
     console.log(JSON.stringify({ link, expires_at: expiresAt }));
