@@ -1,5 +1,5 @@
 import { test } from "node:test";
-import { createDecipheriv } from "node:crypto";
+import { createDecipheriv, createHash } from "node:crypto";
 import assert from "node:assert/strict";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, statSync, truncateSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -112,6 +112,33 @@ test("a phone pairs once with a code, and only a paired phone is let in", async 
   assert.equal(late.expiresAt, Date.now() + 10 * 60_000);
   t.mock.timers.tick(10 * 60_000);
   assert.equal((await pairWith(late.code)).status, 401);
+});
+
+test("a phone that pairs again with the key it had takes the place of its earlier pairing", async () => {
+  const { store, call, pair, app } = setup(async () => reply("ok"));
+  const alex = store.personByName(ME)!;
+  /** Pairs as the app does, which sends the hash of the key it still holds from a pairing it lost. */
+  const pairWith = async (code: string, lost?: string) => {
+    const replaces = lost && createHash("sha256").update(lost).digest("hex");
+    const response = await app.request("/pair", {
+      method: "POST",
+      headers: { Authorization: `Pairing ${code}`, "Content-Type": "application/json", "Sidebots-Contract": String(CONTRACT_VERSION) },
+      body: JSON.stringify({ name: "iPhone", replaces }),
+    });
+    return { status: response.status, key: ((await response.json()) as { key?: string }).key };
+  };
+  const other = pair(ME);
+  const lost = await pairWith(store.addPairing(alex.id).code);
+
+  const again = await pairWith(store.addPairing(alex.id).code, lost.key);
+  assert.equal((await call({ Authorization: `Bearer ${lost.key}` }, "GET", "/agents")).status, 401);
+  assert.equal((await call({ Authorization: `Bearer ${again.key}` }, "GET", "/agents")).status, 200);
+  assert.equal((await call(other, "GET", "/agents")).status, 200);
+  assert.deepEqual(store.devices().map((device) => device.name), ["Alex's phone", "iPhone"]);
+
+  // A key without a code that works replaces nothing.
+  assert.equal((await pairWith("made-up", again.key)).status, 401);
+  assert.equal((await call({ Authorization: `Bearer ${again.key}` }, "GET", "/agents")).status, 200);
 });
 
 test("a phone removed on the computer is refused from its next request, and the person's other phones stay paired", async () => {
