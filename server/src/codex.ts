@@ -398,10 +398,9 @@ function failure(words: string): string {
  * goes all the same.
  */
 const forget = (start: () => Promise<Start>) => async (cwd: string, configDir: string): Promise<void> => {
-  const codex = await start().then(
-    (started) => connect(started, configDir),
-    () => undefined,
-  );
+  const codex = await start()
+    .then((started) => connect(started, configDir))
+    .catch(() => undefined);
   if (!codex) return;
   try {
     await greet(codex);

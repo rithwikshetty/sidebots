@@ -634,8 +634,11 @@ export function createQueue(store: Store, drivers: Drivers, now: () => number = 
       stops.get(agent.id)?.abort();
       await busy.get(agent.id)?.catch(() => undefined);
       const account = store.account(agent.person_id, agent.provider);
-      if (account) await drivers[agent.provider].forget(store.agentHome(agent.id), account.config_dir);
-      removed.delete(agent.id);
+      try {
+        if (account) await drivers[agent.provider].forget(store.agentHome(agent.id), account.config_dir);
+      } finally {
+        removed.delete(agent.id);
+      }
     },
 
     /** Starts the clock that runs each job when its time comes. Returns a function that stops it. */
