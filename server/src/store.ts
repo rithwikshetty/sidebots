@@ -153,7 +153,7 @@ const SEARCH_LIMIT = 20;
 const AVATAR_ID = /^[a-z0-9-]+$/;
 // A stored attachment's file name: no folders, and never a dot first.
 const ATTACHMENT_NAME = /^[\w-][\w.-]*$/;
-// How long a pairing code works.
+// How long a pairing code works, unless whoever makes it says.
 const PAIRING_MS = 10 * 60_000;
 
 /** A pairing code or a device key: 32 random bytes, as text that fits in a link. */
@@ -763,12 +763,12 @@ export function openStore(home: string) {
       return rows.map((row) => row.agent_id);
     },
 
-    /** Makes a code that pairs one phone as the person, once, within ten minutes. Returns the code and when it expires. */
-    addPairing(personId: string): { code: string; expiresAt: number } {
+    /** Makes a code that pairs one phone as the person, once, within `life` milliseconds, which is ten minutes unless one is given. Returns the code and when it expires. */
+    addPairing(personId: string, life = PAIRING_MS): { code: string; expiresAt: number } {
       const now = Date.now();
       db.prepare("delete from pairings where expires_at <= ?").run(now);
       const code = secret();
-      const expiresAt = now + PAIRING_MS;
+      const expiresAt = now + life;
       db.prepare("insert into pairings (code_hash, person_id, expires_at) values (?, ?, ?)").run(hashOf(code), personId, expiresAt);
       return { code, expiresAt };
     },

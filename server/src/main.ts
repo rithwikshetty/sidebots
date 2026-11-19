@@ -31,7 +31,7 @@ const port = Number(process.env.PORT ?? 4317);
 const store = openStore(home);
 const { values: options, positionals } = parseArgs({
   args: process.argv.slice(3),
-  options: { host: { type: "string" }, remove: { type: "boolean" }, json: { type: "boolean" } },
+  options: { host: { type: "string" }, days: { type: "string" }, remove: { type: "boolean" }, json: { type: "boolean" } },
   allowPositionals: true,
 });
 
@@ -111,12 +111,17 @@ if (process.argv[2] === "api-key") {
 if (process.argv[2] === "pair") {
   // The address the phone reaches this server at, without `https://`. It is the machine's own address unless `--host` names another.
   const host = (options.host ?? store.machine()?.address)?.replace(/^https?:\/\//, "").replace(/\/+$/, "");
-  if (!positionals[0] || !host) {
-    console.error("usage: node src/main.ts pair <person> --host <address-the-phone-reaches>. `--host` can be left out once the relay has given this machine an address.");
+  // How many days the code works for, for a phone that pairs later than ten minutes from now, as App Review's does.
+  const days = options.days === undefined ? undefined : Number(options.days);
+  const life = days === undefined ? undefined : days * 24 * 60 * 60_000;
+  if (!positionals[0] || !host || (life !== undefined && !(life > 0 && Number.isFinite(life)))) {
+    console.error(
+      "usage: node src/main.ts pair <person> --host <address-the-phone-reaches> --days <how-many-days-the-code-works>. `--host` can be left out once the relay has given this machine an address. Without `--days`, the code works for ten minutes.",
+    );
     process.exit(1);
   }
   const person = personNamed(positionals[0]);
-  const { code, expiresAt } = store.addPairing(person.id);
+  const { code, expiresAt } = store.addPairing(person.id, life);
   const link = `sidebots://pair?host=${encodeURIComponent(host)}&code=${code}`;
   if (options.json) {
     console.log(JSON.stringify({ link, expires_at: expiresAt }));
@@ -124,7 +129,7 @@ if (process.argv[2] === "pair") {
   }
   qrcode.generate(link, { small: true });
   console.log(link);
-  console.log(`Scan the code in Sidebots on ${person.name}'s phone, or enter the link there. It pairs one phone, within ten minutes.`);
+  console.log(`Scan the code in Sidebots on ${person.name}'s phone, or enter the link there. It pairs one phone, within ${days === undefined ? "ten minutes" : days === 1 ? "a day" : `${days} days`}.`);
   process.exit(0);
 }
 
