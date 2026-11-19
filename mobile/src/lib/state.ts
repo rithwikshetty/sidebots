@@ -10,6 +10,7 @@ import { Image } from "expo-image";
 import Storage from "expo-sqlite/kv-store";
 import type { About, Agent, AgentWithLatest, Avatar, Effort, Found, Message, Model, Provider, StreamEvent, Usage } from "@server/contract";
 import { ApiError, avatarSheet, behind, isPaired, onPairing, remote, request, unpair, type Behind } from "./api";
+import { demoFetch, isDemo } from "./demo";
 import type { Picked } from "./files";
 
 type State = {
@@ -378,7 +379,7 @@ async function listen(signal: AbortSignal): Promise<void> {
   while (!signal.aborted) {
     try {
       const events = remote("/events");
-      const response = await streamingFetch(events.uri, { headers: { ...events.headers, Accept: "text/event-stream" }, signal });
+      const response = await (isDemo(events.uri) ? demoFetch : streamingFetch)(events.uri, { headers: { ...events.headers, Accept: "text/event-stream" }, signal });
       // A computer on another version of the contract is asked again until one side is updated.
       const side = behind(response);
       if (side !== state.behind) set({ behind: side });

@@ -1,4 +1,6 @@
 // Talks to the Sidebots server on the computer this phone has paired with.
+// For Apple's review that computer is the demo one inside the app, which
+// answers the same calls.
 
 import { useSyncExternalStore } from "react";
 import { CryptoDigestAlgorithm, digestStringAsync } from "expo-crypto";
@@ -6,6 +8,7 @@ import { deviceName } from "expo-device";
 import * as SecureStore from "expo-secure-store";
 import Storage from "expo-sqlite/kv-store";
 import { CONTRACT_HEADER, CONTRACT_VERSION, type Paired } from "@server/contract";
+import { DEMO_HOST, demoFetch, demoSheet, isDemo } from "./demo";
 
 const HOST_KEY = "host";
 const MACHINE_KEY = "machine";
@@ -164,8 +167,9 @@ export function remote(path: string): Remote {
   return { uri: `https://${pairing?.host}${path}`, headers: { Authorization: `Bearer ${pairing?.key}` } };
 }
 
+/** An avatar's spritesheet. The demo computer's are in the app's own files. */
 export function avatarSheet(avatarId: string): Remote {
-  return remote(`/avatars/${avatarId}/spritesheet`);
+  return pairing?.host === DEMO_HOST ? { uri: demoSheet(avatarId), headers: {} } : remote(`/avatars/${avatarId}/spritesheet`);
 }
 
 /** A file sent with a message, from its path in the agent's folder. */
@@ -197,7 +201,7 @@ async function send<T>(url: string, authorization: string, init: { method?: stri
   const headers = { Authorization: authorization, [CONTRACT_HEADER]: String(CONTRACT_VERSION) };
   let response: Response;
   try {
-    response = await fetch(url, {
+    response = await (isDemo(url) ? demoFetch : fetch)(url, {
       method: init.method ?? "GET",
       // A form names its own content type, with the boundary between its parts.
       headers: form ? headers : { ...headers, "Content-Type": "application/json" },
