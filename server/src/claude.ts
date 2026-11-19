@@ -10,6 +10,7 @@ import {
   createSdkMcpServer,
   query,
   tool,
+  type SDKControlGetUsageResponse,
   type SDKControlInterruptResponse,
   type SDKMessage,
   type SDKRateLimitInfo,
@@ -60,11 +61,33 @@ export function limitsIn(info: SDKRateLimitInfo, at: number): Limit[] {
   );
 }
 
+/**
+ * Where limits of the person's plan stand, from Claude Code's answer when it
+ * is asked at `at`: the part of each that is used, out of a hundred, and when
+ * it resets. A limit one model has apart from the rest comes under the name
+ * Anthropic gives the model, as "Fable" is. A login with no plan, as an API
+ * key's is, has none.
+ */
+export function limitsAnswered({ rate_limits: plan }: Pick<SDKControlGetUsageResponse, "rate_limits">, at: number): Limit[] {
+  if (!plan) return [];
+  const windows = [
+    ...(["five_hour", "seven_day", "seven_day_opus", "seven_day_sonnet"] as const).map((window) => ({ name: LIMITS[window], window: plan[window] })),
+    ...(plan.model_scoped ?? []).map((window) => ({ name: `${window.display_name} limit`, window })),
+  ];
+  return windows.flatMap(({ name, window }) =>
+    typeof window?.utilization === "number" ? [{ name, used: window.utilization / 100, resets_at: window.resets_at ? Date.parse(window.resets_at) : null, at }] : [],
+  );
+}
+
 /** The messages a frame from Claude Code says it has read, by the ids they were sent with. */
 const readIds = (message: SDKMessage): string[] => ("user_message_uuids" in message && message.user_message_uuids) || [];
 
 /** Whether a result ends a turn that was stopped part way. It carries no reply. */
 const stoppedPartWay = (result: SDKResultMessage) => result.terminal_reason === "aborted_streaming" || result.terminal_reason === "aborted_tools";
+
+/** The tokens a result says its session has used so far: all its models read and wrote, the agent's subagents counted, and what they read again from the cache too. */
+const tokensIn = (result: SDKResultMessage) =>
+  Object.values(result.modelUsage).reduce((sum, used) => sum + used.inputTokens + used.outputTokens + used.cacheReadInputTokens + used.cacheCreationInputTokens, 0);
 
 /**
  * A query whose `interrupt` also drops the messages queued behind the turn.
@@ -260,6 +283,7 @@ const runTurn: RunTurn = async (turn) => {
   stop.signal.addEventListener("abort", onStop);
   let contextTokens = 0;
   let cost = 0;
+  let tokens = 0;
   try {
     for await (const message of run) {
       const read = readIds(message).filter((id) => unanswered.has(id));
@@ -278,6 +302,7 @@ const runTurn: RunTurn = async (turn) => {
       if (stoppedPartWay(message)) {
         session = message.session_id;
         cost = message.total_cost_usd;
+        tokens = tokensIn(message);
         continue;
       }
       if (message.subtype !== "success") throw new Error(message.errors.join("; ") || message.subtype);
@@ -286,8 +311,9 @@ const runTurn: RunTurn = async (turn) => {
       read.forEach((id) => unanswered.delete(id));
       replied(message.result, read);
       session = message.session_id;
-      // Each result carries what the session has cost so far, the turns before this one included.
+      // Each result carries what the session has cost and used so far, the turns before this one included.
       cost = message.total_cost_usd;
+      tokens = tokensIn(message);
       settle();
     }
   } catch (error) {
@@ -301,7 +327,7 @@ const runTurn: RunTurn = async (turn) => {
     stopListening?.();
     input.end();
   }
-  if (session !== null && (unanswered.size === 0 || stop.signal.aborted)) return { sessionId: session, contextTokens, cost };
+  if (session !== null && (unanswered.size === 0 || stop.signal.aborted)) return { sessionId: session, contextTokens, cost, tokens };
   throw new Error("Claude Code stopped without a reply");
 };
 
@@ -330,4 +356,27 @@ function forget(cwd: string, configDir: string): void {
   rmSync(join(configDir, "projects", cwd.replace(/[^a-zA-Z0-9]/g, "-")), { recursive: true, force: true });
 }
 
-export const claude: Driver = { runTurn, failure, forget };
+/**
+ * Asks Claude Code where the plan's limits stand, in a session that is sent
+ * no message, so no turn runs in it and nothing of it is kept. The SDK marks
+ * the request as one that may change.
+ */
+const limitsNow: Driver["limits"] = async (configDir, giveUp) => {
+  const [claudeCode, env] = [await program("claude"), await environment()];
+  const input = inbox();
+  const end = new AbortController();
+  giveUp.addEventListener("abort", () => end.abort());
+  const run = query({
+    prompt: input.messages(),
+    options: { abortController: end, pathToClaudeCodeExecutable: claudeCode, env: inFolder("claude", configDir, env), settingSources: [], persistSession: false },
+  });
+  try {
+    // Asked for in full, the answer also says what the sessions on this computer were spent on, which takes a read of them all.
+    return limitsAnswered(await run.usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET({ skipBehaviors: true }), Date.now());
+  } finally {
+    input.end();
+    end.abort();
+  }
+};
+
+export const claude: Driver = { runTurn, failure, forget, limits: limitsNow };

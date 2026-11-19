@@ -7,7 +7,7 @@ import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
 
 import { COLOR, PROVIDERS, USAGE_DAYS, betweenAgents, readableColor } from "./contract.ts";
-import type { About, Agent, AgentWithLatest, Ask, Avatar, Found, Job, Limit, Memory, Message, Provider, PushToken, Question, Schedule, Sender, Status, TurnKind, Usage, Used } from "./contract.ts";
+import type { About, Agent, AgentWithLatest, Ask, Avatar, Day, Found, Job, Limit, Memory, Message, Provider, PushToken, Question, Schedule, Sender, Status, TurnKind, Usage, Used } from "./contract.ts";
 
 export type Person = { id: string; name: string };
 /** How a person's agents sign in to a provider: the provider's config folder of the person's own, which holds their login, rules, skills and sessions. */
@@ -27,15 +27,18 @@ export type Change = { message: Message } | { agent: Agent; deleted: boolean };
 /** How this server is known to the relay: its signing key, and the id, the address phones reach it at and the token its tunnel runs with, which the relay gives it once it has registered. */
 export type Machine = { privateKey: string; id?: string; address?: string; tunnelToken?: string };
 
-/**
- * The changes made to the tables since the first published version, in order.
- * A database records how many it has had in \`user_version\`. One made from
- * SCHEMA, which has every change in it, starts with all of them.
- */
 // The app's blue, for an avatar with no colour of its own and no design to take one from.
 const DEFAULT_COLOR = "#1F5FD6";
 
-const TABLE_CHANGES = [
+/**
+ * The changes made to the tables since the first published version, in order.
+ * A database records how many it has had in \`user_version\`. One made from
+ * SCHEMA, which has every change in it, starts with all of them. A change to
+ * a table that SCHEMA brought in after the first published version names the
+ * table: a database that only now gets the table from SCHEMA has the change
+ * in it, and skips it.
+ */
+const TABLE_CHANGES: (string | { table: string; change: string })[] = [
   "alter table devices add column app text",
   "alter table agents add column color text",
   "insert into accounts (person_id, provider, config_dir) select id, 'claude', claude_config_dir from people",
@@ -44,6 +47,8 @@ const TABLE_CHANGES = [
   "alter table messages add column ask text check (ask in ('waiting', 'allowed', 'refused', 'unanswered'))",
   "alter table messages add column question text",
   "alter table messages add column peer_id text references agents(id)",
+  { table: "usage", change: "alter table usage add column tokens integer not null default 0" },
+  { table: "usage", change: "alter table usage add column session_tokens integer" },
 ];
 
 const SCHEMA = `
@@ -118,7 +123,9 @@ create table if not exists usage (
   cost         real not null,
   session_id   text not null,
   session_cost real not null,
-  at           integer not null
+  at           integer not null,
+  tokens       integer not null default 0,
+  session_tokens integer
 );
 create table if not exists limits (
   person_id  text not null references people(id),
@@ -146,7 +153,6 @@ const AVATAR_ID = /^[a-z0-9-]+$/;
 const ATTACHMENT_NAME = /^[\w-][\w.-]*$/;
 // How long a pairing code works.
 const PAIRING_MS = 10 * 60_000;
-const DAY_MS = 24 * 60 * 60_000;
 
 /** A pairing code or a device key: 32 random bytes, as text that fits in a link. */
 const secret = () => randomBytes(32).toString("base64url");
@@ -202,11 +208,14 @@ export function openStore(home: string) {
   // The server and its commands open the database at once, as the Mac app runs them, so each waits its turn for a lock.
   const db = new DatabaseSync(join(home, "sidebots.sqlite"), { timeout: 5000 });
   db.exec("pragma journal_mode = wal; pragma foreign_keys = on;");
-  const made = db.prepare("select 1 from sqlite_master where type = 'table' and name = 'people'").get() !== undefined;
+  const had = new Set((db.prepare("select name from sqlite_master where type = 'table'").all() as { name: string }[]).map((table) => table.name));
   db.exec(SCHEMA);
-  const version = made ? (db.prepare("pragma user_version").get() as { user_version: number }).user_version : TABLE_CHANGES.length;
+  const version = had.has("people") ? (db.prepare("pragma user_version").get() as { user_version: number }).user_version : TABLE_CHANGES.length;
   db.exec("begin");
-  for (const change of TABLE_CHANGES.slice(version)) db.exec(change);
+  for (const change of TABLE_CHANGES.slice(version)) {
+    if (typeof change === "string") db.exec(change);
+    else if (had.has(change.table)) db.exec(change.change);
+  }
   db.exec(`pragma user_version = ${TABLE_CHANGES.length}`);
   db.exec("commit");
 
@@ -491,29 +500,41 @@ export function openStore(home: string) {
       return rows.map((row) => row.agent_id);
     },
 
-    /** What a session had cost in all as of the last turn recorded in it, or nothing when none is. */
-    sessionCost(agentId: string, sessionId: string): number | undefined {
-      const last = db.prepare("select session_cost from usage where agent_id = ? and session_id = ? order by rowid desc limit 1").get(agentId, sessionId) as { session_cost: number } | undefined;
-      return last?.session_cost;
+    /**
+     * What a session had cost in all, and the tokens it had used, as of the
+     * last turn recorded in it, or nothing when none is. The tokens are null
+     * when that turn was recorded without them.
+     */
+    sessionUsed(agentId: string, sessionId: string): { cost: number; tokens: number | null } | undefined {
+      return db.prepare("select session_cost as cost, session_tokens as tokens from usage where agent_id = ? and session_id = ? order by rowid desc limit 1").get(agentId, sessionId) as
+        | { cost: number; tokens: number | null }
+        | undefined;
     },
 
     /**
-     * Records a turn the agent ran, with what it cost. A provider says what a
-     * session has cost in all, so a turn costs what its session has cost since
-     * the turn before it there, or all of it once the session's count has
-     * started again. `resumed` says the session had turns before this one.
-     * When none of them is recorded, nobody can tell how much of the cost is
-     * this turn's, and the turn is recorded as costing nothing.
+     * Records a turn the agent ran, with what it cost and the tokens it used.
+     * A provider says what a session has used in all, so a turn's part is
+     * what its session has used since the turn before it there, or all of it
+     * once the session's count has started again. `resumed` says the session
+     * had turns before this one. When what they had used isn't recorded,
+     * nobody can tell how much of the total is this turn's, and the turn is
+     * recorded as using nothing.
      */
-    addUsage(agentId: string, kind: TurnKind, session: { sessionId: string; cost: number }, resumed: boolean): void {
-      const before = this.sessionCost(agentId, session.sessionId) ?? (resumed ? session.cost : 0);
-      db.prepare("insert into usage (agent_id, kind, cost, session_id, session_cost, at) values (?, ?, ?, ?, ?, ?)").run(
+    addUsage(agentId: string, kind: TurnKind, session: { sessionId: string; cost: number; tokens: number }, resumed: boolean): void {
+      const last = this.sessionUsed(agentId, session.sessionId);
+      const part = (total: number, recorded: number | null | undefined) => {
+        const before = recorded ?? (resumed ? total : 0);
+        return total >= before ? total - before : total;
+      };
+      db.prepare("insert into usage (agent_id, kind, cost, session_id, session_cost, at, tokens, session_tokens) values (?, ?, ?, ?, ?, ?, ?, ?)").run(
         agentId,
         kind,
-        session.cost >= before ? session.cost - before : session.cost,
+        part(session.cost, last?.cost),
         session.sessionId,
         session.cost,
         Date.now(),
+        part(session.tokens, last?.tokens),
+        session.tokens,
       );
     },
 
@@ -525,20 +546,25 @@ export function openStore(home: string) {
 
     /**
      * Where the person's plan or API credit goes: the turns their agents ran
-     * in the last days, and how they sign in to each provider. A limit whose
-     * time to reset has passed is left out, since nobody knows where it has
-     * stood since.
+     * in the last days, added up by agent and by day, and how they sign in to
+     * each provider. A limit whose time to reset has passed is left out,
+     * since nobody knows where it has stood since.
      */
     usage(personId: string): Usage {
       const now = Date.now();
+      const today = new Date(now);
+      // Each day's midnight on the computer, and the one that ends today. A change of the clocks makes a day an hour off 24.
+      const starts = Array.from({ length: USAGE_DAYS + 1 }, (_, index) => new Date(today.getFullYear(), today.getMonth(), today.getDate() - USAGE_DAYS + 1 + index));
+      const turns = "from usage join agents on agents.id = usage.agent_id where agents.person_id = ? and usage.at >= ?";
       const used = db
-        .prepare(
-          `select usage.agent_id, usage.kind, count(*) as turns, sum(usage.cost) as cost
-           from usage join agents on agents.id = usage.agent_id
-           where agents.person_id = ? and usage.at > ?
-           group by usage.agent_id, usage.kind`,
-        )
-        .all(personId, now - USAGE_DAYS * DAY_MS) as Used[];
+        .prepare(`select usage.agent_id, usage.kind, count(*) as turns, sum(usage.cost) as cost, sum(usage.tokens) as tokens ${turns} group by usage.agent_id, usage.kind`)
+        .all(personId, starts[0].getTime()) as Used[];
+      const inDay = db.prepare(`select coalesce(sum(usage.cost), 0) as cost, coalesce(sum(usage.tokens), 0) as tokens ${turns} and usage.at < ?`);
+      const two = (value: number) => String(value).padStart(2, "0");
+      const days = starts.slice(0, -1).map((start, index) => ({
+        day: `${start.getFullYear()}-${two(start.getMonth() + 1)}-${two(start.getDate())}`,
+        ...(inDay.get(personId, start.getTime(), starts[index + 1].getTime()) as Pick<Day, "cost" | "tokens">),
+      }));
       const limits = db.prepare(
         "select name, used, resets_at, at from limits where person_id = ? and provider = ? and (resets_at is null or resets_at > ?) order by resets_at, name",
       );
@@ -547,7 +573,7 @@ export function openStore(home: string) {
         const apiKey = apiKeys()[personId]?.[provider] !== undefined;
         return { provider, apiKey, limits: apiKey ? [] : (limits.all(personId, provider, now) as Limit[]) };
       });
-      return { used, accounts };
+      return { used, days, accounts };
     },
 
     /** Records that the person has read everything in the chat so far. */

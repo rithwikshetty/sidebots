@@ -44,6 +44,10 @@ if (process.argv[2] === "app-server") {
     initialize: () => ({ userAgent: "peer" }),
     "account/read": () => ({ account: signedIn ? { type: "chatgpt" } : null, requiresOpenaiAuth: true }),
     "account/login/start": () => ((signedIn = true), { type: "apiKey" }),
+    "account/rateLimits/read": () => {
+      const weekly = { limitId: "codex", primary: { usedPercent: 3, windowDurationMins: 10080, resetsAt: 1795623087 }, secondary: null };
+      return { rateLimits: { ...weekly, limitId: "codex_other" }, rateLimitsByLimitId: { codex: weekly } };
+    },
     "model/list": () => ({ data: ["gpt-6-sol", "gpt-6.2-sol", "gpt-6.1-sol", "gpt-6-luna"].map((model) => ({ model })), nextCursor: null }),
     "thread/start": () => ({ thread: { id: "thread-1" } }),
     "thread/resume": ({ threadId }) => {

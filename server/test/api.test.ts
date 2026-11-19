@@ -9,7 +9,7 @@ import { createQueue, type Turn, type TurnResult } from "../src/runner.ts";
 import { claude } from "../src/claude.ts";
 import { codex } from "../src/codex.ts";
 import { createApi } from "../src/api.ts";
-import { CONTRACT_VERSION, MESSAGE_BYTES, type AgentWithLatest, type Message, type Question } from "../src/contract.ts";
+import { CONTRACT_VERSION, MESSAGE_BYTES, type AgentWithLatest, type Day, type Limit, type Message, type Question, type Used } from "../src/contract.ts";
 import { startPush, type Ended, type Notice, type Sealed } from "../src/push.ts";
 
 /** A turn's reply, as a fake provider gives it. No reply means the fake gave its replies itself. */
@@ -18,7 +18,8 @@ type Answer = TurnResult & { reply?: string };
 /**
  * A Sidebots whose turns `answer` runs instead of Claude Code and Codex,
  * which still word the failures. Claude Code forgets the sessions too. The
- * fake reads the turn's first message, then replies to it.
+ * fake reads the turn's first message, then replies to it. Asked where a
+ * plan's limits stand, either answers as `plan.limits` does.
  */
 function setup(answer: (turn: Turn) => Promise<Answer>, now: () => number = Date.now) {
   const runTurn = async (turn: Turn): Promise<TurnResult> => {
@@ -31,7 +32,9 @@ function setup(answer: (turn: Turn) => Promise<Answer>, now: () => number = Date
   const store = openStore(home);
   store.addPerson({ name: "Alex", provider: "claude", configDir: "/config/alex" });
   store.addPerson({ name: "Robin", provider: "claude", configDir: "/config/robin" });
-  const queue = createQueue(store, { claude: { ...claude, runTurn }, codex: { ...codex, runTurn, forget: () => undefined } }, now);
+  const plan = { limits: async (): Promise<Limit[]> => [] };
+  const limits = () => plan.limits();
+  const queue = createQueue(store, { claude: { ...claude, runTurn, limits }, codex: { ...codex, runTurn, forget: () => undefined, limits } }, now);
   const app = createApi(store, queue, "Test computer", true);
   const notificationKeys = new Map<string, string>();
   /** Pairs another phone as the person, and returns what it sends with each request. */
@@ -68,10 +71,10 @@ function setup(answer: (turn: Turn) => Promise<Answer>, now: () => number = Date
     const response = await app.request(`/agents/${agentId}/messages`, { method: "POST", headers: phoneOf(name), body: form });
     return { status: response.status, json: await response.json() };
   };
-  return { home, store, queue, call, say, app, phoneOf, pair, open };
+  return { home, store, queue, plan, call, say, app, phoneOf, pair, open };
 }
 
-const reply = (text: string, sessionId = "session-1", contextTokens = 0, cost = 0): Answer => ({ reply: text, sessionId, contextTokens, cost });
+const reply = (text: string, sessionId = "session-1", contextTokens = 0, cost = 0, tokens = 0): Answer => ({ reply: text, sessionId, contextTokens, cost, tokens });
 
 /** An ask to run a command, as a driver hands the runner one. */
 const command = (detail: string, why?: string): Question => ({ kind: "command", title: "Run a command", what: "Clear the old folder", facts: [], detail, ...(why ? { why } : {}) });
@@ -721,19 +724,21 @@ test("deleting an agent removes its messages, its jobs, what it used, its folder
   assert.equal(existsSync(sessions), false);
 });
 
-test("each agent's turns are counted with what they cost, a job's runs apart from its replies, for seven days and for their owner alone", async (t) => {
-  t.mock.timers.enable({ apis: ["Date"], now: new Date(2026, 10, 16, 9, 0) });
-  // Claude Code says what a session has cost in all. The chat's session goes on from turn to turn, and each of a job's runs is a session of its own.
+test("each agent's turns are counted with what they cost and the tokens they used, a job's runs apart from its replies, by day for seven days and for their owner alone", async (t) => {
+  t.mock.timers.enable({ apis: ["Date"], now: new Date(2026, 10, 16, 23, 30) });
+  // Claude Code says what a session has cost and used in all. The chat's session goes on from turn to turn, and each of a job's runs is a session of its own.
   let chat = 0;
   let runs = 0;
   const { queue, call, say } = setup(async (turn) => {
     if (turn.prompt.text === "watch the price") turn.scheduleJob({ what: "Check the price.", every_minutes: 5 });
-    if (turn.prompt.text.startsWith("This is a run of one of your jobs")) return reply("SILENT", `run-${++runs}`, 0, 0.125);
-    return reply("ok", "chat", 0, (chat += turn.prompt.text === "watch the price" ? 0.5 : 0.25));
+    if (turn.prompt.text.startsWith("This is a run of one of your jobs")) return reply("SILENT", `run-${++runs}`, 0, 0.125, 1000);
+    chat += turn.prompt.text === "watch the price" ? 0.5 : 0.25;
+    return reply("ok", "chat", 0, chat, chat * 40_000);
   }, () => Date.now());
   const agent = (await call(ME, "POST", "/agents", { name: "Scout", avatarId: "moss" })).json;
   const used = async (who: string) =>
-    (await call(who, "GET", "/usage")).json.used.map((each: { agent_id: string; kind: string; turns: number; cost: number }) => [each.agent_id, each.kind, each.turns, each.cost]).sort();
+    (await call(who, "GET", "/usage")).json.used.map((each: Used) => [each.agent_id, each.kind, each.turns, each.cost, each.tokens]).sort();
+  const days = async (who: string) => (await call(who, "GET", "/usage")).json.days.map((each: Day) => [each.day, each.cost, each.tokens]);
 
   await say(ME, agent.id, "watch the price");
   await queue.kick(agent.id);
@@ -747,39 +752,62 @@ test("each agent's turns are counted with what they cost, a job's runs apart fro
   await queue.kick(agent.id);
 
   assert.deepEqual(await used(ME), [
-    [agent.id, "job", 2, 0.25],
-    [agent.id, "memory", 1, 0.25],
-    [agent.id, "reply", 2, 0.75],
+    [agent.id, "job", 2, 0.25, 2000],
+    [agent.id, "memory", 1, 0.25, 10_000],
+    [agent.id, "reply", 2, 0.75, 30_000],
+  ]);
+  // Every one of the seven days is there, the oldest first, and all the turns ran today.
+  assert.deepEqual(await days(ME), [
+    ["2026-11-10", 0, 0],
+    ["2026-11-11", 0, 0],
+    ["2026-11-12", 0, 0],
+    ["2026-11-13", 0, 0],
+    ["2026-11-14", 0, 0],
+    ["2026-11-15", 0, 0],
+    ["2026-11-16", 1.25, 42_000],
   ]);
   assert.deepEqual(await used(HER), []);
+  assert.deepEqual((await days(HER)).at(-1), ["2026-11-16", 0, 0]);
 
-  // A week after the first reply only the later turns count, and then none.
-  t.mock.timers.tick(7 * 24 * 60 * 60_000 - 10 * 60_000);
-  assert.deepEqual(await used(ME), [
-    [agent.id, "job", 2, 0.25],
-    [agent.id, "memory", 1, 0.25],
-    [agent.id, "reply", 1, 0.25],
+  // A reply after midnight falls in the next day, as does the job's run that had come due.
+  t.mock.timers.tick(60 * 60_000);
+  await say(ME, agent.id, "is it here yet");
+  await queue.kick(agent.id);
+  assert.deepEqual((await days(ME)).slice(-2), [
+    ["2026-11-16", 1.25, 42_000],
+    ["2026-11-17", 0.375, 11_000],
   ]);
-  t.mock.timers.tick(10 * 60_000);
-  assert.deepEqual(await used(ME), []);
+
+  // The sixth day after is the last that counts the first day's turns.
+  t.mock.timers.tick(5 * 24 * 60 * 60_000);
+  assert.deepEqual((await days(ME)).slice(0, 2), [
+    ["2026-11-16", 1.25, 42_000],
+    ["2026-11-17", 0.375, 11_000],
+  ]);
+  t.mock.timers.tick(24 * 60 * 60_000);
+  assert.deepEqual(await used(ME), [
+    [agent.id, "job", 1, 0.125, 1000],
+    [agent.id, "reply", 1, 0.25, 10_000],
+  ]);
+  assert.deepEqual((await days(ME))[0], ["2026-11-17", 0.375, 11_000]);
 });
 
-test("a session that ran turns before they were counted costs nothing on its first counted turn, and one whose count starts again costs all of it", async () => {
-  const costs = [5, 6, 0.5];
-  const { store, queue, call, say } = setup(async () => reply("ok", "old", 0, costs.shift()));
+test("a session that ran turns before they were counted uses nothing on its first counted turn, and one whose count starts again uses all of it", async () => {
+  const totals = [[5, 900_000], [6, 950_000], [0.5, 20_000]];
+  const { store, queue, call, say } = setup(async () => reply("ok", "old", 0, ...totals.shift()!));
   const agent = (await call(ME, "POST", "/agents", { name: "Money", avatarId: "cog" })).json;
   store.setSession(agent.id, "old");
-  const cost = async () => (await call(ME, "GET", "/usage")).json.used[0].cost;
+  const used = async () => (({ cost, tokens }: Used) => [cost, tokens])((await call(ME, "GET", "/usage")).json.used[0]);
 
   await say(ME, agent.id, "budget");
   await queue.kick(agent.id);
-  assert.equal(await cost(), 0);
+  assert.deepEqual(await used(), [0, 0]);
   await say(ME, agent.id, "and savings");
   await queue.kick(agent.id);
-  assert.equal(await cost(), 1);
+  assert.deepEqual(await used(), [1, 50_000]);
   await say(ME, agent.id, "and the deposit");
   await queue.kick(agent.id);
-  assert.equal(await cost(), 1.5);
+  assert.deepEqual(await used(), [1.5, 70_000]);
 });
 
 test("a plan's limits stand as the provider last said while a turn ran, even one that failed, until they reset; an API key has none", async (t) => {
@@ -823,6 +851,37 @@ test("a plan's limits stand as the provider last said while a turn ran, even one
 
   store.setApiKey(store.personByName(ME)!.id, "claude", "sk-ant-alexs-key");
   assert.deepEqual(await accounts(ME), [{ provider: "claude", apiKey: true, limits: [] }]);
+});
+
+test("asking for usage asks the provider where the plan's limits stand, once a minute at most and once for requests that come together, and one that fails leaves what it last said", async (t) => {
+  const start = new Date(2026, 10, 16, 9, 0).getTime();
+  t.mock.timers.enable({ apis: ["Date"], now: start });
+  const { store, call, plan } = setup(async () => reply("ok"), () => Date.now());
+  let asked = 0;
+  const fable = (used: number, at: number) => ({ name: "Fable limit", used, resets_at: start + 48 * 60 * 60_000, at });
+  plan.limits = async () => [fable(0.02 * ++asked, Date.now())];
+  const limits = async () => (await call(ME, "GET", "/usage")).json.accounts[0].limits;
+
+  // Two requests at once share the one ask, and both answer with what it said.
+  assert.deepEqual(await Promise.all([limits(), limits()]), [[fable(0.02, start)], [fable(0.02, start)]]);
+  t.mock.timers.tick(59_000);
+  assert.deepEqual(await limits(), [fable(0.02, start)]);
+  t.mock.timers.tick(1000);
+  assert.deepEqual(await limits(), [fable(0.04, start + 60_000)]);
+
+  plan.limits = async () => {
+    asked++;
+    throw new Error("Not logged in");
+  };
+  t.mock.timers.tick(60_000);
+  assert.deepEqual(await limits(), [fable(0.04, start + 60_000)]);
+  assert.equal(asked, 3);
+
+  // An API key has no plan to ask about.
+  store.setApiKey(store.personByName(ME)!.id, "claude", "sk-ant-alexs-key");
+  t.mock.timers.tick(60_000);
+  assert.deepEqual(await limits(), []);
+  assert.equal(asked, 3);
 });
 
 test("an agent runs on a provider its owner has set up: the one they pick, or the first they set up", async () => {
@@ -1005,7 +1064,7 @@ test("a message sent while the agent works goes into the turn it is running, and
     prompts.push(later.text);
     turn.seen([later.id]);
     turn.replied("Booked the band and the florist.", [turn.prompt.id, later.id]);
-    return { sessionId: "session-1", contextTokens: 0, cost: 0 };
+    return { sessionId: "session-1", contextTokens: 0, cost: 0, tokens: 0 };
   });
   const agent = (await call(ME, "POST", "/agents", { name: "Wedding", avatarId: "mochi" })).json;
   await say(ME, agent.id, "book the band");
@@ -1210,7 +1269,7 @@ test("an ask closes unanswered when the person sends a message instead, takes to
     answers.push(answer.allowed ? "allowed" : answer.words);
     turn.seen(later);
     turn.replied("Done.", [turn.prompt.id, ...later]);
-    return { sessionId: "session-1", contextTokens: 0, cost: 0 };
+    return { sessionId: "session-1", contextTokens: 0, cost: 0, tokens: 0 };
   });
   const agent = (await call(ME, "POST", "/agents", { name: "Tidy", avatarId: "mochi" })).json;
   const chat = async () => (await call(ME, "GET", `/agents/${agent.id}/messages`)).json as { id: string; ask: string | null }[];
@@ -1251,7 +1310,7 @@ test("an ask closes unanswered when the person sends a message instead, takes to
 
 /** A turn that works until it is stopped, as a provider's does: it then ends with no reply, in the session it had. */
 const untilStopped = (turn: Turn, sessionId = "session-1") =>
-  new Promise<Answer>((resolve) => turn.stop.signal.addEventListener("abort", () => resolve({ sessionId, contextTokens: 0, cost: 0 })));
+  new Promise<Answer>((resolve) => turn.stop.signal.addEventListener("abort", () => resolve({ sessionId, contextTokens: 0, cost: 0, tokens: 0 })));
 
 test("stopping an agent ends the turn it is running, says so in the chat, and the next message carries on in the same session", async () => {
   const turns: Turn[] = [];
@@ -1313,7 +1372,7 @@ test("a stopped turn leaves what the agent never read to send again, and a messa
     stopTaking();
     turn.seen(taken.filter((each) => each.text === "and a DJ").map((each) => each.id));
     await new Promise<void>((resolve) => (end = resolve));
-    return { sessionId: "session-1", contextTokens: 0, cost: 0 };
+    return { sessionId: "session-1", contextTokens: 0, cost: 0, tokens: 0 };
   });
   const agent = (await call(ME, "POST", "/agents", { name: "Wedding", avatarId: "mochi" })).json;
   await say(ME, agent.id, "book the band");
@@ -1467,7 +1526,7 @@ test("a stop that lands as the last reply comes in says nothing, unless a messag
     turns++;
     turn.replied("Booked.", [turn.prompt.id]);
     await new Promise<void>((resolve) => (end = resolve));
-    return { sessionId: "session-1", contextTokens: 0, cost: 0 };
+    return { sessionId: "session-1", contextTokens: 0, cost: 0, tokens: 0 };
   });
   const agent = (await call(ME, "POST", "/agents", { name: "Wedding", avatarId: "mochi" })).json;
   const shown = async () => (await call(ME, "GET", `/agents/${agent.id}/messages`)).json.map((m: { sender: string; body: string; status: string }) => [m.sender, m.body, m.status]);

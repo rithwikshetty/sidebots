@@ -33,8 +33,8 @@ export type Turn = {
   replied: (text: string, ids: string[]) => void;
   cwd: string;
   sessionId: string | null;
-  /** What the session has cost up to this turn, in US dollars. A provider that counts a turn's tokens and not its money adds this turn's to it. */
-  spent: number;
+  /** What the session has cost up to this turn, in US dollars, and the tokens it has used. A provider that counts a run's own tokens adds this turn's to them. */
+  spent: { cost: number; tokens: number };
   /** The person's config folder for the provider. */
   configDir: string;
   /** The person's API key for the provider. Without one, the turn runs on the login in `configDir`. */
@@ -66,9 +66,10 @@ export type Turn = {
 /**
  * `contextTokens` is how much the session held when the turn ended. `cost` is
  * what the session has cost since it began, in US dollars at the provider's
- * prices.
+ * prices, and `tokens` is all its model has read and written since then, what
+ * it read again from its cache among them.
  */
-export type TurnResult = { sessionId: string; contextTokens: number; cost: number };
+export type TurnResult = { sessionId: string; contextTokens: number; cost: number; tokens: number };
 export type RunTurn = (turn: Turn) => Promise<TurnResult>;
 
 /**
@@ -84,11 +85,15 @@ export type RunTurn = (turn: Turn) => Promise<TurnResult>;
  * this one stopped. `failure` puts why a turn failed in words for the person
  * on their phone, from the provider's own. `forget` removes the sessions the
  * provider keeps for the agent that works in `cwd`, once the agent is deleted.
+ * `limits` asks the provider where the limits of the plan on the login in
+ * `configDir` stand, with no turn run, and ends what it started for that once
+ * `giveUp` aborts.
  */
 export type Driver = {
   runTurn: RunTurn;
   failure: (words: string) => string;
   forget: (cwd: string, configDir: string) => void | Promise<void>;
+  limits: (configDir: string, giveUp: AbortSignal) => Promise<Limit[]>;
 };
 /** A driver for each provider. */
 export type Drivers = Record<Provider, Driver>;
@@ -187,6 +192,9 @@ const FIRST_UPDATE_MS = 60_000;
 const UPDATE_GAP_MS = 3 * 60_000;
 // How long an ask waits for the person.
 const ASK_WAIT_MS = 30 * 60_000;
+// How long what a provider said of a plan's limits stands before it is asked again, and how long it is given to answer: half as long as the phone waits for Usage.
+const LIMITS_FRESH_MS = 60_000;
+const LIMITS_WAIT_MS = 5_000;
 /** What a job's run replies when it has nothing to tell the person. */
 const SILENT = "SILENT";
 /** Text cut to a line a card can lead with. */
@@ -315,6 +323,8 @@ export function createQueue(store: Store, drivers: Drivers, now: () => number = 
   const arrivals = new Map<string, () => void>();
   // The asks that wait for the person, by the message that asks: whose agent's it is, what to call with the person's answer, and what closes it unanswered, with what the agent is told.
   const asks = new Map<string, { agentId: string; answer: (allow: boolean) => void; close: (words: string) => void }>();
+  // The last time each person's provider was asked where the limits of their plan stand: when, and the ask itself, which ends once what it said is kept.
+  const limitsAsked = new Map<string, { at: number; done: Promise<void> }>();
   /** Closes the asks an agent has waiting, unanswered. */
   const stopWaiting = (agentId: string, words: string) => {
     for (const ask of [...asks.values()]) if (ask.agentId === agentId) ask.close(words);
@@ -371,6 +381,7 @@ export function createQueue(store: Store, drivers: Drivers, now: () => number = 
           });
         // A job's run is a session of its own, which nothing comes back to. Any other turn carries on the chat's session.
         const sessionId = rest.kind === "job" ? null : agent.session_id;
+        const before = sessionId === null ? undefined : store.sessionUsed(agent.id, sessionId);
         const result = await driver.runTurn({
           prompt: { id: rest.id ?? randomUUID(), text },
           followUps: rest.followUps,
@@ -381,7 +392,7 @@ export function createQueue(store: Store, drivers: Drivers, now: () => number = 
           limits: (limits) => store.setLimits(person.id, agent.provider, limits),
           cwd: store.agentHome(agent.id),
           sessionId,
-          spent: (sessionId !== null && store.sessionCost(agent.id, sessionId)) || 0,
+          spent: { cost: before?.cost ?? 0, tokens: before?.tokens ?? 0 },
           configDir: account.config_dir,
           apiKey,
           model: agent.model,
@@ -639,6 +650,31 @@ export function createQueue(store: Store, drivers: Drivers, now: () => number = 
       } finally {
         removed.delete(agent.id);
       }
+    },
+
+    /**
+     * Asks each provider the person is on a plan with where the plan's limits
+     * stand, and keeps what it says. A provider asked in the last minute
+     * isn't asked again: a call made while that ask is out waits for it. One
+     * that fails or doesn't answer in time leaves what it last said.
+     */
+    async askLimits(personId: string): Promise<void> {
+      await Promise.all(
+        store.accounts(personId).map(async ({ provider, config_dir }) => {
+          if (store.apiKey(personId, provider) !== undefined) return;
+          const key = `${personId} ${provider}`;
+          const last = limitsAsked.get(key);
+          if (last && now() - last.at < LIMITS_FRESH_MS) return last.done;
+          const giveUp = AbortSignal.timeout(LIMITS_WAIT_MS);
+          const late = new Promise<never>((_, reject) => giveUp.addEventListener("abort", () => reject(giveUp.reason)));
+          const done = Promise.race([drivers[provider].limits(config_dir, giveUp), late]).then(
+            (limits) => store.setLimits(personId, provider, limits),
+            () => undefined,
+          );
+          limitsAsked.set(key, { at: now(), done });
+          return done;
+        }),
+      );
     },
 
     /** Starts the clock that runs each job when its time comes. Returns a function that stops it. */

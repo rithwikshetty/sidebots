@@ -240,7 +240,11 @@ export function createApi(store: Store, queue: Queue, machine: string, pushes: b
     return c.json(text ? store.searchMessages(c.var.person.id, text) : []);
   });
 
-  app.get("/usage", (c) => c.json(store.usage(c.var.person.id)));
+  /** Where the person's plan or API credit goes, with the plan's limits as its provider says they stand now. */
+  app.get("/usage", async (c) => {
+    await queue.askLimits(c.var.person.id);
+    return c.json(store.usage(c.var.person.id));
+  });
 
   /** The phone says where Apple delivers its notifications, once it allows them. */
   app.put("/push-token", async (c) => {

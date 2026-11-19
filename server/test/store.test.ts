@@ -49,3 +49,26 @@ test("a database made before the table changes gets them and keeps what it holds
   assert.deepEqual(again.pushTargetsFor("me"), store.pushTargetsFor("me"));
   assert.deepEqual(again.accounts("me"), store.accounts("me"));
 });
+
+test("a database that counted turns without their tokens keeps the turns, and counts tokens from the next turn of a session", () => {
+  const home = mkdtempSync(join(tmpdir(), "sidebots-store-test-"));
+  const fresh = openStore(home);
+  const person = fresh.addPerson({ name: "Rithwik", provider: "claude", configDir: "/tmp/claude" });
+  const agent = fresh.createAgent(person, "Scout", "mochi", "claude");
+  fresh.close();
+  // The usage table as it was before it counted tokens, with a turn of a session that cost $2.
+  const old = new DatabaseSync(join(home, "sidebots.sqlite"));
+  old.exec(`
+    alter table usage drop column tokens;
+    alter table usage drop column session_tokens;
+    insert into usage values ('${agent.id}', 'reply', 2, 'chat', 2, ${Date.now()});
+    pragma user_version = 8;
+  `);
+  old.close();
+
+  const store = openStore(home);
+  // Nobody can tell how many of the session's 900,000 tokens the next turn used, so it counts from the one after.
+  store.addUsage(agent.id, "reply", { sessionId: "chat", cost: 3, tokens: 900_000 }, true);
+  store.addUsage(agent.id, "reply", { sessionId: "chat", cost: 3.5, tokens: 950_000 }, true);
+  assert.deepEqual(store.usage(person.id).used.map((used) => ({ ...used })), [{ agent_id: agent.id, kind: "reply", turns: 3, cost: 3.5, tokens: 50_000 }]);
+});
