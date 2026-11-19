@@ -31,7 +31,8 @@ export const unstable_settings = { anchor: "index" };
  * each drag (`ScrollWaitsForMenuSwipe` in the list): more right than up or
  * down is the menu's, anything else is the list's or a row's. A row with its
  * actions showing holds the swipe, so a swipe right closes it first. The menu
- * gives a light tap as it opens, and shuts when the phone disconnects. The
+ * gives a light tap as it opens, and shuts when a chat opens, as from a
+ * notification, and when the phone disconnects. The
  * strip under the status bar where every screen's top buttons sit measures
  * the room the window's controls take there.
  */
@@ -65,6 +66,9 @@ export default function Layout() {
   useEffect(() => {
     if (!paired) setMenuOpen(false);
   }, [paired]);
+  useEffect(() => {
+    if (pathname.startsWith("/chat/")) setMenuOpen(false);
+  }, [pathname]);
 
   const base = theme.dark ? DarkTheme : DefaultTheme;
   const navigation = {

@@ -66,14 +66,14 @@ export async function askForPush(): Promise<void> {
 }
 
 /**
- * Opens an agent's chat. A sheet over the chat already open closes, and a
- * different agent's chat takes that one's place, so Back still goes home and
- * a split window keeps one chat beside the agents.
+ * Opens an agent's chat. A sheet over home or over the chat already open
+ * closes, and a different agent's chat takes that one's place, so Back still
+ * goes home and a split window keeps one chat beside the agents.
  */
 export function openChat(agentId: string): void {
-  if (!chatOnScreen) return router.push(`/chat/${agentId}`);
-  router.dismissTo(`/chat/${chatOnScreen}`);
-  if (agentId !== chatOnScreen) router.replace(`/chat/${agentId}`);
+  router.dismissTo(chatOnScreen ? `/chat/${chatOnScreen}` : "/");
+  if (!chatOnScreen) router.push(`/chat/${agentId}`);
+  else if (agentId !== chatOnScreen) router.replace(`/chat/${agentId}`);
 }
 
 function setChatOnScreen(agentId: string | null): void {
