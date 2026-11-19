@@ -24,8 +24,8 @@ import {
   type Usage,
 } from "@server/contract";
 
-/** The host of the demo computer in a pairing link. No computer on a network answers to it. */
-export const DEMO_HOST = "demo";
+/** The host of the demo computer in a pairing link. Names under `.invalid` are kept for no computer to have, so none on any network answers to it. */
+export const DEMO_HOST = "demo.invalid";
 const ORIGIN = `https://${DEMO_HOST}`;
 
 const MINUTE = 60_000;
@@ -125,7 +125,6 @@ const TOKENS_A_DOLLAR = 600_000;
 let agents: Agent[] = [];
 let chats: Record<string, Message[]> = {};
 let abouts: Record<string, About> = {};
-const working = new Set<string>();
 // The phone's event stream, while it listens.
 const hearing = new Set<(event: StreamEvent) => void>();
 let made = 0;
@@ -188,7 +187,6 @@ function start(): void {
   agents = [];
   chats = {};
   abouts = {};
-  working.clear();
   made = 0;
   taken = 0;
   for (const { name, avatar, instructions, memories = [], jobs = [], chat } of CAST) {
@@ -208,7 +206,7 @@ function shown(agent: Agent): AgentWithLatest {
   return {
     ...agent,
     latest: chat.at(-1) ?? null,
-    working: working.has(agent.id),
+    working: chat.some((each) => each.status === "queued" || each.status === "running"),
     unread: chat.filter((each) => each.sender === "agent" && each.created_at > agent.read_at).length,
     waiting_on: null,
   };
@@ -218,12 +216,11 @@ function tell(agent: Agent, said: Message | null): void {
   hearing.forEach((hear) => hear({ message: said, agent: shown(agent) }));
 }
 
-/** Takes a message from the person, which its agent reads and then replies to. */
-function take(agent: Agent, body: string): Message {
-  const sent = message(agent.id, "person", body, Date.now(), "queued");
+/** Takes a message from the person, which its agent reads and then replies to. `replyTo` is the message it answers, when it answers one. */
+function take(agent: Agent, body: string, replyTo: string | null): Message {
+  const sent = { ...message(agent.id, "person", body, Date.now(), "queued"), reply_to: replyTo };
   const reply = REPLIES[taken++ % REPLIES.length];
   chats[agent.id].push(sent);
-  working.add(agent.id);
   tell(agent, sent);
   // An agent deleted meanwhile, or one of a computer since set up as new, says nothing.
   const still = () => agents.includes(agent);
@@ -235,7 +232,6 @@ function take(agent: Agent, body: string): Message {
   setTimeout(() => {
     if (!still()) return;
     sent.status = "done";
-    working.delete(agent.id);
     tell(agent, sent);
     const replied = message(agent.id, "agent", reply, Date.now());
     chats[agent.id].push(replied);
@@ -323,8 +319,11 @@ export async function demoFetch(url: string, init: { method?: string; body?: unk
     }
     case "GET /events":
       return events(init.signal);
-    case "GET /agents":
-      return answer(agents.map(shown));
+    case "GET /agents": {
+      // The agent that spoke last comes first, as a computer lists them.
+      const last = (agent: AgentWithLatest) => agent.latest?.created_at ?? agent.created_at;
+      return answer(agents.map(shown).sort((a, b) => last(b) - last(a)));
+    }
     case "GET /avatars":
       return answer(AVATARS);
     case "GET /usage":
@@ -343,8 +342,12 @@ export async function demoFetch(url: string, init: { method?: string; body?: unk
     case "GET /agents/:id/messages":
       // A chat here is shorter than a page, so nothing comes before it.
       return answer(searchParams.has("before") ? [] : chats[agent!.id]);
-    case "POST /agents/:id/messages":
-      return answer(take(agent!, String((body as FormData).getAll("body")[0] ?? "")), 201);
+    case "POST /agents/:id/messages": {
+      const form = body as FormData;
+      const said = (field: string) => form.getAll(field)[0] as string | undefined;
+      if (form.getAll("files").length) return answer({ error: "The demo computer takes no photos or files. Send the words by themselves." }, 400);
+      return answer(take(agent!, said("body") ?? "", said("replyTo") ?? null), 201);
+    }
     case "POST /agents/:id/read":
       agent!.read_at = Date.now();
       return answer(shown(agent!));
