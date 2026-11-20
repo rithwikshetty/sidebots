@@ -10,8 +10,8 @@ import type { Machine, Store } from "./store.ts";
 /** The relay, as the server uses it: `register` brings the machine its id, address and tunnel token, and `notify` sends a notification or ends a Live Activity. */
 export type Relay = { register(): Promise<Required<Machine>>; notify: SendPush };
 
-/** Talks to the relay at `origin` for a server listening on `port`. `send` is how the server reaches the relay. */
-export function relay(store: Store, origin: string, port: number, send: typeof fetch = fetch): Relay {
+/** Talks to the relay at `origin` for a server listening on `port`, inside the Mac app of `version` when it runs in one. `send` is how the server reaches the relay. */
+export function relay(store: Store, origin: string, port: number, version?: string, send: typeof fetch = fetch): Relay {
   let registering: Promise<Required<Machine>> | null = null;
 
   /** The machine's signing key. The server makes one the first time it needs it, and keeps it. */
@@ -38,13 +38,16 @@ export function relay(store: Store, origin: string, port: number, send: typeof f
   /**
    * Registers the machine and keeps what the relay answers. Registering again
    * with the same key brings the same machine, and tells the relay it is still
-   * in use. Registrations at once share one call.
+   * in use. Registrations at once share one call. Each tells the relay how
+   * much the server is used, and the version of the Mac app it runs in, unless
+   * its owner turned that off.
    */
   const register = (): Promise<Required<Machine>> => {
     registering ??= (async () => {
       const privateKey = key();
       const publicKey = privateKey.export({ format: "jwk" }).x!;
-      const response = await call("/machines", publicKey, privateKey, JSON.stringify({ port }));
+      const counts = store.counting() ? { version, ...store.counts() } : {};
+      const response = await call("/machines", publicKey, privateKey, JSON.stringify({ port, ...counts }));
       if (!response.ok) throw new Error(`The relay answered ${response.status} to registering.`);
       const { id, address, tunnelToken } = (await response.json()) as { id: string; address: string; tunnelToken: string };
       const machine = { privateKey: store.machine()!.privateKey, id, address, tunnelToken };

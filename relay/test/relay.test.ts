@@ -111,16 +111,16 @@ function setup(answerFromApple: () => Response = () => new Response(null, { stat
     return handle(request, env, outside);
   }) as typeof fetch;
   const store = openStore(mkdtempSync(join(tmpdir(), "sidebots-relay-test-")));
-  const server = relay(store, "https://relay.example", 4319, reachRelay);
+  const server = relay(store, "https://relay.example", 4319, "1.0.13", reachRelay);
   return { env, store, server, send: server.notify, cloudflare, outside, toApple, toRelay };
 }
 
-/** A request to the relay signed by a machine, as the server's relay module signs one, from the network address `from`. */
-function signed(method: string, path: string, machine: string, privateKey: KeyObject, from = "203.0.113.1") {
+/** A request to the relay signed by a machine, as the server's relay module signs one, from the network address `from`, with `body` when it has one. */
+function signed(method: string, path: string, machine: string, privateKey: KeyObject, from = "203.0.113.1", body?: string) {
   const time = String(Date.now());
-  const hash = createHash("sha256").update("").digest("hex");
+  const hash = createHash("sha256").update(body ?? "").digest("hex");
   const signature = sign(null, Buffer.from(`${method} ${path}\n${time}\n${hash}`), privateKey).toString("base64url");
-  return new Request(`https://relay.example${path}`, { method, headers: { Authorization: `Signature ${machine}:${time}:${signature}`, "CF-Connecting-IP": from } });
+  return new Request(`https://relay.example${path}`, { method, headers: { Authorization: `Signature ${machine}:${time}:${signature}`, "CF-Connecting-IP": from }, body });
 }
 
 test("a notice for the development build reaches Apple under its app, and one for an app the relay doesn't serve goes nowhere", async () => {
@@ -252,6 +252,62 @@ test("a server that registers with no body gets its id and a tunnel to the usual
   assert.equal(response.status, 201);
   assert.match(((await response.json()) as { id: string }).id, /^[a-z0-9]{16}$/);
   assert.equal([...cloudflare.tunnels.values()][0].ingress![0].service, "http://127.0.0.1:4317");
+});
+
+test("a server says how much it is used as it registers, a day's count only grows, and a server whose owner turned that off says nothing", async () => {
+  const { env, store, server, outside } = setup();
+  const kept = async (machineId: string) => ({ ...(await env.DB.prepare("select version, agents, phones from machines where id = ?").bind(machineId).first()) });
+  const ran = async (machineId: string) =>
+    (await env.DB.prepare("select day, provider, kind, turns from turns where machine_id = ? order by provider, kind").bind(machineId).all()).results.map((row) => ({ ...row }));
+  const now = new Date();
+  const day = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
+
+  const person = store.addPerson({ name: "Alex", provider: "claude", configDir: "/tmp/claude" });
+  const maya = store.createAgent(person, "Maya", "mochi", "claude");
+  const theo = store.createAgent(person, "Theo", "mochi", "claude");
+  store.pair(store.addPairing(person.id).code, "Alex's phone");
+  store.addUsage(maya.id, "reply", { sessionId: "chat", cost: 1, tokens: 1000 }, false);
+  store.addUsage(maya.id, "reply", { sessionId: "chat", cost: 2, tokens: 2000 }, true);
+  store.addUsage(maya.id, "job", { sessionId: "job", cost: 1, tokens: 1000 }, false);
+  store.addUsage(theo.id, "reply", { sessionId: "chat", cost: 1, tokens: 1000 }, false);
+  const { id } = await server.register();
+  assert.deepEqual(await kept(id), { version: "1.0.13", agents: 2, phones: 1 });
+  const turns = [
+    { day, provider: "claude", kind: "job", turns: 1 },
+    { day, provider: "claude", kind: "reply", turns: 3 },
+  ];
+  assert.deepEqual(await ran(id), turns);
+
+  // A deleted agent takes its turns out of the server's count, which is two replies from here, and the relay keeps the day as it stood.
+  store.deleteAgent(theo);
+  await server.register();
+  assert.deepEqual(await kept(id), { version: "1.0.13", agents: 1, phones: 1 });
+  assert.deepEqual(await ran(id), turns);
+
+  store.setCounting(false);
+  await server.register();
+  assert.deepEqual(await kept(id), { version: null, agents: null, phones: null });
+
+  // Counts that come back on start from then, so the relay hears nothing of a turn from the time they were off.
+  const codex = store.createAgent(person, "Ruby", "mochi", "codex");
+  store.addUsage(codex.id, "reply", { sessionId: "chat", cost: 1, tokens: 1000 }, false);
+  await new Promise((resolve) => setTimeout(resolve, 5));
+  store.setCounting(true);
+  await server.register();
+  assert.deepEqual(await kept(id), { version: "1.0.13", agents: 2, phones: 1 });
+  assert.deepEqual(await ran(id), turns);
+
+  // The relay keeps a count, or a provider or kind of turn it knows, and never words of the machine's choosing.
+  const { privateKey, publicKey } = generateKeyPairSync("ed25519");
+  const said = JSON.stringify({
+    version: "Maya found three flats",
+    agents: -1,
+    phones: "two",
+    turns: [{ day, provider: "codex", kind: "reply", turns: 4 }, { day, provider: "Maya", kind: "reply", turns: 1 }, { day, provider: "codex", kind: "job", turns: 1.5 }, { day: "2020-01-01", provider: "codex", kind: "memory", turns: 1 }, null],
+  });
+  const other = (await (await handle(signed("POST", "/machines", publicKey.export({ format: "jwk" }).x!, privateKey, undefined, said), env, outside)).json()) as { id: string };
+  assert.deepEqual(await kept(other.id), { version: null, agents: null, phones: null });
+  assert.deepEqual(await ran(other.id), [{ day, provider: "codex", kind: "reply", turns: 4 }]);
 });
 
 test("one network address registers three new machines a minute, and a machine it registered can always come back", async () => {

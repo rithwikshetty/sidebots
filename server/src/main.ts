@@ -1,7 +1,8 @@
 // Starts the Sidebots server. `add-person` adds a person, `add-account` sets a person up on another
 // provider, `api-key` has a person's agents on a provider run on an API key, `pair` makes the code a
 // phone pairs with, `devices` lists the paired phones, `remove-device` unpairs one, and `status` says
-// whether the server is running and how each person's agents sign in to their providers.
+// whether the server is running and how each person's agents sign in to their providers. `counts`
+// turns on or off what the server tells the relay of how much it is used.
 // `providers` says which providers' programs are on this computer, `install` runs a provider's own
 // installer, `sign-in` runs a provider's own sign-in in a config folder, and `signed-in` says whether
 // that folder is signed in, and whether with an API key. With `--json`, `pair`, `devices`, `status`, `providers` and `signed-in`
@@ -156,6 +157,20 @@ if (process.argv[2] === "remove-device") {
   process.exit(0);
 }
 
+if (process.argv[2] === "counts") {
+  if (positionals[0] !== "on" && positionals[0] !== "off") {
+    console.error("usage: node src/main.ts counts on, or counts off");
+    process.exit(1);
+  }
+  store.setCounting(positionals[0] === "on");
+  console.log(
+    store.counting()
+      ? "As it registers, this server tells the relay the version of the Mac app it runs in, how many agents and paired phones it has, and how many turns its agents ran each day, by provider and kind of turn."
+      : "This server tells the relay nothing of how much it is used.",
+  );
+  process.exit(0);
+}
+
 if (process.argv[2] === "providers") {
   // Each provider's program on this computer: its version when it is installed, whether its driver works with that version, the oldest that it does, the installer its maker publishes, and the config folder it uses here.
   const providers = await Promise.all(
@@ -226,6 +241,8 @@ if (process.argv[2] === "status") {
     reachable: address ? await answers(`https://${address}`) : null,
     // Whether any agent has a turn queued or running, which an update waits for before it restarts the server.
     working: store.people().some((person) => store.agentsFor(person.id).some((agent) => agent.working)),
+    // Whether the server tells the relay how much it is used.
+    counting: store.counting(),
     // How each person's agents sign in to each provider: with the login in their config folder for it, or an API key.
     people: store.people().map((person) => ({
       name: person.name,
@@ -243,6 +260,7 @@ if (process.argv[2] === "status") {
   }
   console.log(status.running ? `Sidebots is running on port ${port}.` : `Sidebots isn't running on port ${port}.`);
   if (address) console.log(status.reachable ? `Phones reach it at ${address}.` : `Phones can't reach it at ${address}.`);
+  console.log(`Its usage counts are ${status.counting ? "on" : "off"}.`);
   for (const person of status.people) {
     for (const account of person.accounts) {
       const on = `${person.name}'s agents on ${account.name} run on`;
@@ -262,7 +280,7 @@ queue.startClock();
 // The relay gives the machine its address and tunnel, and passes notifications to Apple. `off` uses neither, for a server reached some other way.
 const relayOrigin = process.env.SIDEBOTS_RELAY ?? "https://relay.sidebots.app";
 if (relayOrigin !== "off") {
-  const toRelay = relay(store, relayOrigin, port);
+  const toRelay = relay(store, relayOrigin, port, process.env.SIDEBOTS_VERSION);
   startPush(store, toRelay.notify);
   const stopTunnel = startTunnel(store, toRelay.register, process.env.SIDEBOTS_CLOUDFLARED ?? "cloudflared");
   // `cloudflared` runs apart from the server, so it would outlive a server that is stopped. The server stops it first.
