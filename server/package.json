@@ -13,6 +13,7 @@
     "pair": "node src/main.ts pair",
     "devices": "node src/main.ts devices",
     "remove-device": "node src/main.ts remove-device",
+    "counts": "node src/main.ts counts",
     "status": "node src/main.ts status",
     "providers": "node src/main.ts providers",
     "test": "node --test",

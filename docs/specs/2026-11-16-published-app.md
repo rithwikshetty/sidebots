@@ -17,7 +17,7 @@ The agents, the messages and the Claude sign-in stay on the person's computer, a
 - **Pairing is how a phone proves who it is.** The server makes a one-time code for a person, the phone scans it and gets a device key, and the server refuses every request without a known key. Sidebots has no accounts, no passwords and no sign-in screen. Pairing replaces the Tailscale login the server trusts today, which is only safe while nothing outside the tailnet can reach the server.
 - **Each computer gets its own address under `sidebots.app`, through a Cloudflare Tunnel.** A tunnel is a connection the computer opens outward to Cloudflare, so the computer is reachable without changing the home router and without Tailscale. T3 Code reaches machines the same way. The server listens on the local machine only, as today.
 - **The relay does two jobs: it gives a machine its tunnel, and it passes notifications to Apple.** Only the holder of the app's push key can notify the app, so the key lives in the relay and nowhere else. The relay is a Cloudflare Worker at `relay.sidebots.app`. It is not on the path between phone and computer: chat traffic goes from the phone through the tunnel to the computer.
-- **The relay never sees a message.** The server encrypts each notification with a key that only the paired phone holds, and the phone decrypts it as it arrives. The relay and Apple pass along bytes they can't read. The one thing they pass along in the clear is the end of a Live Activity, which is a single word for the state an avatar is left in. The relay stores a machine's public key, its tunnel and its address, and nothing about people, agents or messages.
+- **The relay never sees a message.** The server encrypts each notification with a key that only the paired phone holds, and the phone decrypts it as it arrives. The relay and Apple pass along bytes they can't read. The one thing they pass along in the clear is the end of a Live Activity, which is a single word for the state an avatar is left in. The relay stores a machine's public key, its tunnel, its address and how much the machine says it is used, and nothing about who anyone is or what was said.
 - **The tunnel's traffic is protected in transit, not end to end.** Cloudflare carries it encrypted to each end and ends the encryption at its edge, as it does for any site behind it. Whoever owns the `sidebots.app` zone could put code on that path. Nothing in this design does, and the relay's code is open, but a person who wants no third party at all runs their own relay on their own domain.
 - **A machine proves itself to the relay with a key of its own.** The server makes a signing key pair on first start and registers the public half. Every later request to the relay is signed with it. There are no accounts to keep, so the relay limits abuse by machine: a cap of 1000 notices per machine per day, and removal of machines that stay away for 60 days. When registering makes a tunnel, the relay also limits new machines per network address.
 - **A tunnel address is useless for anything but Sidebots.** A rule on the zone refuses any request to a machine's address that carries no `Authorization` header. The phone always sends one and a web browser following a link never does, so nobody can host a web page under `sidebots.app` by claiming a tunnel.
@@ -35,7 +35,7 @@ The agents, the messages and the Claude sign-in stay on the person's computer, a
 
 **Pairing a phone.** The person opens the phone app, which opens on a welcome screen that says what Sidebots is and how to pair. Its button opens the camera, laid out as the chat's camera, with one line of instruction, and the phone asks for the camera then. The person points it at the QR code. The app says "Paired with Rithwik's MacBook Pro" and opens on the agents. A QR code works once and for ten minutes. A link button above the camera takes the same code as text.
 
-**The panel.** The menu bar icon shows whether Sidebots is running and reachable. A click opens a panel laid out like the system's own menu bar panels. A header says whether phones can reach the computer, with a green, orange or red dot. Then come the paired phones, each with when it paired and a button to remove it. That button turns into Remove in the phone's own row, so the panel asks without opening a window. Then "Pair a phone…", how Claude is signed in with Change (or Sign in when signed out), an "Open at login" switch, and Quit.
+**The panel.** The menu bar icon shows whether Sidebots is running and reachable. A click opens a panel laid out like the system's own menu bar panels. A header says whether phones can reach the computer, with a green, orange or red dot. Then come the paired phones, each with when it paired and a button to remove it. That button turns into Remove in the phone's own row, so the panel asks without opening a window. Then "Pair a phone…", how Claude is signed in with Change (or Sign in when signed out), an "Open at login" switch, a "Share usage counts" switch, and Quit.
 
 **Removing a phone.** Remove takes effect at once. The phone's next request is refused, and the app goes back to the welcome screen with a line saying the computer removed it. Its saved chats are cleared. A person can also leave from the phone, with Disconnect in the app's side menu, which is how a phone moves to a different computer.
 
@@ -139,7 +139,7 @@ A Cloudflare Worker with a D1 database, in `relay/`, deployed with Wrangler to t
 
 | Route | Purpose |
 | --- | --- |
-| `POST /machines` | Register a machine by its public key and its server's port. Makes a tunnel that forwards to `http://127.0.0.1:<port>`, 4317 unless the machine says otherwise, gives it the address `<id>.sidebots.app`, and answers with the id, the address and the tunnel's token. A key already registered gets the same machine and tunnel back |
+| `POST /machines` | Register a machine by its public key and its server's port, with how much it is used unless its owner turned that off. Makes a tunnel that forwards to `http://127.0.0.1:<port>`, 4317 unless the machine says otherwise, gives it the address `<id>.sidebots.app`, and answers with the id, the address and the tunnel's token. A key already registered gets the same machine and tunnel back |
 | `DELETE /machines/:id` | Remove a machine, its tunnel and its address |
 | `POST /notifications` | Pass one encrypted notice to Apple for one device token, or end one Live Activity by its token, and answer `sent`, `gone` or `failed` |
 
@@ -151,9 +151,23 @@ create table machines (
   public_key text not null unique,
   tunnel_id  text,                -- its Cloudflare Tunnel, once the relay has made it
   created_at integer not null,
-  seen_at    integer not null    -- its last signed request
+  seen_at    integer not null,   -- its last signed request
+  version    text,               -- the version of the Mac app it runs in, as it last said
+  agents     integer,            -- how many agents it has, as it last said
+  phones     integer             -- how many paired phones it has, as it last said
+);
+
+create table turns (
+  machine_id text not null,
+  day        text not null,      -- the date on the machine, as 2026-11-19
+  provider   text not null,
+  kind       text not null,      -- reply, job or memory
+  turns      integer not null,
+  primary key (machine_id, day, provider, kind)
 );
 ```
+
+As it registers, a server says how much it is used: its version, its agents and phones, and the turns its agents ran on each of the last seven days. The relay keeps a count, or a provider or kind of turn it knows, and never words of the server's choosing. A day's count only grows, and the days stay when the machine is removed. The server's `counts off` command stops it saying any of this, and the relay then clears the machine's version, agents and phones and keeps its days. A server whose counts come back on counts its turns from then.
 
 A machine's id is random and one label deep, so Cloudflare's certificate for `*.sidebots.app` covers every machine. A daily scheduled run removes machines not seen for 60 days, with their tunnels and DNS records. New machines are limited to three a minute per network address, through the Workers rate limiting binding, which counts by the minute at most.
 
@@ -196,9 +210,9 @@ A Swift app in `mac/`, drawn with SwiftUI's `MenuBarExtra`, with the identifier 
 - the starter avatars
 - `cloudflared`
 
-It starts the server as a child process with `SIDEBOTS_CLOUDFLARED` pointing into the bundle, restarts it if it exits, and registers itself to open at login with `SMAppService` once the person has set it up. The server's output goes to `~/Library/Logs/Sidebots/server.log`. The app passes its own environment on, so `SIDEBOTS_HOME`, `PORT` and `SIDEBOTS_RELAY` reach the server when they are set.
+It starts the server as a child process with `SIDEBOTS_CLOUDFLARED` pointing into the bundle and its own version in `SIDEBOTS_VERSION`, restarts it if it exits, and registers itself to open at login with `SMAppService` once the person has set it up. The server's output goes to `~/Library/Logs/Sidebots/server.log`. The app passes its own environment on, so `SIDEBOTS_HOME`, `PORT` and `SIDEBOTS_RELAY` reach the server when they are set.
 
-It reads the server's state from the server's own commands, with `--json` where it reads what they print: `status` (whether the server answers on its port and at the machine's address, the people and how each one's agents sign in), `devices` (the paired phones), `remove-device`, `pair`, `add-person`, `add-account`, which sets the person up on their second provider, `api-key`, which with `--remove` puts a person back on their login, and `providers`, `install`, `sign-in` and `signed-in` for the providers' programs. It names the one person after the computer user's full name. Their config folder is the one `providers` names: `~/.claude` for Claude Code, or the folder in `CLAUDE_CONFIG_DIR` when that is set, and `~/.codex` for Codex, or the folder in `CODEX_HOME`.
+It reads the server's state from the server's own commands, with `--json` where it reads what they print: `status` (whether the server answers on its port and at the machine's address, the people and how each one's agents sign in, and whether the server tells the relay how much it is used), `devices` (the paired phones), `remove-device`, `counts`, `pair`, `add-person`, `add-account`, which sets the person up on their second provider, `api-key`, which with `--remove` puts a person back on their login, and `providers`, `install`, `sign-in` and `signed-in` for the providers' programs. It names the one person after the computer user's full name. Their config folder is the one `providers` names: `~/.claude` for Claude Code, or the folder in `CLAUDE_CONFIG_DIR` when that is set, and `~/.codex` for Codex, or the folder in `CODEX_HOME`.
 
 It never runs a provider's program itself. To learn which are on the Mac it runs `providers`, once a minute and whenever the setup window looks. To learn whether one is signed in, and whether with an API key saved as its login, it runs `signed-in` with the person's folder. It calls that login an API key, as it does a key the person gave Sidebots. For "Sign in to Claude" or "Sign in to ChatGPT" it runs `sign-in` the same way and reads what the provider prints. The provider opens its sign-in page in the browser and ends once the person has signed in there. When Claude's page shows a code instead, the window takes it and passes it to the command's input. The menu warns when a provider the person has set up is missing from the Mac or too old, in place of how its agents sign in.
 

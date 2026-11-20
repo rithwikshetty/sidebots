@@ -28,6 +28,13 @@ export type AgentChanges = Partial<Pick<Agent, "name" | "avatar_id" | "model" | 
 export type Change = { message: Message } | { agent: Agent; deleted: boolean };
 /** How this server is known to the relay: its signing key, and the id, the address phones reach it at and the token its tunnel runs with, which the relay gives it once it has registered. */
 export type Machine = { privateKey: string; id?: string; address?: string; tunnelToken?: string };
+/**
+ * How much this server is used, which it tells the relay as it registers: how
+ * many agents and paired phones it has, and how many turns its agents ran on
+ * each of the last days, by provider and kind of turn. It names nobody and
+ * holds nothing anyone said.
+ */
+type Counts = { agents: number; phones: number; turns: { day: string; provider: Provider; kind: TurnKind; turns: number }[] };
 
 // The app's blue, for an avatar with no colour of its own and no design to take one from.
 const DEFAULT_COLOR = "#1F5FD6";
@@ -149,6 +156,10 @@ create table if not exists activities (
   environment text not null check (environment in ('sandbox', 'production')),
   app         text,
   primary key (device_id, agent_id)
+);
+create table if not exists settings (
+  name   text primary key,
+  value  text not null
 );
 `;
 
@@ -602,6 +613,40 @@ export function openStore(home: string) {
         return { provider, apiKey, limits: apiKey ? [] : (limits.all(personId, provider, now) as Limit[]) };
       });
       return { used, days, accounts };
+    },
+
+    /**
+     * What the server tells the relay of how much it is used: its agents and
+     * paired phones, and the turns of the last `USAGE_DAYS` days, each on its
+     * date on the computer. A server whose owner turned the counts off and on
+     * again counts from when they came back on, so it tells nothing of the
+     * time they were off.
+     */
+    counts(): Counts {
+      const today = new Date();
+      const on = db.prepare("select value from settings where name = 'counts'").get() as { value: string } | undefined;
+      const since = Math.max(new Date(today.getFullYear(), today.getMonth(), today.getDate() - USAGE_DAYS + 1).getTime(), Number(on?.value ?? 0));
+      return {
+        agents: (db.prepare("select count(*) as agents from agents").get() as { agents: number }).agents,
+        phones: (db.prepare("select count(*) as phones from devices").get() as { phones: number }).phones,
+        turns: db
+          .prepare(
+            `select date(usage.at / 1000, 'unixepoch', 'localtime') as day, agents.provider, usage.kind, count(*) as turns
+               from usage join agents on agents.id = usage.agent_id where usage.at >= ? group by day, agents.provider, usage.kind`,
+          )
+          .all(since) as Counts["turns"],
+      };
+    },
+
+    /** Whether the server tells the relay how much it is used, which it does unless its owner turned that off. */
+    counting(): boolean {
+      return db.prepare("select 1 from settings where name = 'counts' and value = 'off'").get() === undefined;
+    },
+
+    /** Turns on or off what the server tells the relay of how much it is used. The setting is `off`, or when the counts came on, in milliseconds since 1970. */
+    setCounting(on: boolean): void {
+      if (on) db.prepare("update settings set value = ? where name = 'counts' and value = 'off'").run(String(Date.now()));
+      else db.prepare("insert or replace into settings (name, value) values ('counts', 'off')").run();
     },
 
     /** Records that the person has read everything in the chat so far. */
