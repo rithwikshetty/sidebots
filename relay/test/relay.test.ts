@@ -28,7 +28,7 @@ const PUSH_KEY = generateKeyPairSync("ec", { namedCurve: "P-256" }).privateKey.e
 const PHONE = { token: "a".repeat(64), environment: "sandbox" as const };
 // A phone's notification key, and a notice sealed with it, as the server's push module sends it.
 const NOTIFICATION_KEY = Buffer.alloc(32, 7).toString("base64");
-const NOTICE = { sealed: seal({ title: "Scout", body: "Found three flats.", badge: 2, agentId: "agent-1", messageId: "message-1" } satisfies Notice, NOTIFICATION_KEY), messageId: "message-1" };
+const NOTICE = { sealed: seal({ title: "Maya", body: "Found three flats.", badge: 2, agentId: "agent-1", messageId: "message-1" } satisfies Notice, NOTIFICATION_KEY), messageId: "message-1" };
 
 const API_TOKEN = "cloudflare-api-token";
 // The ids in Cloudflare's paths: the account's and the zone's, then a tunnel's or a record's.
@@ -156,7 +156,7 @@ test("a server registers once, then its notices reach Apple under the app's push
     aps: { alert: { title: "Sidebots", body: "New message" }, sound: "sidebots.wav", "mutable-content": 1 },
     sealed: NOTICE.sealed,
   });
-  assert.doesNotMatch(await toRelay[1].text(), /Scout|three flats/);
+  assert.doesNotMatch(await toRelay[1].text(), /Maya|three flats/);
 });
 
 test("a request that isn't signed by the machine, or was signed long ago, is refused", async () => {
@@ -198,7 +198,7 @@ test("the end of a Live Activity reaches Apple as the avatar's state and nothing
 
   // The relay passes on one of the avatar's states, and never words of the server's choosing.
   assert.equal(await send(ACTIVITY, { ended: "working" as "replied" }), "failed");
-  assert.equal(await send(ACTIVITY, { ended: "Scout found three flats" as "replied" }), "failed");
+  assert.equal(await send(ACTIVITY, { ended: "Maya found three flats" as "replied" }), "failed");
   assert.equal(toApple.length, 2);
 });
 

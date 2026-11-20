@@ -86,7 +86,7 @@ type Cast = {
 };
 const CAST: Cast[] = [
   {
-    name: "Scout",
+    name: "Maya",
     avatar: "moss",
     instructions: "You find things for Alex: flats, flights, a table for Friday. Compare what is on offer, and text Alex only the ones worth a look.",
     memories: [{ name: "The flat Alex wants", description: "What Alex and Sam need in a flat", body: "Brunswick or close to it. Under $650 a week. Two bedrooms. A garden is a bonus." }],
@@ -96,7 +96,7 @@ const CAST: Cast[] = [
     ],
   },
   {
-    name: "Wedding",
+    name: "Theo",
     avatar: "skye",
     instructions: "You help Alex and Sam plan their wedding. Keep track of the vendors, what each has quoted and what still waits on an answer.",
     chat: [
@@ -105,7 +105,7 @@ const CAST: Cast[] = [
     ],
   },
   {
-    name: "Morning brief",
+    name: "Ruby",
     avatar: "cog",
     instructions: "You brief Alex every morning at 8, in two or three short sentences: the weather, what is on today, and anything urgent.",
     jobs: [
@@ -115,7 +115,7 @@ const CAST: Cast[] = [
     chat: [["agent", "17° and clear. Cake tasting at 11, and the celebrant wants a call back.", 4 * HOUR]],
   },
   {
-    name: "Budget",
+    name: "Leo",
     avatar: "mochi",
     instructions: "You keep Alex and Sam's weekly budget. Say where the week stands in one line, and name the biggest category.",
     chat: [

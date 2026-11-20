@@ -32,38 +32,38 @@
     </div>
     <p class="fine">For macOS 26 or later on Apple silicon. The phone app is coming to the App Store.</p>
 
-    <!-- The app's home screen: one chat per agent. On load, Scout finishes its job. -->
+    <!-- The app's home screen: one chat per agent. On load, Maya finishes its job. -->
     <div class="stage" aria-hidden="true">
       <div class="phone">
         <div class="screen">
           <div class="status"><span>9:47</span><span class="island"></span><span class="signal"><i></i><i></i><i></i><i></i></span></div>
           <div class="add"><svg viewBox="0 0 24 24" width="22" height="22"><path d="M12 5v14M5 12h14" fill="none" stroke="currentColor" stroke-width="2.25" stroke-linecap="round"/></svg></div>
           <ul class="chats">
-            <li id="scout">
+            <li id="maya">
               <span class="avatar replied" style="--sheet: url(/avatars/moss.png)"></span>
               <div class="chat">
-                <div class="top"><b>Scout</b><time>9:47 am</time></div>
+                <div class="top"><b>Maya</b><time>9:47 am</time></div>
                 <div class="bottom"><p class="preview unread">Found three. The one on Albert St has a garden and a second bedroom for $620. Want me to book an inspection for Saturday?</p><span class="count">1</span></div>
               </div>
             </li>
             <li>
               <span class="avatar" style="--sheet: url(/avatars/mochi.png)"></span>
               <div class="chat">
-                <div class="top"><b>Wedding</b><time>8:15 am</time></div>
+                <div class="top"><b>Theo</b><time>8:15 am</time></div>
                 <div class="bottom"><p class="preview">The photographer sent her quote. $3,400 for the day, travel included.</p></div>
               </div>
             </li>
             <li>
               <span class="avatar" style="--sheet: url(/avatars/skye.png)"></span>
               <div class="chat">
-                <div class="top"><b>Morning brief</b><time>8:00 am</time></div>
+                <div class="top"><b>Ruby</b><time>8:00 am</time></div>
                 <div class="bottom"><p class="preview">17° and clear. Cake tasting at 11, and the celebrant wants a call back.</p></div>
               </div>
             </li>
             <li>
               <span class="avatar" style="--sheet: url(/avatars/cog.png)"></span>
               <div class="chat">
-                <div class="top"><b>Budget</b><time>Yesterday</time></div>
+                <div class="top"><b>Leo</b><time>Yesterday</time></div>
                 <div class="bottom"><p class="preview">$1,140 this week, $90 under. Groceries were the big one.</p></div>
               </div>
             </li>
@@ -87,12 +87,12 @@
     </div>
     <div class="shot" aria-hidden="true">
       <div class="thread">
-        <div class="who"><span class="avatar" style="--sheet: url(/avatars/moss.png)"></span><span class="pill">Scout</span></div>
+        <div class="who"><span class="avatar" style="--sheet: url(/avatars/moss.png)"></span><span class="pill">Maya</span></div>
         <p class="bubble mine">Find me a flat in Brunswick under $650 a week. A garden would be nice.</p>
         <p class="receipt">Read 9:02 am</p>
         <div class="answer">
           <p class="busy"><span class="avatar working" style="--sheet: url(/avatars/moss.png)"></span>Consulting the augurs</p>
-          <!-- The page Scout sent with its reply, drawn in the chat above the words. -->
+          <!-- The page Maya sent with its reply, drawn in the chat above the words. -->
           <div class="sent">
             <p class="named">Flats in Brunswick<svg viewBox="0 0 24 24" width="16" height="16"><path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></p>
             <div class="flat pick"><div><b>14 Albert St</b><b>$620 a week</b></div><span>2 bedrooms · 1 bathroom · <b>Garden</b></span></div>
@@ -189,7 +189,7 @@
 </footer>
 
 <script>
-// On load, Scout is still working, with the lines the app shows meanwhile. Then its reply arrives, as it does on the phone.
+// On load, Maya is still working, with the lines the app shows meanwhile. Then its reply arrives, as it does on the phone.
 // Further down, the chat plays out once it comes into view.
 (() => {
   if (matchMedia("(prefers-reduced-motion: reduce)").matches) return;
@@ -200,7 +200,7 @@
     watch.disconnect();
     thread.classList.replace("waiting", "playing");
   }, { threshold: 0.6 }).observe(thread);
-  const row = document.getElementById("scout");
+  const row = document.getElementById("maya");
   const avatar = row.querySelector(".avatar"), preview = row.querySelector(".preview"), time = row.querySelector("time"), count = row.querySelector(".count");
   const reply = preview.textContent;
   const lines = ["Crossing the Rubicon", "Consulting the augurs"];

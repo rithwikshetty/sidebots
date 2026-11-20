@@ -27,16 +27,16 @@ test("a database made before the table changes gets them and keeps what it holds
       seen_at integer, reply_to text, job_id text, interim integer not null default 0, created_at integer not null
     );
     insert into people values ('me', 'Rithwik', '/tmp/claude');
-    insert into agents (id, person_id, name, avatar_id, created_at) values ('scout', 'me', 'Scout', 'mochi', 1);
-    insert into messages (id, agent_id, sender, body, status, created_at) values ('hello', 'scout', 'agent', 'Hello.', 'done', 2);
+    insert into agents (id, person_id, name, avatar_id, created_at) values ('maya', 'me', 'Maya', 'mochi', 1);
+    insert into messages (id, agent_id, sender, body, status, created_at) values ('hello', 'maya', 'agent', 'Hello.', 'done', 2);
     insert into devices values ('phone', 'me', 'phone', 'hash', 'key', '${"a".repeat(64)}', 'production', 1);
   `);
   old.close();
   writeFileSync(join(home, "api-keys.json"), JSON.stringify({ me: "sk-ant-key" }));
 
   const store = openStore(home);
-  assert.deepEqual(store.agentsFor("me").map((agent) => [agent.name, agent.provider, agent.color]), [["Scout", "claude", null]]);
-  assert.deepEqual(store.messages("scout").map((message) => [message.body, message.ask]), [["Hello.", null]]);
+  assert.deepEqual(store.agentsFor("me").map((agent) => [agent.name, agent.provider, agent.color]), [["Maya", "claude", null]]);
+  assert.deepEqual(store.messages("maya").map((message) => [message.body, message.ask]), [["Hello.", null]]);
   assert.deepEqual(store.people().map((person) => ({ ...person })), [{ id: "me", name: "Rithwik" }]);
   assert.deepEqual(store.accounts("me").map((account) => ({ ...account })), [{ person_id: "me", provider: "claude", config_dir: "/tmp/claude" }]);
   assert.equal(store.apiKey("me", "claude"), "sk-ant-key");
@@ -73,7 +73,7 @@ test("a database that counted turns without their tokens keeps the turns, and co
   const home = mkdtempSync(join(tmpdir(), "sidebots-store-test-"));
   const fresh = openStore(home);
   const person = fresh.addPerson({ name: "Rithwik", provider: "claude", configDir: "/tmp/claude" });
-  const agent = fresh.createAgent(person, "Scout", "mochi", "claude");
+  const agent = fresh.createAgent(person, "Maya", "mochi", "claude");
   fresh.close();
   // The usage table as it was before it counted tokens, with a turn of a session that cost $2.
   const old = new DatabaseSync(join(home, "sidebots.sqlite"));
