@@ -110,9 +110,10 @@ export default function Layout() {
                           <Stack.Screen name="index" />
                           <Stack.Screen name="chat/[id]" options={split ? CHAT_BESIDE_AGENTS : undefined} />
                           <Stack.Screen name="new-agent" options={{ presentation: "formSheet", sheetAllowedDetents: [0.62], sheetGrabberVisible: true }} />
-                          {/* An agent's page, a note opened from it, and usage, each a sheet over what is behind. */}
+                          {/* An agent's page, a note opened from it, an exchange between two agents, and usage, each a sheet over what is behind. */}
                           <Stack.Screen name="agent/[id]" options={{ presentation: "modal" }} />
                           <Stack.Screen name="note" options={{ presentation: "modal" }} />
+                          <Stack.Screen name="exchange" options={{ presentation: "modal" }} />
                           <Stack.Screen name="usage" options={{ presentation: "modal" }} />
                           <Stack.Screen
                             name="camera"

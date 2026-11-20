@@ -9,7 +9,7 @@ import { createQueue, type Turn, type TurnResult } from "../src/runner.ts";
 import { claude } from "../src/claude.ts";
 import { codex } from "../src/codex.ts";
 import { createApi } from "../src/api.ts";
-import { CONTRACT_VERSION, MESSAGE_BYTES, type AgentWithLatest, type Day, type Limit, type Message, type Question, type Used } from "../src/contract.ts";
+import { CONTRACT_VERSION, MESSAGE_BYTES, exchanges, type AgentWithLatest, type Day, type Limit, type Message, type Question, type Used } from "../src/contract.ts";
 import { startPush, type Ended, type Notice, type Sealed } from "../src/push.ts";
 
 /** A turn's reply, as a fake provider gives it. No reply means the fake gave its replies itself. */
@@ -1719,6 +1719,49 @@ test("an agent asks another, which answers in a turn of its own, and the first t
   assert.deepEqual([done.Mochi.waiting_on, done.Mochi.unread, done.Mochi.latest?.body], [null, 1, "It's sorted: £85."]);
   assert.deepEqual([done.Cog.working, done.Cog.unread, done.Cog.latest], [false, 0, null]);
   assert.deepEqual(sent.map((notice) => [notice.title, notice.body]), [["Mochi", "It's sorted: £85."]]);
+});
+
+test("what two agents ask and answer one after another is one exchange, until the person says something or is given the reply", async () => {
+  // Each of Cog's turns outlasts the rest of Mochi's, as an agent's does: it answers once it is let through.
+  const letThrough: (() => void)[] = [];
+  const gates = [0, 1, 2].map(() => new Promise<void>((resolve) => letThrough.push(resolve)));
+  let cogTurns = 0;
+  const { queue, say, mochi, cog, chat } = await twoAgents(async (turn, cogs) => {
+    const prompt = turn.prompt.text;
+    if (cogs) {
+      await gates[cogTurns++];
+      return reply(prompt.endsWith("What did the shop quote?") ? "They quoted £85." : prompt.endsWith("Can they do Friday?") ? "Friday works." : "Booked.");
+    }
+    if (prompt === "is my bike sorted?") turn.askAgent("Cog", "What did the shop quote?");
+    else if (prompt.endsWith("They quoted £85.")) turn.askAgent("Cog", "Can they do Friday?");
+    else if (prompt === "book it then") turn.askAgent("Cog", "Book it.");
+    else return reply("Done.");
+    return reply("I've asked Cog.");
+  });
+  const said = async (agentId: string) => exchanges(await chat(agentId)).map((exchange) => exchange.map((message) => message.body));
+  const bodies = async () => (await chat(mochi.id)).map((message) => message.body);
+
+  await say(ME, mochi.id, "is my bike sorted?");
+  await queue.kick(mochi.id);
+  // Cog's first answer starts the turn in which Mochi asks again, and Cog holds its second until that turn is over.
+  letThrough.shift()?.();
+  while ((await bodies()).length < 6) await new Promise((resolve) => setImmediate(resolve));
+  letThrough.shift()?.();
+  await queue.kick(cog.id);
+  await queue.kick(mochi.id);
+  // Mochi's updates while it waited are between what the two said, and it is all one exchange.
+  assert.deepEqual(await bodies(), ["is my bike sorted?", "What did the shop quote?", "I've asked Cog.", "They quoted £85.", "Can they do Friday?", "I've asked Cog.", "Friday works.", "Done."]);
+  assert.deepEqual(await said(mochi.id), [["What did the shop quote?", "They quoted £85.", "Can they do Friday?", "Friday works."]]);
+
+  // Mochi has given its reply and the person has spoken, so what it asks next begins another.
+  await say(ME, mochi.id, "book it then");
+  await queue.kick(mochi.id);
+  letThrough.shift()?.();
+  await queue.kick(cog.id);
+  await queue.kick(mochi.id);
+  assert.deepEqual(await said(mochi.id), [["What did the shop quote?", "They quoted £85.", "Can they do Friday?", "Friday works."], ["Book it.", "Booked."]]);
+  // Nothing else is in Cog's chat, so there it is all one.
+  assert.deepEqual(await said(cog.id), [["What did the shop quote?", "They quoted £85.", "Can they do Friday?", "Friday works.", "Book it.", "Booked."]]);
 });
 
 test("an ask raised while working for another agent is in that agent's chat too, and stopping the agent that waits stops the work", async () => {

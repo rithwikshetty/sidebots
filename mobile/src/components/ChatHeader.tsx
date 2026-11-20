@@ -1,3 +1,4 @@
+import type { ReactNode } from "react";
 import { Pressable, StyleSheet, Text, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { ChevronLeft, Ellipsis } from "lucide-react-native";
@@ -74,18 +75,31 @@ export function ChatHeader({ name, avatarId, avatarState, dimmed, onBack, onAbou
         </View>
       </MessageMenuView>
       <View pointerEvents="box-none" style={[styles.header, { top: insets.top }]}>
-        <Pressable onPress={onAbout} accessibilityRole="button" accessibilityLabel={`About ${name}`} hitSlop={6} style={styles.about}>
-          <View style={styles.avatar}>
+        <Pressable onPress={onAbout} accessibilityRole="button" accessibilityLabel={`About ${name}`} hitSlop={6}>
+          <Named name={name} interactive>
             <AvatarView avatarId={avatarId} state={avatarState} size={AVATAR} dimmed={dimmed} />
-          </View>
-          <Glass interactive style={styles.pill}>
-            <Text numberOfLines={1} style={[styles.name, { color: theme.ink }]}>
-              {name}
-            </Text>
-          </Glass>
+          </Named>
         </Pressable>
       </View>
     </>
+  );
+}
+
+/**
+ * Who a header is for: the avatars, in a row, with the name in a glass pill
+ * under them. The pill of one that a tap opens is `interactive`.
+ */
+export function Named({ name, interactive = false, children }: { name: string; interactive?: boolean; children: ReactNode }) {
+  const theme = useTheme();
+  return (
+    <View style={styles.about}>
+      <View style={styles.avatar}>{children}</View>
+      <Glass interactive={interactive} style={styles.pill}>
+        <Text numberOfLines={1} style={[styles.name, { color: theme.ink }]}>
+          {name}
+        </Text>
+      </Glass>
+    </View>
   );
 }
 
@@ -95,7 +109,7 @@ const styles = StyleSheet.create({
   glass: { width: BAR_BUTTON, height: BAR_BUTTON, borderRadius: BAR_BUTTON / 2, alignItems: "center", justifyContent: "center", overflow: "hidden" },
   header: { position: "absolute", left: 0, right: 0, alignItems: "center", paddingTop: 2, zIndex: 2 },
   about: { alignItems: "center" },
-  avatar: { shadowColor: "#000", shadowOpacity: 0.12, shadowRadius: 6, shadowOffset: { width: 0, height: 2 } },
+  avatar: { flexDirection: "row", alignItems: "center", gap: 7, shadowColor: "#000", shadowOpacity: 0.12, shadowRadius: 6, shadowOffset: { width: 0, height: 2 } },
   pill: {
     marginTop: -5,
     paddingHorizontal: 11,
