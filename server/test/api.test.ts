@@ -231,7 +231,7 @@ test("a message gets the agent's reply, run in the agent's folder under its owne
     turns.push(turn);
     return reply(`You said: ${turn.prompt.text}`);
   });
-  const agent = (await call(ME, "POST", "/agents", { name: "Wedding", avatarId: "mochi" })).json;
+  const agent = (await call(ME, "POST", "/agents", { name: "Theo", avatarId: "mochi" })).json;
 
   const sent = await say(ME, agent.id, "hello");
   assert.equal(sent.status, 201);
@@ -249,7 +249,7 @@ test("a message gets the agent's reply, run in the agent's folder under its owne
   assert.equal(turns[0].cwd, store.agentHome(agent.id));
   assert.equal(turns[0].configDir, "/config/alex");
   assert.equal(turns[0].sessionId, null);
-  assert.match(readFileSync(join(store.agentHome(agent.id), "CLAUDE.md"), "utf8"), /You are Wedding, one of Alex's agents/);
+  assert.match(readFileSync(join(store.agentHome(agent.id), "CLAUDE.md"), "utf8"), /You are Theo, one of Alex's agents/);
 });
 
 test("messages sent while the agent is busy run one at a time, in order, on the same session", async () => {
@@ -281,7 +281,7 @@ test("a failed turn keeps the message and adds a note from Sidebots saying why",
   const { queue, call, say } = setup(async () => {
     throw new Error("Claude Code process exited with code 1");
   });
-  const agent = (await call(ME, "POST", "/agents", { name: "Scout", avatarId: "moss" })).json;
+  const agent = (await call(ME, "POST", "/agents", { name: "Maya", avatarId: "moss" })).json;
 
   await say(ME, agent.id, "find me a flat");
   await queue.kick(agent.id);
@@ -301,7 +301,7 @@ test("a turn that fails for a reason the person can fix says what to do on the c
   const { queue, call, say } = setup(async (turn) => {
     throw new Error(turn.prompt.text.split("\n").at(-1));
   });
-  const agent = (await call(ME, "POST", "/agents", { name: "Scout", avatarId: "moss" })).json;
+  const agent = (await call(ME, "POST", "/agents", { name: "Maya", avatarId: "moss" })).json;
   const failures = [
     "Not logged in · Please run /login",
     "Invalid API key · Fix external API key",
@@ -344,7 +344,7 @@ test("a person with an API key has every turn, job and fresh start run on it, an
   });
   await call(HER, "PUT", "/push-token", { token: "c".repeat(64), environment: "production" });
 
-  const hers = (await call(HER, "POST", "/agents", { name: "Scout", avatarId: "moss" })).json;
+  const hers = (await call(HER, "POST", "/agents", { name: "Maya", avatarId: "moss" })).json;
   await say(HER, hers.id, "watch the price");
   await queue.kick(hers.id);
   time += 5 * 60_000;
@@ -396,7 +396,7 @@ test("each person only reaches their own agents", async () => {
 test("the event stream carries the person's own messages and their status changes, and nobody else's", async () => {
   let finish!: () => void;
   const { queue, call, say, app, phoneOf } = setup(() => new Promise((resolve) => (finish = () => resolve(reply("done")))));
-  const mine = (await call(ME, "POST", "/agents", { name: "Wedding", avatarId: "mochi" })).json;
+  const mine = (await call(ME, "POST", "/agents", { name: "Theo", avatarId: "mochi" })).json;
   const hers = (await call(HER, "POST", "/agents", { name: "Garden", avatarId: "moss" })).json;
 
   const response = await app.request("/events", { headers: phoneOf(ME) });
@@ -417,10 +417,10 @@ test("the event stream carries the person's own messages and their status change
   assert.deepEqual(
     events.map(({ message, agent }) => [message.sender, message.body, message.status, agent.name, agent.working]),
     [
-      ["person", "hello", "queued", "Wedding", true],
-      ["person", "hello", "running", "Wedding", true],
-      ["agent", "done", "done", "Wedding", true],
-      ["person", "hello", "done", "Wedding", false],
+      ["person", "hello", "queued", "Theo", true],
+      ["person", "hello", "running", "Theo", true],
+      ["agent", "done", "done", "Theo", true],
+      ["person", "hello", "done", "Theo", false],
     ],
   );
 });
@@ -431,7 +431,7 @@ test("the event stream carries the agents the person adds and deletes on another
   const response = await app.request("/events", { headers: phoneOf(ME) });
   const reader = response.body!.pipeThrough(new TextDecoderStream()).getReader();
   await call(HER, "POST", "/agents", { name: "Garden", avatarId: "moss" });
-  const added = (await call(otherPhone, "POST", "/agents", { name: "Wedding", avatarId: "mochi" })).json;
+  const added = (await call(otherPhone, "POST", "/agents", { name: "Theo", avatarId: "mochi" })).json;
   await call(otherPhone, "DELETE", `/agents/${added.id}`);
 
   let text = "";
@@ -463,7 +463,7 @@ test("files sent with a message go into the agent's folder, the agent is told wh
     prompts.push(turn.prompt.text);
     return reply("nice");
   });
-  const agent = (await call(ME, "POST", "/agents", { name: "Scout", avatarId: "moss" })).json;
+  const agent = (await call(ME, "POST", "/agents", { name: "Maya", avatarId: "moss" })).json;
 
   const sent = await say(ME, agent.id, "what is this?", [new File(["jpeg bytes"], "IMG%20 0042.jpg", { type: "image/jpeg" })]);
   await queue.kick(agent.id);
@@ -488,7 +488,7 @@ test("a fresh start has the agent save its memory, then gives the next message a
     turns.push(turn);
     return reply("sure", `session-${turns.length}`);
   });
-  const agent = (await call(ME, "POST", "/agents", { name: "Wedding", avatarId: "mochi" })).json;
+  const agent = (await call(ME, "POST", "/agents", { name: "Theo", avatarId: "mochi" })).json;
   await say(ME, agent.id, "book the band");
   await queue.kick(agent.id);
 
@@ -538,23 +538,23 @@ test("a search, by an agent or from the app, reaches all of the person's chats a
     if (turn.prompt.text === "search") searches.push(turn.searchHistory("florist"));
     return reply("ok");
   });
-  const wedding = (await call(ME, "POST", "/agents", { name: "Wedding", avatarId: "mochi" })).json;
+  const theo = (await call(ME, "POST", "/agents", { name: "Theo", avatarId: "mochi" })).json;
   const money = (await call(ME, "POST", "/agents", { name: "Money", avatarId: "cog" })).json;
   const hers = (await call(HER, "POST", "/agents", { name: "Garden", avatarId: "moss" })).json;
-  await say(ME, wedding.id, "The florist quoted 400");
+  await say(ME, theo.id, "The florist quoted 400");
   await say(HER, hers.id, "my florist is a secret");
-  await queue.kick(wedding.id);
+  await queue.kick(theo.id);
   await queue.kick(hers.id);
 
   await say(ME, money.id, "search");
   await queue.kick(money.id);
 
-  assert.match(searches[0], /^\d{4}-\d{2}-\d{2}, chat with Wedding, the person: The florist quoted 400$/);
+  assert.match(searches[0], /^\d{4}-\d{2}-\d{2}, chat with Theo, the person: The florist quoted 400$/);
 
   const found = (await call(ME, "GET", "/search?text=florist")).json;
   assert.deepEqual(
     found.map((m: { agent_id: string; body: string }) => [m.agent_id, m.body]),
-    [[wedding.id, "The florist quoted 400"]],
+    [[theo.id, "The florist quoted 400"]],
   );
 });
 
@@ -582,7 +582,7 @@ test("a reply or a failed turn notifies the person's phones, and a phone Apple h
   }
   assert.equal((await call(ME, "PUT", "/push-token", { token: "nope", environment: "production" })).status, 400);
   assert.equal((await call(ME, "PUT", "/push-token", { token: PHONE, environment: "sandbox", app: "not an app" })).status, 400);
-  const agent = (await call(ME, "POST", "/agents", { name: "Wedding", avatarId: "mochi" })).json;
+  const agent = (await call(ME, "POST", "/agents", { name: "Theo", avatarId: "mochi" })).json;
   // A reply counts as unread when it is newer than the chat was read, which begins at the agent's creation.
   await new Promise((resolve) => setTimeout(resolve, 1));
 
@@ -598,9 +598,9 @@ test("a reply or a failed turn notifies the person's phones, and a phone Apple h
   assert.deepEqual(
     sent.map(([token, notice]) => [token, notice.title, notice.body, notice.badge, notice.agentId]),
     [
-      [PHONE, "Wedding", "Booked.", 1, agent.id],
-      [OLD_PHONE, "Wedding", "Booked.", 1, agent.id],
-      [PHONE, "Wedding", "Sidebots couldn't finish this. Signed out.", 2, agent.id],
+      [PHONE, "Theo", "Booked.", 1, agent.id],
+      [OLD_PHONE, "Theo", "Booked.", 1, agent.id],
+      [PHONE, "Theo", "Sidebots couldn't finish this. Signed out.", 2, agent.id],
     ],
   );
 
@@ -627,7 +627,7 @@ test("the Live Activity a phone shows for a working agent ends with the agent's 
     return "sent";
   });
   const activity = { token: "d".repeat(256), environment: "sandbox", app: "app.sidebots.dev" };
-  const agent = (await call(ME, "POST", "/agents", { name: "Wedding", avatarId: "mochi" })).json;
+  const agent = (await call(ME, "POST", "/agents", { name: "Theo", avatarId: "mochi" })).json;
   const token = (who: string | { Authorization: string }, body: unknown = activity) => call(who, "PUT", `/agents/${agent.id}/activity-token`, body);
   /** Sends a message, gives the server the activity's token while the agent works, then lets the turn end. */
   const work = async (start: () => Promise<unknown>) => {
@@ -725,7 +725,7 @@ test("an agent's chat takes its avatar's colour until the person picks one, and 
   assert.equal(colors.mochi, "#E31775");
   assert.equal(colors.skye, "#286BF5");
 
-  const agent = (await call(ME, "POST", "/agents", { name: "Scout", avatarId: "mochi" })).json;
+  const agent = (await call(ME, "POST", "/agents", { name: "Maya", avatarId: "mochi" })).json;
   assert.equal(agent.color, null);
   assert.equal((await call(ME, "PATCH", `/agents/${agent.id}`, { color: "#0b7a6a" })).json.color, "#0B7A6A");
   assert.equal((await call(ME, "GET", "/agents")).json[0].color, "#0B7A6A");
@@ -740,7 +740,7 @@ test("deleting an agent removes its messages, its jobs, what it used, its folder
   });
   const configDir = join(home, "claude");
   store.addPerson({ name: "Sam", provider: "claude", configDir });
-  const agent = (await call("Sam", "POST", "/agents", { name: "Scout", avatarId: "moss" })).json;
+  const agent = (await call("Sam", "POST", "/agents", { name: "Maya", avatarId: "moss" })).json;
   const folder = store.agentHome(agent.id);
   const sessions = join(configDir, "projects", folder.replace(/[^a-zA-Z0-9]/g, "-"));
   mkdirSync(sessions, { recursive: true });
@@ -770,7 +770,7 @@ test("each agent's turns are counted with what they cost and the tokens they use
     chat += turn.prompt.text === "watch the price" ? 0.5 : 0.25;
     return reply("ok", "chat", 0, chat, chat * 40_000);
   }, () => Date.now());
-  const agent = (await call(ME, "POST", "/agents", { name: "Scout", avatarId: "moss" })).json;
+  const agent = (await call(ME, "POST", "/agents", { name: "Maya", avatarId: "moss" })).json;
   const used = async (who: string) =>
     (await call(who, "GET", "/usage")).json.used.map((each: Used) => [each.agent_id, each.kind, each.turns, each.cost, each.tokens]).sort();
   const days = async (who: string) => (await call(who, "GET", "/usage")).json.days.map((each: Day) => [each.day, each.cost, each.tokens]);
@@ -951,23 +951,23 @@ test("an agent runs on a provider its owner has set up: the one they pick, or th
     return reply("ok");
   });
   // Alex has set up Claude Code alone.
-  const refused = await call(ME, "POST", "/agents", { name: "Scout", avatarId: "moss", provider: "codex" });
+  const refused = await call(ME, "POST", "/agents", { name: "Maya", avatarId: "moss", provider: "codex" });
   assert.deepEqual([refused.status, refused.json.error], [400, "Codex isn't set up on your computer."]);
-  assert.equal((await call(ME, "POST", "/agents", { name: "Scout", avatarId: "moss", provider: "abacus" })).json.error, "That isn't set up on your computer.");
+  assert.equal((await call(ME, "POST", "/agents", { name: "Maya", avatarId: "moss", provider: "abacus" })).json.error, "That isn't set up on your computer.");
 
   store.addAccount(store.personByName(ME)!.id, "codex", "/config/alex-codex");
-  const scout = (await call(ME, "POST", "/agents", { name: "Scout", avatarId: "moss", provider: "codex" })).json;
-  assert.deepEqual([scout.provider, scout.model, scout.effort], ["codex", "sol", "medium"]);
+  const maya = (await call(ME, "POST", "/agents", { name: "Maya", avatarId: "moss", provider: "codex" })).json;
+  assert.deepEqual([maya.provider, maya.model, maya.effort], ["codex", "sol", "medium"]);
   // Its instructions are in the file Codex reads.
-  assert.match(readFileSync(join(home, "agents", scout.id, "AGENTS.md"), "utf8"), /^# Scout\n/);
+  assert.match(readFileSync(join(home, "agents", maya.id, "AGENTS.md"), "utf8"), /^# Maya\n/);
   // It takes Codex's models, and none of Claude Code's.
-  assert.equal((await call(ME, "PATCH", `/agents/${scout.id}`, { model: "opus" })).status, 400);
-  assert.equal((await call(ME, "PATCH", `/agents/${scout.id}`, { model: "luna" })).json.model, "luna");
+  assert.equal((await call(ME, "PATCH", `/agents/${maya.id}`, { model: "opus" })).status, 400);
+  assert.equal((await call(ME, "PATCH", `/agents/${maya.id}`, { model: "luna" })).json.model, "luna");
 
   const gym = (await call(ME, "POST", "/agents", { name: "Gym", avatarId: "hop" })).json;
   assert.equal(gym.provider, "claude");
   // Each runs on its own provider's config folder.
-  for (const agent of [scout, gym]) {
+  for (const agent of [maya, gym]) {
     await say(ME, agent.id, "hello");
     await queue.kick(agent.id);
   }
@@ -989,7 +989,7 @@ test("a job runs when its time comes, in a session of its own, and only a run wi
     runs.push([turn.prompt.text, turn.sessionId, turn.keepSession]);
     return turn.prompt.text.startsWith("This is a run of one of your jobs") ? reply(found, "job-session") : reply("ok");
   }, () => time);
-  const agent = (await call(ME, "POST", "/agents", { name: "Scout", avatarId: "moss" })).json;
+  const agent = (await call(ME, "POST", "/agents", { name: "Maya", avatarId: "moss" })).json;
   await say(ME, agent.id, "watch the price");
   await queue.kick(agent.id);
   const bodies = async () => (await call(ME, "GET", `/agents/${agent.id}/messages`)).json.map((m: { body: string }) => m.body);
@@ -1069,7 +1069,7 @@ test("a reply to a message tells the agent which one, and the chat pages back th
     prompts.push(turn.prompt.text);
     return reply("The florist is Petal & Co.");
   });
-  const agent = (await call(ME, "POST", "/agents", { name: "Wedding", avatarId: "mochi" })).json;
+  const agent = (await call(ME, "POST", "/agents", { name: "Theo", avatarId: "mochi" })).json;
   await say(ME, agent.id, "who is the florist?");
   await queue.kick(agent.id);
   const [, answer] = (await call(ME, "GET", `/agents/${agent.id}/messages`)).json;
@@ -1099,7 +1099,7 @@ test("a muted agent notifies nobody, and a hidden one comes back when it has som
   });
   await call(ME, "PUT", "/push-token", { token: "a".repeat(64), environment: "production" });
   const loud = (await call(ME, "POST", "/agents", { name: "Errands", avatarId: "hop" })).json;
-  const quiet = (await call(ME, "POST", "/agents", { name: "Scout", avatarId: "moss" })).json;
+  const quiet = (await call(ME, "POST", "/agents", { name: "Maya", avatarId: "moss" })).json;
   await call(ME, "PATCH", `/agents/${loud.id}`, { hidden: true });
   await call(ME, "PATCH", `/agents/${quiet.id}`, { hidden: true, muted: true });
 
@@ -1126,7 +1126,7 @@ test("a message sent while the agent works goes into the turn it is running, and
     turn.replied("Booked the band and the florist.", [turn.prompt.id, later.id]);
     return { sessionId: "session-1", contextTokens: 0, cost: 0, tokens: 0 };
   });
-  const agent = (await call(ME, "POST", "/agents", { name: "Wedding", avatarId: "mochi" })).json;
+  const agent = (await call(ME, "POST", "/agents", { name: "Theo", avatarId: "mochi" })).json;
   await say(ME, agent.id, "book the band");
   const working = queue.kick(agent.id);
   while (!release) await new Promise((resolve) => setTimeout(resolve, 1));
@@ -1167,7 +1167,7 @@ test("an agent's updates while it works wait a minute, then come no more than ev
     return "sent";
   });
   await call(ME, "PUT", "/push-token", { token: "a".repeat(64), environment: "production" });
-  const agent = (await call(ME, "POST", "/agents", { name: "Scout", avatarId: "moss" })).json;
+  const agent = (await call(ME, "POST", "/agents", { name: "Maya", avatarId: "moss" })).json;
   await new Promise((resolve) => setTimeout(resolve, 1));
   await say(ME, agent.id, "find me a flat");
   await queue.kick(agent.id);
@@ -1213,7 +1213,7 @@ test("an agent's files go with its next message, an update or its reply, and ope
     answers.push(turn.sendFiles(["film.mov"]));
     return reply("Both are here.");
   }, () => time);
-  const agent = (await call(ME, "POST", "/agents", { name: "Scout", avatarId: "moss" })).json;
+  const agent = (await call(ME, "POST", "/agents", { name: "Maya", avatarId: "moss" })).json;
   await say(ME, agent.id, "chart my week");
   await queue.kick(agent.id);
   for (const minutes of [5, 10]) {
@@ -1248,7 +1248,7 @@ test("a job's run can't send updates", async () => {
     else updates.push(turn.sendUpdate !== undefined);
     return reply("SILENT");
   }, () => time);
-  const agent = (await call(ME, "POST", "/agents", { name: "Scout", avatarId: "moss" })).json;
+  const agent = (await call(ME, "POST", "/agents", { name: "Maya", avatarId: "moss" })).json;
   await say(ME, agent.id, "set up");
   await queue.kick(agent.id);
   time += 5 * 60_000;
@@ -1384,7 +1384,7 @@ test("stopping an agent ends the turn it is running, says so in the chat, and th
     return "sent";
   });
   await call(ME, "PUT", "/push-token", { token: "a".repeat(64), environment: "production" });
-  const agent = (await call(ME, "POST", "/agents", { name: "Wedding", avatarId: "mochi" })).json;
+  const agent = (await call(ME, "POST", "/agents", { name: "Theo", avatarId: "mochi" })).json;
   const shown = async () => (await call(ME, "GET", `/agents/${agent.id}/messages`)).json.map((m: { sender: string; body: string; status: string }) => [m.sender, m.body, m.status]);
 
   // With nothing running there is nothing to stop, and nothing is said.
@@ -1434,7 +1434,7 @@ test("a stopped turn leaves what the agent never read to send again, and a messa
     await new Promise<void>((resolve) => (end = resolve));
     return { sessionId: "session-1", contextTokens: 0, cost: 0, tokens: 0 };
   });
-  const agent = (await call(ME, "POST", "/agents", { name: "Wedding", avatarId: "mochi" })).json;
+  const agent = (await call(ME, "POST", "/agents", { name: "Theo", avatarId: "mochi" })).json;
   await say(ME, agent.id, "book the band");
   const working = queue.kick(agent.id);
   await say(ME, agent.id, "and the florist");
@@ -1473,7 +1473,7 @@ test("stopping a job's run ends it with no reply, leaves a message that waited f
     runs.push(turn);
     return untilStopped(turn, "job-session");
   }, () => time);
-  const agent = (await call(ME, "POST", "/agents", { name: "Scout", avatarId: "moss" })).json;
+  const agent = (await call(ME, "POST", "/agents", { name: "Maya", avatarId: "moss" })).json;
   await say(ME, agent.id, "watch the price");
   await queue.kick(agent.id);
 
@@ -1503,7 +1503,7 @@ test("stopping a fresh start calls it off, and the agent keeps its session", asy
     turns.push(turn);
     return turn.prompt.text.startsWith("This session is about to be replaced") ? untilStopped(turn) : reply("sure");
   });
-  const agent = (await call(ME, "POST", "/agents", { name: "Wedding", avatarId: "mochi" })).json;
+  const agent = (await call(ME, "POST", "/agents", { name: "Theo", avatarId: "mochi" })).json;
   await say(ME, agent.id, "book the band");
   await queue.kick(agent.id);
 
@@ -1533,7 +1533,7 @@ test("deleting an agent stops the turn it is running, and runs nothing that wait
     turns.push(turn);
     return untilStopped(turn);
   });
-  const agent = (await call(ME, "POST", "/agents", { name: "Scout", avatarId: "moss" })).json;
+  const agent = (await call(ME, "POST", "/agents", { name: "Maya", avatarId: "moss" })).json;
   await call(ME, "POST", `/agents/${agent.id}/fresh-start`);
   const working = queue.kick(agent.id);
   await say(ME, agent.id, "find me a flat");
@@ -1553,7 +1553,7 @@ test("a message the agent never answered is sent again as it was, with its file 
     if (prompts.length === 2) throw new Error("Signed out.");
     return reply("It is a receipt.");
   });
-  const agent = (await call(ME, "POST", "/agents", { name: "Scout", avatarId: "moss" })).json;
+  const agent = (await call(ME, "POST", "/agents", { name: "Maya", avatarId: "moss" })).json;
   const first = (await call(ME, "POST", `/agents/${agent.id}/messages`, { body: "what is this?" })).json;
   await queue.kick(agent.id);
   const [, answer] = (await call(ME, "GET", `/agents/${agent.id}/messages`)).json;
@@ -1588,7 +1588,7 @@ test("a stop that lands as the last reply comes in says nothing, unless a messag
     await new Promise<void>((resolve) => (end = resolve));
     return { sessionId: "session-1", contextTokens: 0, cost: 0, tokens: 0 };
   });
-  const agent = (await call(ME, "POST", "/agents", { name: "Wedding", avatarId: "mochi" })).json;
+  const agent = (await call(ME, "POST", "/agents", { name: "Theo", avatarId: "mochi" })).json;
   const shown = async () => (await call(ME, "GET", `/agents/${agent.id}/messages`)).json.map((m: { sender: string; body: string; status: string }) => [m.sender, m.body, m.status]);
 
   await say(ME, agent.id, "book the band");

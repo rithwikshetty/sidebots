@@ -69,7 +69,7 @@ function setup({ signedIn = true, keyLogin = false } = {}) {
     prompt: { id: "first", text },
     seen: (ids) => seen.push(...ids),
     replied: (reply, ids) => replies.push([reply, ids]),
-    cwd: "/agents/scout",
+    cwd: "/agents/maya",
     sessionId: null,
     spent: { cost: 0, tokens: 0 },
     configDir,
@@ -128,7 +128,7 @@ test("a turn starts a thread with the agent's tools, on the newest model of its 
   const started = requests().find((each) => each.method === "thread/start")!.params;
   assert.deepEqual(
     [started.cwd, started.model, started.approvalPolicy, started.approvalsReviewer, started.sandbox, started.ephemeral],
-    ["/agents/scout", "gpt-6.2-sol", "on-request", "auto_review", "workspace-write", false],
+    ["/agents/maya", "gpt-6.2-sol", "on-request", "auto_review", "workspace-write", false],
   );
   // Every tool is there from the start, `send_update` too, since a thread keeps the tools it started with.
   const tools = (started.dynamicTools as { name: string; inputSchema: { properties: object } }[]).map((tool) => tool.name);
@@ -245,8 +245,8 @@ test("a login that is an API key has no plan, so Codex isn't asked for its limit
 
 test("a deleted agent's threads go, the ones Codex lists for its folder", async () => {
   const { driver, configDir, requests } = setup();
-  await driver.forget("/agents/scout", configDir);
+  await driver.forget("/agents/maya", configDir);
   assert.ok(existsSync(join(configDir, "deleted")));
-  assert.equal(requests().find((each) => each.method === "thread/list")!.params.cwd, "/agents/scout");
+  assert.equal(requests().find((each) => each.method === "thread/list")!.params.cwd, "/agents/maya");
   assert.deepEqual(requests().filter((each) => each.method === "thread/delete").map((each) => each.params.threadId), ["thread-1", "thread-2"]);
 });
