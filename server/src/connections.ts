@@ -10,8 +10,8 @@ import { z } from "zod";
 import { CONNECTIONS, type Connected, type Connection, type SignIn } from "./contract.ts";
 import type { Store } from "./store.ts";
 
-/** What a maker's token address answers when it grants: a token that works for `expires_in` seconds, the one that outlasts it, what they let their holder do, and who signed in. */
-type Granted = { access_token: string; expires_in: number; refresh_token?: string; scope?: string; id_token?: string };
+/** What a maker's token address answers when it grants: a token that works for `expires_in` seconds, the one that outlasts it, what they let their holder do, and who signed in: to Google, in `id_token`, and to Notion, the workspace they chose. */
+type Granted = { access_token: string; expires_in: number; refresh_token?: string; scope?: string; id_token?: string; workspace_name?: string };
 type Refused = { error: string; error_description?: string };
 
 /**
@@ -66,7 +66,8 @@ const MAKERS: Record<"google" | "notion", SignInWith> = {
     token: "https://mcp.notion.com/token",
     scopes: ["default"],
     resource: NOTION,
-    account: () => undefined,
+    // Notion names the workspace the person signed in to, and not the person.
+    account: (granted) => granted.workspace_name,
     // Notion reads the client from a file, whose address is the client id, and the file lists this address. It is no one app's: the sheet iOS signs in with hands it to the app that opened it.
     redirect: () => "app.sidebots:/oauth2redirect",
   },

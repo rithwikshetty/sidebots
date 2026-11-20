@@ -149,7 +149,7 @@ test("a turn is handed Notion's own server with a token, once the person has sig
       const swap = new URLSearchParams(String(init?.body));
       swaps.push(swap);
       if (swap.get("grant_type") === "refresh_token" && swap.get("refresh_token") !== `lasting-${lasting}`) return Response.json({ error: "invalid_grant" }, { status: 400 });
-      return Response.json({ access_token: `access-${++lasting}`, expires_in: 3600, refresh_token: `lasting-${lasting}` });
+      return Response.json({ access_token: `access-${++lasting}`, expires_in: 3600, refresh_token: `lasting-${lasting}`, workspace_name: "Home" });
     },
     () => time,
   );
@@ -163,9 +163,9 @@ test("a turn is handed Notion's own server with a token, once the person has sig
     [signIn.redirect, ...["client_id", "redirect_uri", "scope", "resource", "code_challenge_method"].map((name) => page.searchParams.get(name))],
     ["app.sidebots:/oauth2redirect", "https://sidebots.example/oauth-client.json", "app.sidebots:/oauth2redirect", "default", "https://mcp.notion.com/mcp", "S256"],
   );
-  // Notion doesn't say who signed in, so the connection is listed under its name.
+  // Notion names the workspace the person signed in to, which the connection is listed as.
   const connected = await connections.finish(person.id, "notion", `${signIn.redirect}?state=${page.searchParams.get("state")}&code=one-time`);
-  assert.deepEqual([connected.account, store.connection(person.id, "notion")], ["Notion", { account: "Notion", token: "lasting-1" }]);
+  assert.deepEqual([connected.account, store.connection(person.id, "notion")], ["Home", { account: "Home", token: "lasting-1" }]);
   assert.deepEqual(["code", "client_id", "resource"].map((name) => swaps[0].get(name)), ["one-time", "https://sidebots.example/oauth-client.json", "https://mcp.notion.com/mcp"]);
   assert.deepEqual(await connections.servers(person.id), { notion: { url: "https://mcp.notion.com/mcp", token: "access-1" } });
 
@@ -178,7 +178,7 @@ test("a turn is handed Notion's own server with a token, once the person has sig
   // A Notion that can't be reached leaves its server out of the turn and the connection be. One that has ended the sign-in has the connection forgotten.
   time = 3_600_000;
   reached = false;
-  assert.deepEqual([await connections.servers(person.id), connections.account(person.id, "notion")], [{}, "Notion"]);
+  assert.deepEqual([await connections.servers(person.id), connections.account(person.id, "notion")], [{}, "Home"]);
   reached = true;
   lasting = 9;
   assert.deepEqual([await connections.servers(person.id), connections.account(person.id, "notion")], [{}, null]);
