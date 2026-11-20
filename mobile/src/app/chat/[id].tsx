@@ -7,6 +7,7 @@ import Animated, { useSharedValue } from "react-native-reanimated";
 import { Reply, X } from "lucide-react-native";
 import { avatarStateOf, betweenAgents, exchanges, type AgentWithLatest, type Ask, type Message, type Question } from "@server/contract";
 import { AskCard } from "@/components/AskCard";
+import { ChatBubble } from "@/components/ChatBubble";
 import { BAR_HEIGHT, ChatHeader, HEADER_CLEARANCE, HEADER_OVERHANG } from "@/components/ChatHeader";
 import { Composer } from "@/components/Composer";
 import { Exchange, standingOf } from "@/components/Exchange";
@@ -64,7 +65,10 @@ function ChatWith({ agent }: { agent: AgentWithLatest }) {
   // Whether the agent waits on the person's answer to an ask of its own, which is then the last thing in the chat.
   const asksPerson = messages.some((message) => message.ask === "waiting" && message.agent_id === agent.id);
   // What the agent and another said to each other shows as one line for each exchange, where the newest thing in it was asked.
-  const lines = useMemo(() => new Map(exchanges(messages).map((exchange) => standingOf(exchange, messages)).map((standing) => [standing.asked.id, standing.state])), [messages]);
+  const standings = useMemo(() => {
+    const each = exchanges(messages).map((exchange) => standingOf(exchange, messages));
+    return new Map(each.map(({ asked, state }) => [asked.id, state]));
+  }, [messages]);
   // The person's newest message, which carries the chat's receipt.
   const newestMine = messages.findLast((message) => message.sender === "person")?.id;
   // What the person typed stays with the chat when they leave it and come back.
@@ -96,7 +100,7 @@ function ChatWith({ agent }: { agent: AgentWithLatest }) {
   // view, which lifts the messages with the keyboard in the same motion as the
   // composer. Its rows run newest first.
   const list = useRef<FlatList<Message>>(null);
-  const newestFirst = useMemo(() => messages.filter((message) => !betweenAgents(message) || lines.has(message.id)).reverse(), [messages, lines]);
+  const newestFirst = useMemo(() => messages.filter((message) => !betweenAgents(message) || standings.has(message.id)).reverse(), [messages, standings]);
   // The composer floats over the list's end; a spacer of its height keeps the last message above it.
   const [composerHeight, setComposerHeight] = useState(COMPOSER_ESTIMATE + insets.bottom);
   // Whether the newest message is on screen, and the room the keyboard takes at the list's end.
@@ -237,7 +241,7 @@ function ChatWith({ agent }: { agent: AgentWithLatest }) {
         }
         renderItem={({ item, index }) => {
           const older = newestFirst[index + 1];
-          const standing = lines.get(item.id);
+          const standing = standings.get(item.id);
           return (
             <Row message={item} openedAt={openedAt}>
               {!older || !sameDay(older.created_at, item.created_at) ? (
@@ -453,7 +457,7 @@ function Sent({ body, quote, photos, pages = [], files, mine, theme, asked, from
         <FileCard key={file.uri} file={file} />
       ))}
       {body || quote ? (
-        <View style={[styles.bubble, mine ? [styles.bubbleMine, { backgroundColor: theme.tint }] : [styles.bubbleTheirs, { backgroundColor: theme.bubble }]]}>
+        <ChatBubble mine={mine}>
           {quote ? (
             <View style={[styles.quote, { borderLeftColor: quiet }]} accessibilityLabel={`In reply to: ${quote}`}>
               <Text numberOfLines={3} style={[styles.quoteText, { color: quiet }]}>
@@ -471,7 +475,7 @@ function Sent({ body, quote, photos, pages = [], files, mine, theme, asked, from
             <Markdown text={body} />
           ) : null}
           {foot}
-        </View>
+        </ChatBubble>
       ) : null}
     </>
   );
@@ -516,9 +520,6 @@ const styles = StyleSheet.create({
   mine: { alignItems: "flex-end", marginTop: 6, gap: 4 },
   theirs: { alignItems: "flex-start", marginTop: 6, gap: 4 },
   pending: { opacity: PENDING_OPACITY },
-  bubble: { maxWidth: "80%", paddingHorizontal: 14, paddingVertical: 8, borderRadius: 20 },
-  bubbleMine: { borderBottomRightRadius: 6 },
-  bubbleTheirs: { borderBottomLeftRadius: 6 },
   text: { fontSize: 17, lineHeight: 22 },
   quote: { borderLeftWidth: 2, paddingLeft: 8, marginTop: 2, marginBottom: 6, opacity: 0.8 },
   quoteText: { fontSize: 14, lineHeight: 18 },

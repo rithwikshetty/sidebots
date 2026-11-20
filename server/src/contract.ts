@@ -166,8 +166,8 @@ export function exchanges(messages: Message[]): Message[][] {
   const holding = new Map<string, Message[]>();
   for (const message of messages) {
     if (!betweenAgents(message)) {
-      // An update from an agent that waits, and an ask for the person's OK, come in the middle of an exchange.
-      if (!message.interim && message.ask === null) going.clear();
+      // An update from an agent that waits, an ask for the person's OK and a notice come in the middle of an exchange.
+      if (message.sender !== "sidebots" && !message.interim && message.ask === null) going.clear();
       continue;
     }
     if (message.reply_to) {

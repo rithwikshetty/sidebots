@@ -4,12 +4,12 @@ import { useLocalSearchParams, useRouter } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { exchanges, type AgentWithLatest, type Message } from "@server/contract";
 import { AvatarView } from "@/components/AvatarView";
-import { HEADER_CLEARANCE, Named } from "@/components/ChatHeader";
+import { ChatBubble } from "@/components/ChatBubble";
+import { BAR_HEIGHT, HEADER_CLEARANCE, HEADER_OVERHANG, Named } from "@/components/ChatHeader";
 import { EdgeFade } from "@/components/EdgeFade";
 import { Specks, standingOf } from "@/components/Exchange";
 import { Markdown } from "@/components/Markdown";
 import { WorkingLine } from "@/components/WorkingLine";
-import { preview } from "@/lib/messages";
 import { useAgent, useChatColor, useMessages } from "@/lib/state";
 import { ChatColor, useTheme } from "@/lib/theme";
 
@@ -49,7 +49,6 @@ export default function ExchangeSheet() {
  * thing asked has no answer, a line at the foot says where it stands.
  */
 function Said({ exchange, messages, first, other }: { exchange: Message[]; messages: Message[]; first: AgentWithLatest; other: AgentWithLatest }) {
-  const theme = useTheme();
   const insets = useSafeAreaInsets();
   const newestFirst = useMemo(() => [...exchange].reverse(), [exchange]);
   const { asked, state } = standingOf(exchange, messages);
@@ -69,15 +68,21 @@ function Said({ exchange, messages, first, other }: { exchange: Message[]; messa
           </View>
         }
         renderItem={({ item }) => {
-          const right = item.agent_id === first.id;
-          const by = right ? first : other;
+          const mine = item.agent_id === first.id;
+          const by = mine ? first : other;
+          // The avatar beside a message names who said it.
+          const avatar = (
+            <View accessible accessibilityRole="image" accessibilityLabel={by.name}>
+              <AvatarView avatarId={by.avatar_id} state="resting" size={BESIDE} />
+            </View>
+          );
           return (
-            <View accessible accessibilityLabel={`${by.name}: ${preview(item)}`} style={[styles.row, right ? styles.right : styles.left]}>
-              {right ? null : <AvatarView avatarId={by.avatar_id} state="resting" size={BESIDE} />}
-              <View style={[styles.bubble, right ? [styles.bubbleRight, { backgroundColor: theme.tint }] : [styles.bubbleLeft, { backgroundColor: theme.bubble }]]}>
-                <Markdown text={item.body} on={right ? "tint" : "bubble"} />
-              </View>
-              {right ? <AvatarView avatarId={by.avatar_id} state="resting" size={BESIDE} /> : null}
+            <View style={[styles.row, mine ? styles.mine : styles.theirs]}>
+              {mine ? null : avatar}
+              <ChatBubble mine={mine}>
+                <Markdown text={item.body} on={mine ? "tint" : "bubble"} />
+              </ChatBubble>
+              {mine ? avatar : null}
             </View>
           );
         }}
@@ -86,7 +91,7 @@ function Said({ exchange, messages, first, other }: { exchange: Message[]; messa
       <View pointerEvents="none" style={styles.header}>
         <Named name={`${from.name} and ${to.name}`}>
           <AvatarView avatarId={from.avatar_id} state="resting" size={AVATAR} />
-          <Specks flowing={state === "Waiting"} width={26} size={3} />
+          <Specks flowing={state === "Waiting"} width={LINK} size={SPECK} />
           <AvatarView avatarId={to.avatar_id} state="resting" size={AVATAR} />
         </Named>
       </View>
@@ -94,12 +99,14 @@ function Said({ exchange, messages, first, other }: { exchange: Message[]; messa
   );
 }
 
-// The header's avatars, as a chat's, and the smaller one beside each message.
+// The header's avatars, as a chat's, the dotted line between them and its specks, and the smaller avatar beside each message.
 const AVATAR = 40;
+const LINK = 26;
+const SPECK = 3;
 const BESIDE = 22;
-// The room above the header's avatars, and how far down the sheet the header reaches.
+// The room above the header's avatars, and how far down the sheet the header reaches, as a chat's does under the status bar.
 const TOP = 10;
-const HEADER = 70;
+const HEADER = TOP + BAR_HEIGHT + HEADER_OVERHANG;
 // The room under the last message, above the home indicator.
 const FOOT = 10;
 
@@ -111,9 +118,6 @@ const styles = StyleSheet.create({
   header: { position: "absolute", top: TOP, left: 0, right: 0, alignItems: "center", zIndex: 2 },
   said: { paddingBottom: HEADER + HEADER_CLEARANCE, paddingHorizontal: 12 },
   row: { flexDirection: "row", alignItems: "flex-end", gap: 6, marginTop: 6 },
-  right: { justifyContent: "flex-end" },
-  left: { justifyContent: "flex-start" },
-  bubble: { maxWidth: "80%", flexShrink: 1, paddingHorizontal: 14, paddingVertical: 8, borderRadius: 20 },
-  bubbleRight: { borderBottomRightRadius: 6 },
-  bubbleLeft: { borderBottomLeftRadius: 6 },
+  mine: { justifyContent: "flex-end" },
+  theirs: { justifyContent: "flex-start" },
 });

@@ -6,9 +6,9 @@ import { HIDE, SHOW } from "@/lib/motion";
 import { useTheme } from "@/lib/theme";
 
 /**
- * Dots beside a line that says what a chat waits on, fading in as the wait
- * starts and out as it ends. While it is `running` the dots light in turn,
- * and otherwise they rest.
+ * Dots beside a line that says where something a chat waits on stands,
+ * fading in as the wait starts and out as it ends. While it is `running` the
+ * dots light in turn, and otherwise they rest.
  */
 export function WorkingLine({ children, running = true }: { children: string; running?: boolean }) {
   const theme = useTheme();
