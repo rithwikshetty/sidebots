@@ -134,6 +134,8 @@ test("a turn starts a thread with the agent's tools, on the newest model of its 
   const tools = (started.dynamicTools as { name: string; inputSchema: { properties: object } }[]).map((tool) => tool.name);
   assert.deepEqual(tools, ["search_history", "schedule_job", "list_jobs", "cancel_job", "list_agents", "ask_agent", "send_files", "send_update"]);
   assert.match(started.developerInstructions, /memory\/MEMORY\.md/);
+  // The agent is told when its reply comes with something to look at.
+  assert.match(started.developerInstructions, /better seen than read/);
   assert.equal(requests().find((each) => each.method === "turn/start")!.params.effort, "medium");
 });
 

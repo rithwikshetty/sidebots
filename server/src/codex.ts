@@ -11,7 +11,7 @@ import { createInterface } from "node:readline";
 import { z } from "zod";
 import { PROVIDERS, type Limit, type Question } from "./contract.ts";
 import { environment, inFolder, later, program } from "./programs.ts";
-import { short, toolsFor, type Driver, type Prompt, type RunTurn } from "./runner.ts";
+import { SHOW, short, toolsFor, type Driver, type Prompt, type RunTurn } from "./runner.ts";
 
 // Added to Codex's own prompt. Codex keeps what it remembers in its config folder, for everything that runs there, so an agent keeps its own in its folder, in the files its page in the app shows.
 const MEMORY = `You have a memory that outlives every session: the folder \`memory/\` in your home folder. Each memory is a file of its own there, named for what it is about and ending in \`.md\`. It starts with a name and a one-line description between \`---\` lines, then the memory itself:
@@ -284,7 +284,7 @@ const runTurn = (start: () => Promise<Start>): RunTurn => async (turn) => {
       approvalPolicy: "on-request",
       approvalsReviewer: "auto_review",
       sandbox: "workspace-write",
-      developerInstructions: MEMORY,
+      developerInstructions: `${MEMORY}\n\n${SHOW}`,
       // Codex's own memory is one for the whole config folder, and stays out of an agent's sessions both ways.
       config: { "memories.use_memories": false, "memories.generate_memories": false },
     };

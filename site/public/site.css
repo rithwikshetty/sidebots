@@ -164,14 +164,23 @@ h2 { font-size: clamp(30px, 3.6vw, 42px); line-height: 1.08; letter-spacing: -0.
 .theirs { width: fit-content; background: var(--bubble); border-bottom-left-radius: 6px; }
 .receipt { align-self: flex-end; margin: -2px 4px 0 0; font-size: 11px; line-height: 15px; color: var(--ink-2); }
 .answer { position: relative; margin-top: 6px; }
+.sent { margin-bottom: 14px; display: grid; gap: 8px; }
+.named { display: flex; align-items: center; justify-content: space-between; margin-bottom: -2px; padding: 0 6px 0 2px; font-size: 13px; line-height: 18px; color: var(--ink-2); }
+.flat { padding: 12px 14px; border: 1px solid #2c2c2e; border-radius: 14px; font-size: 17px; line-height: 22px; }
+.flat div { display: flex; justify-content: space-between; gap: 12px; }
+.flat b { font-weight: 600; }
+.flat span { display: block; margin-top: 2px; font-size: 15px; line-height: 20px; color: var(--ink-2); }
+.flat span b { color: var(--ink); }
+.sent i { margin: 4px 2px 0; font-size: 15px; line-height: 20px; font-weight: 500; font-style: normal; color: var(--link); }
+.pick { border-color: var(--accent); }
 .busy { position: absolute; top: 4px; left: 2px; display: flex; align-items: center; gap: 10px; font-size: 15px; font-style: italic; color: var(--ink-2); opacity: 0; }
 
 /* The chat plays out as it does on the phone: the message, its receipt, the agent at work, then the one reply in its place. */
-.waiting .mine, .waiting .receipt, .waiting .theirs { opacity: 0; }
+.waiting .mine, .waiting .receipt, .waiting .sent, .waiting .theirs { opacity: 0; }
 .playing .mine { animation: arrive 420ms ease-out both; }
 .playing .receipt { animation: arrive 420ms ease-out 700ms both; }
 .playing .busy { animation: busy 2600ms ease-out 1300ms both; }
-.playing .theirs { animation: arrive 420ms ease-out 3900ms both; }
+.playing .sent, .playing .theirs { animation: arrive 420ms ease-out 3900ms both; }
 @keyframes busy { 0%, 100% { opacity: 0; } 12%, 88% { opacity: 1; } }
 
 /* The panel Sidebots shows on the computer. */

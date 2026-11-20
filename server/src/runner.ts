@@ -114,6 +114,15 @@ export type Tool<Input extends z.ZodRawShape = z.ZodRawShape> = {
 };
 const define = <Input extends z.ZodRawShape>(tool: Tool<Input>): Tool => tool as Tool;
 
+/**
+ * Added to every provider's own prompt: when a reply comes with something to
+ * look at. A tool's description tells an agent how to use the tool once it has
+ * thought of it, and an agent that can answer in words doesn't think of
+ * `send_files`.
+ */
+export const SHOW =
+  "The person reads you on their phone, so show them what is better seen than read. Answer numbers that compare or change with a chart, and things to choose between with a card for each, as a page you send with `send_files`. Asked what something looks like, send a picture of it. Your reply then keeps to the short of it. A plain answer stays plain words.";
+
 /** The agent's tools for a turn, which a driver hands to its provider. `send_update` is there only for a turn the person is waiting on. */
 export function toolsFor(turn: Turn): Tool[] {
   const { sendUpdate } = turn;
@@ -156,7 +165,7 @@ export function toolsFor(turn: Turn): Tool[] {
     define({
       name: "send_files",
       description:
-        "Send the person files: a photo, a chart, a PDF, anything you made or found for them. The files go with the next message you send, which is your reply unless you send an update first, and show above its text: a picture as a picture, a page as a page, any other file as a card that opens it. Use it whenever the person should have the file itself and not only your words about it. Up to 95 MB to a message. A file whose name ends in .html is a page: it is drawn in the chat and opens full screen, so use one for what words can't carry, such as a chart, a table or a layout. Write it as one file for a phone's width, with its styles, scripts and images inside it, and name it for what it shows. The page is given the chat's background and text colour, which change between light and dark, so set neither yourself. Colour the rest with the CSS variables it is also given: var(--ink) for text, var(--ink2) for quiet text, var(--line) for rules, var(--field) for a fill behind something, and var(--tint) for the one thing to pick out. Any colour of your own has to read on both white and black.",
+        "Send the person files: a photo, a chart, a PDF, anything you made or found for them. The files go with the next message you send, which is your reply unless you send an update first, and show above its text: a picture as a picture, a page as a page, any other file as a card that opens it. Use it whenever the person should have the file itself and not only your words about it. Up to 95 MB to a message. A file whose name ends in .html is a page: it is drawn in the chat and opens full screen, so use one for what words can't carry, such as a chart, a table or a layout. Write it as one file for a phone's width, with its styles and scripts inside it. A picture goes inside it too, or stays on the web as an https address. The chat shows the file's name above the page as its title, so name it as one, such as `Flats in Brunswick.html`, and give the page no title of its own and no space around its edges. The chat shows the top of a long page until the person opens it, so what matters most goes first. The page is given the chat's background and text colour, which change between light and dark, so set neither yourself. Colour the rest with the CSS variables it is also given: var(--ink) for text, var(--ink2) for quiet text, var(--line) for rules, var(--field) for a fill behind something, and var(--tint) for the one thing to pick out. Any colour of your own has to read on both white and black.",
       checked: true,
       input: { paths: z.array(z.string()).describe("Each file's path, in full or from your home folder") },
       run: ({ paths }) => turn.sendFiles(paths),

@@ -4,7 +4,8 @@ import { useTheme } from "@/lib/theme";
 /**
  * A fade from the page colour at the top or bottom edge of a screen, so
  * content scrolling past passes softly under the status bar, the home
- * indicator and anything floating there. It is solid for `solid` points from
+ * indicator and anything floating there, or at the foot of anything on the
+ * page colour that goes on past it. It is solid for `solid` points from
  * the edge, then clears by `height`. The top fade sits above the content it
  * covers; the bottom one draws where it is placed, under what follows it.
  */

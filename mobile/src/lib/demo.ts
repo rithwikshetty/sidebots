@@ -64,14 +64,25 @@ export function demoSheet(avatarId: string): string {
   return Image.resolveAssetSource(SHEETS[avatarId] ?? SHEETS.moss)?.uri ?? "";
 }
 
-/** An agent as it is made up: its page, and its chat so far as who said what and how long ago. */
+// The files the agents here sent with their replies, by their paths in the agent's folder as a computer writes them: a code of its own, then the file's name with a dash for each space. A computer serves them from that folder.
+const SENT: Record<string, number> = {
+  "attachments/demo-Flats-in-Brunswick.html": require("../../assets/demo/flats-in-brunswick.html"),
+  "attachments/demo-This-week.html": require("../../assets/demo/this-week.html"),
+};
+
+/** Where a file sent with a message is on the phone, in the app's own files. */
+export function demoFile(path: string): string {
+  return Image.resolveAssetSource(SENT[path])?.uri ?? "";
+}
+
+/** An agent as it is made up: its page, and its chat so far as who said what and how long ago, with the files it sent. */
 type Cast = {
   name: string;
   avatar: string;
   instructions: string;
   memories?: About["memories"];
   jobs?: [what: string, schedule: Schedule][];
-  chat: [sender: Sender, body: string, ago: number][];
+  chat: [sender: Sender, body: string, ago: number, ...attachments: string[]][];
 };
 const CAST: Cast[] = [
   {
@@ -81,7 +92,7 @@ const CAST: Cast[] = [
     memories: [{ name: "The flat Alex wants", description: "What Alex and Sam need in a flat", body: "Brunswick or close to it. Under $650 a week. Two bedrooms. A garden is a bonus." }],
     chat: [
       ["person", "Find me a flat in Brunswick under $650 a week. A garden would be nice.", 55 * MINUTE],
-      ["agent", "Found three. The one on Albert St has a garden and a second bedroom for $620. Want me to book an inspection for Saturday?", 12 * MINUTE],
+      ["agent", "Found three. The one on Albert St has a garden and a second bedroom for $620. Want me to book an inspection for Saturday?", 12 * MINUTE, "attachments/demo-Flats-in-Brunswick.html"],
     ],
   },
   {
@@ -109,7 +120,7 @@ const CAST: Cast[] = [
     instructions: "You keep Alex and Sam's weekly budget. Say where the week stands in one line, and name the biggest category.",
     chat: [
       ["person", "How did we do this week?", 26 * HOUR + MINUTE],
-      ["agent", "$1,140 this week, $90 under. Groceries were the big one.", 26 * HOUR],
+      ["agent", "$1,140 this week, $90 under. Groceries were the big one.", 26 * HOUR, "attachments/demo-This-week.html"],
     ],
   },
 ];
@@ -191,7 +202,7 @@ function start(): void {
   taken = 0;
   for (const { name, avatar, instructions, memories = [], jobs = [], chat } of CAST) {
     const agent = addAgent(name, avatar, now);
-    chats[agent.id] = chat.map(([sender, body, ago]) => message(agent.id, sender, body, now - ago));
+    chats[agent.id] = chat.map(([sender, body, ago, ...attachments]) => ({ ...message(agent.id, sender, body, now - ago), attachments }));
     abouts[agent.id] = {
       instructions: `# ${name}\n\n${instructions}`,
       memories,
