@@ -152,6 +152,41 @@ export type AgentWithLatest = Agent & { latest: Message | null; working: boolean
 /** Whether a message is one agent's to another, which the person can read and nobody is notified of. */
 export const betweenAgents = (message: Pick<Message, "peer_id" | "ask">): boolean => message.peer_id !== null && message.ask === null;
 
+/**
+ * The exchanges in a chat's messages, each oldest first: what two of the
+ * person's agents asked and answered each other, one thing after another.
+ * An exchange ends when the person sends a message or the chat's agent gives
+ * them a reply, its own or a job's, so what either agent asks next begins
+ * another. An answer belongs with what it answers, whenever it comes.
+ */
+export function exchanges(messages: Message[]): Message[][] {
+  const all: Message[][] = [];
+  // The exchange still going between each two agents, and the one each thing asked is in.
+  const going = new Map<string, Message[]>();
+  const holding = new Map<string, Message[]>();
+  for (const message of messages) {
+    if (!betweenAgents(message)) {
+      // An update from an agent that waits, an ask for the person's OK and a notice come in the middle of an exchange.
+      if (message.sender !== "sidebots" && !message.interim && message.ask === null) going.clear();
+      continue;
+    }
+    if (message.reply_to) {
+      holding.get(message.reply_to)?.push(message);
+      continue;
+    }
+    const pair = [message.agent_id, message.peer_id].sort().join(" ");
+    let exchange = going.get(pair);
+    if (!exchange) {
+      exchange = [];
+      going.set(pair, exchange);
+      all.push(exchange);
+    }
+    exchange.push(message);
+    holding.set(message.id, exchange);
+  }
+  return all;
+}
+
 /** The state an agent's avatar acts out: working while it has a turn, then failed when its last turn failed, replied while a reply waits to be read, and resting otherwise. */
 export function avatarStateOf(agent: AgentWithLatest): AvatarState {
   if (agent.working) return "working";

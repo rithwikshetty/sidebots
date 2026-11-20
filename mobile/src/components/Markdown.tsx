@@ -14,7 +14,8 @@ const CODE_FONT = "Menlo";
  * links. The text is selectable with the system's own menu. A web link opens
  * in a Safari sheet over the app; any other link, such as a phone number or
  * an email address, goes to the app that handles it. `on` is what the text
- * sits on: the agent's chat bubble, or the page, as in a note the agent wrote.
+ * sits on: the agent's grey chat bubble, the page, as in a note the agent
+ * wrote, or a bubble of the chat's colour.
  */
 export function Markdown({ text, on = "bubble" }: { text: string; on?: Backdrop }) {
   const theme = useTheme();
@@ -30,14 +31,18 @@ export function Markdown({ text, on = "bubble" }: { text: string; on?: Backdrop 
   );
 }
 
-type Backdrop = "bubble" | "page";
+type Backdrop = "bubble" | "page" | "tint";
 
-/** The text's look, from the chat's own sizes and colours, on the grey of the agent's bubble or on the page. */
+/** The text's look, from the chat's own sizes and colours, on the grey of the agent's bubble, on the page, or on the chat's colour. */
 function styleFor(theme: Theme, on: Backdrop): MarkdownStyle {
-  const text = { fontSize: FONT_SIZE, lineHeight: LINE_HEIGHT, color: theme.ink };
+  // On the chat's colour, the text and its marks are the one colour that reads on it.
+  const tinted = on === "tint";
+  const ink = tinted ? theme.onTint : theme.ink;
+  const quiet = tinted ? theme.onTint : theme.ink2;
+  const text = { fontSize: FONT_SIZE, lineHeight: LINE_HEIGHT, color: ink };
   // Code and a table's header stand out from what the text sits on, in both modes.
-  const behind = on === "bubble" ? theme.bubble : theme.bg;
-  const apart = on === "bubble" ? theme.bg : theme.field;
+  const behind = tinted ? theme.tint : on === "bubble" ? theme.bubble : theme.bg;
+  const apart = on === "page" ? theme.field : theme.bg;
   const heading = (fontSize: number, lineHeight: number) => ({ ...text, fontSize, lineHeight, fontWeight: "700", marginTop: 4, marginBottom: 6 });
   return {
     paragraph: { ...text, marginTop: 0, marginBottom: 10 },
@@ -47,8 +52,8 @@ function styleFor(theme: Theme, on: Backdrop): MarkdownStyle {
     h4: heading(FONT_SIZE, LINE_HEIGHT),
     h5: heading(FONT_SIZE, LINE_HEIGHT),
     h6: heading(FONT_SIZE, LINE_HEIGHT),
-    list: { ...text, bulletColor: theme.ink2, markerColor: theme.ink2, gapWidth: 8, marginLeft: 2, itemSpacing: 4, marginBottom: 10 },
-    blockquote: { ...text, color: theme.ink2, backgroundColor: "transparent", borderColor: theme.faint, borderWidth: 3, gapWidth: 10, padding: 0, marginBottom: 10 },
+    list: { ...text, bulletColor: quiet, markerColor: quiet, gapWidth: 8, marginLeft: 2, itemSpacing: 4, marginBottom: 10 },
+    blockquote: { ...text, color: quiet, backgroundColor: "transparent", borderColor: tinted ? theme.onTint : theme.faint, borderWidth: 3, gapWidth: 10, padding: 0, marginBottom: 10 },
     codeBlock: {
       fontFamily: CODE_FONT,
       fontSize: 14,
@@ -62,14 +67,14 @@ function styleFor(theme: Theme, on: Backdrop): MarkdownStyle {
       marginBottom: 10,
     },
     code: { fontFamily: CODE_FONT, fontSize: 15, color: theme.ink, backgroundColor: apart, borderColor: theme.line },
-    link: { color: theme.tintInk, underline: true },
+    link: { color: tinted ? theme.onTint : theme.tintInk, underline: true },
     strong: { fontWeight: "bold" },
     table: {
       fontSize: 15,
       lineHeight: 20,
-      color: theme.ink,
-      headerBackgroundColor: apart,
-      headerTextColor: theme.ink,
+      color: ink,
+      headerBackgroundColor: tinted ? behind : apart,
+      headerTextColor: ink,
       rowEvenBackgroundColor: behind,
       rowOddBackgroundColor: behind,
       borderColor: theme.line,
@@ -79,7 +84,7 @@ function styleFor(theme: Theme, on: Backdrop): MarkdownStyle {
       cellPaddingVertical: 6,
       marginBottom: 10,
     },
-    taskList: { checkedColor: theme.tint, borderColor: theme.ink2, checkmarkColor: theme.onTint, checkedTextColor: theme.ink2 },
-    thematicBreak: { color: theme.line, marginTop: 6, marginBottom: 12 },
+    taskList: { checkedColor: tinted ? theme.onTint : theme.tint, borderColor: quiet, checkmarkColor: tinted ? theme.tint : theme.onTint, checkedTextColor: quiet },
+    thematicBreak: { color: tinted ? theme.onTint : theme.line, marginTop: 6, marginBottom: 12 },
   };
 }

@@ -5,18 +5,19 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { KeyboardChatScrollView, KeyboardController, KeyboardEvents, KeyboardStickyView } from "react-native-keyboard-controller";
 import Animated, { useSharedValue } from "react-native-reanimated";
 import { Reply, X } from "lucide-react-native";
-import { avatarStateOf, betweenAgents, type AgentWithLatest, type Ask, type Message, type Question } from "@server/contract";
+import { avatarStateOf, betweenAgents, exchanges, type AgentWithLatest, type Ask, type Message, type Question } from "@server/contract";
 import { AskCard } from "@/components/AskCard";
+import { ChatBubble } from "@/components/ChatBubble";
 import { BAR_HEIGHT, ChatHeader, HEADER_CLEARANCE, HEADER_OVERHANG } from "@/components/ChatHeader";
 import { Composer } from "@/components/Composer";
-import { Exchange } from "@/components/Exchange";
+import { Exchange, standingOf } from "@/components/Exchange";
 import { FadingText } from "@/components/FadingText";
-import { FlowDot } from "@/components/FlowDot";
 import { Glass } from "@/components/Glass";
 import { IconButton } from "@/components/IconButton";
 import { Markdown } from "@/components/Markdown";
 import { FileCard, MessagePage, MessagePhotos, type Shown } from "@/components/MessageAttachments";
 import { SwipeToReply } from "@/components/SwipeToReply";
+import { WorkingLine } from "@/components/WorkingLine";
 import { problem } from "@/lib/alerts";
 import { attachment } from "@/lib/api";
 import { fitsInMessage, isImage, isPage, MAX_FILES, pick, SIZE_LIMIT_NOTICE, type Picked, type PickSource } from "@/lib/files";
@@ -63,8 +64,11 @@ function ChatWith({ agent }: { agent: AgentWithLatest }) {
   const waitingOn = useAgent(agent.waiting_on ?? "");
   // Whether the agent waits on the person's answer to an ask of its own, which is then the last thing in the chat.
   const asksPerson = messages.some((message) => message.ask === "waiting" && message.agent_id === agent.id);
-  // Whether an agent that was asked something by another waits on the person's answer to an ask of its own.
-  const needsPerson = (askerId: string, askedId: string | null) => messages.some((message) => message.ask === "waiting" && message.agent_id === askedId && message.peer_id === askerId);
+  // What the agent and another said to each other shows as one line for each exchange, where the newest thing in it was asked.
+  const standings = useMemo(() => {
+    const each = exchanges(messages).map((exchange) => standingOf(exchange, messages));
+    return new Map(each.map(({ asked, state }) => [asked.id, state]));
+  }, [messages]);
   // The person's newest message, which carries the chat's receipt.
   const newestMine = messages.findLast((message) => message.sender === "person")?.id;
   // What the person typed stays with the chat when they leave it and come back.
@@ -96,7 +100,7 @@ function ChatWith({ agent }: { agent: AgentWithLatest }) {
   // view, which lifts the messages with the keyboard in the same motion as the
   // composer. Its rows run newest first.
   const list = useRef<FlatList<Message>>(null);
-  const newestFirst = useMemo(() => [...messages].reverse(), [messages]);
+  const newestFirst = useMemo(() => messages.filter((message) => !betweenAgents(message) || standings.has(message.id)).reverse(), [messages, standings]);
   // The composer floats over the list's end; a spacer of its height keeps the last message above it.
   const [composerHeight, setComposerHeight] = useState(COMPOSER_ESTIMATE + insets.bottom);
   // Whether the newest message is on screen, and the room the keyboard takes at the list's end.
@@ -237,20 +241,18 @@ function ChatWith({ agent }: { agent: AgentWithLatest }) {
         }
         renderItem={({ item, index }) => {
           const older = newestFirst[index + 1];
-          const between = betweenAgents(item);
-          // An answer shows inside the line for what was asked.
-          if (between && item.reply_to) return null;
+          const standing = standings.get(item.id);
           return (
             <Row message={item} openedAt={openedAt}>
               {!older || !sameDay(older.created_at, item.created_at) ? (
                 <Text style={[styles.day, { color: theme.ink2 }]}>{dayLabel(item.created_at)}</Text>
               ) : null}
-              {between ? (
+              {standing ? (
                 <Exchange
                   asked={item}
-                  answer={messages.find((message) => betweenAgents(message) && message.reply_to === item.id)}
-                  needsPerson={needsPerson(item.agent_id, item.peer_id)}
+                  state={standing}
                   arriving={item.created_at >= openedAt && !arrived.has(item.id)}
+                  onOpen={() => router.push({ pathname: "/exchange", params: { agent: agent.id, message: item.id } })}
                 />
               ) : (
                 <Bubble
@@ -315,20 +317,9 @@ function ChatWith({ agent }: { agent: AgentWithLatest }) {
   );
 }
 
-/** Dots that light in turn beside a playful line while the agent works, fading in as the work starts and out as the reply comes. */
+/** A playful line while the agent works, which changes every few seconds. */
 function WorkingRow() {
-  const theme = useTheme();
-  const line = useWorkingLine();
-  return (
-    <Animated.View entering={SHOW} exiting={HIDE} style={styles.workingRow}>
-      <View style={styles.flow}>
-        {[0, 1, 2].map((dot) => (
-          <FlowDot key={dot} index={dot} size={4} color={theme.ink2} />
-        ))}
-      </View>
-      <FadingText style={[styles.workingText, { color: theme.ink2 }]}>{line}</FadingText>
-    </Animated.View>
-  );
+  return <WorkingLine>{useWorkingLine()}</WorkingLine>;
 }
 
 /**
@@ -466,7 +457,7 @@ function Sent({ body, quote, photos, pages = [], files, mine, theme, asked, from
         <FileCard key={file.uri} file={file} />
       ))}
       {body || quote ? (
-        <View style={[styles.bubble, mine ? [styles.bubbleMine, { backgroundColor: theme.tint }] : [styles.bubbleTheirs, { backgroundColor: theme.bubble }]]}>
+        <ChatBubble mine={mine}>
           {quote ? (
             <View style={[styles.quote, { borderLeftColor: quiet }]} accessibilityLabel={`In reply to: ${quote}`}>
               <Text numberOfLines={3} style={[styles.quoteText, { color: quiet }]}>
@@ -484,7 +475,7 @@ function Sent({ body, quote, photos, pages = [], files, mine, theme, asked, from
             <Markdown text={body} />
           ) : null}
           {foot}
-        </View>
+        </ChatBubble>
       ) : null}
     </>
   );
@@ -529,9 +520,6 @@ const styles = StyleSheet.create({
   mine: { alignItems: "flex-end", marginTop: 6, gap: 4 },
   theirs: { alignItems: "flex-start", marginTop: 6, gap: 4 },
   pending: { opacity: PENDING_OPACITY },
-  bubble: { maxWidth: "80%", paddingHorizontal: 14, paddingVertical: 8, borderRadius: 20 },
-  bubbleMine: { borderBottomRightRadius: 6 },
-  bubbleTheirs: { borderBottomLeftRadius: 6 },
   text: { fontSize: 17, lineHeight: 22 },
   quote: { borderLeftWidth: 2, paddingLeft: 8, marginTop: 2, marginBottom: 6, opacity: 0.8 },
   quoteText: { fontSize: 14, lineHeight: 18 },
@@ -557,9 +545,6 @@ const styles = StyleSheet.create({
   answerText: { fontSize: 16, fontWeight: "600" },
   asked: { fontSize: 13, lineHeight: 18, fontWeight: "600", marginBottom: 2 },
   resend: { fontSize: 13, fontWeight: "600", marginTop: 4, marginRight: 4 },
-  workingRow: { flexDirection: "row", alignItems: "center", gap: 8, marginTop: 10, paddingLeft: 4 },
-  workingText: { fontSize: 15, fontStyle: "italic", flexShrink: 1 },
-  flow: { flexDirection: "row", gap: 4 },
   sticky: { position: "absolute", left: 0, right: 0, bottom: 0 },
   above: { paddingHorizontal: 12, paddingTop: 8 },
   bar: { paddingHorizontal: 12, paddingTop: 8 },
