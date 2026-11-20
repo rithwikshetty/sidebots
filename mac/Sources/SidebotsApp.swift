@@ -120,7 +120,7 @@ import SwiftUI
  * panels are: whether phones can reach this computer at the top, then the paired
  * phones with a way to pair another, then how the agents sign in to each provider
  * the person has set up, or that its program is missing from this Mac, with a way to set up one they haven't, and Open at login,
- * Check for updates and Quit at the foot. When the server can't start, the panel says so in place of the phones and
+ * Share usage counts, Check for updates and Quit at the foot. When the server can't start, the panel says so in place of the phones and
  * providers, with a way to its log. Rows light up under the pointer.
  * A phone's row asks before it unpairs the phone, since the phone needs a new code to pair again.
  */
@@ -193,6 +193,15 @@ struct MenuContent: View {
       .controlSize(.mini)
       .padding(.horizontal, 10)
       .padding(.vertical, 5)
+      Toggle(isOn: Binding(get: { server.counting }, set: { on in Task { await server.setCounting(on) } })) {
+        Text("Share usage counts")
+      }
+      .toggleStyle(.switch)
+      .controlSize(.mini)
+      .disabled(server.savingCounting)
+      .padding(.horizontal, 10)
+      .padding(.vertical, 5)
+      .help("Your Sidebots version, how many agents and phones you have, and how many turns your agents ran on Claude Code and Codex. Never who you are or what was said.")
       PanelRow(symbol: nil, title: "Check for updates…", action: app.updater.check)
       PanelRow(symbol: nil, title: "Quit Sidebots", shortcut: "⌘Q") { NSApp.terminate(nil) }
         .keyboardShortcut("q")

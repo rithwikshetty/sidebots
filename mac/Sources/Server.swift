@@ -24,6 +24,8 @@ struct ServerStatus: Decodable {
   let reachable: Bool?
   /// Whether any agent has a turn queued or running.
   let working: Bool
+  /// Whether the server tells the relay how much it is used.
+  let counting: Bool
   let people: [Person]
 }
 
@@ -82,6 +84,12 @@ enum SignIn {
   /// Whether the server's `status` command failed when it was last run, as when the server can't open its data. Nothing is known of the person or the server while it does.
   private(set) var failed = false
   private(set) var phones: [Phone] = []
+  /// Whether the server tells the relay how much it is used, which it does unless the person turned that off. It is kept apart from `status`, so the switch stays where the person put it while the server saves it.
+  private(set) var counting = true
+  /// Whether the server is saving that, which the switch waits for before it takes another click.
+  private(set) var savingCounting = false
+  /// How many times the server has saved it.
+  @ObservationIgnored private var countingSaves = 0
   /// Each provider's program on this computer. A provider has none until the server has looked.
   private(set) var programs: [Provider: Program] = [:]
   /// The login the person's agents run on, for each provider. A provider has none until it is known, and for agents on an API key the person gave Sidebots.
@@ -112,12 +120,13 @@ enum SignIn {
 
   /// What the server and its commands run with: the app's own
   /// environment, so that `SIDEBOTS_HOME`, `PORT` and `SIDEBOTS_RELAY` pass
-  /// through, with the bundled Node first on the PATH and the bundled
-  /// cloudflared for the tunnel.
+  /// through, with the bundled Node first on the PATH, the bundled
+  /// cloudflared for the tunnel, and the app's version.
   nonisolated static var environment: [String: String] {
     var environment = ProcessInfo.processInfo.environment
     environment["PATH"] = node.deletingLastPathComponent().path + ":" + (environment["PATH"] ?? "/usr/bin:/bin:/usr/sbin:/sbin")
     environment["SIDEBOTS_CLOUDFLARED"] = resources.appending(path: "bin/cloudflared").path
+    environment["SIDEBOTS_VERSION"] = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String
     return environment
   }
 
@@ -166,8 +175,11 @@ enum SignIn {
 
   /// Reads the server's state and the paired phones.
   func refresh() async {
+    let saves = countingSaves
     status = try? Self.decode(await command(["status", "--json"]))
     failed = status == nil
+    // What the server said while it was saving the switch, or since before it last did, may be from before it saved.
+    if let status, !savingCounting, saves == countingSaves { counting = status.counting }
     if let phones: [Phone] = try? Self.decode(await command(["devices", "--json"])) { self.phones = phones }
   }
 
@@ -234,6 +246,19 @@ enum SignIn {
   func remove(_ phone: Phone) async throws {
     try await command(["remove-device", phone.id])
     await refresh()
+  }
+
+  /// Turns on or off what the server tells the relay of how much it is used. The switch goes back when the server couldn't save it.
+  func setCounting(_ on: Bool) async {
+    counting = on
+    savingCounting = true
+    do {
+      try await command(["counts", on ? "on" : "off"])
+    } catch {
+      counting = !on
+    }
+    countingSaves += 1
+    savingCounting = false
   }
 
   /// Runs one of the server's commands and returns what it printed.

@@ -18,9 +18,9 @@
 <main>
   <article class="policy">
     <h1>Privacy policy</h1>
-    <p class="updated">18 November 2026</p>
+    <p class="updated">20 November 2026</p>
 
-    <p>Sidebots has no accounts, no analytics and no ads. Your agents and everything you send them live on your own computer. This page lists everything that leaves it.</p>
+    <p>Sidebots has no accounts and no ads. Your agents and everything you send them live on your own computer. This page lists everything that leaves it.</p>
 
     <h2>On your computer</h2>
     <p>Sidebots keeps your agents, their chats, their memory and the files you send them in a folder on your computer. Nobody else has a copy, including us.</p>
@@ -35,7 +35,12 @@
     <h2>Notifications</h2>
     <p>Only the developer of an app can send its notifications, so your computer sends each one through a small service we run on Cloudflare, called the relay, which passes it to Apple. Your computer encrypts every notification with a key only your phone holds. The relay and Apple pass it along without being able to read it. Each one comes with the address Apple gave your phone for notifications, which the relay hands to Apple and doesn't keep.</p>
     <p>While an agent works, its avatar can show on your Lock Screen and in the Dynamic Island. Your phone draws it from the agent's name and picture, which stay on the phone. When the work ends, your computer tells your phone through the relay and Apple, in one word that isn't encrypted: replied, failed or resting. It says nothing of which agent it is or what it said.</p>
-    <p>The relay keeps, for each computer: a random id, the public half of a key your computer made, its address, and how many notifications it sent today. It keeps nothing about you, your agents or your messages. It forgets a computer that has been quiet for 60 days.</p>
+    <p>The relay keeps, for each computer: a random id, the public half of a key your computer made, its address, and how many notifications it sent today. It forgets a computer that has been quiet for 60 days.</p>
+
+    <h2>How much Sidebots is used</h2>
+    <p>When Sidebots starts on your computer, and once a day after that, it tells the relay how much Sidebots is used there, so we can see whether people use Sidebots and what to work on next. It sends the version of Sidebots, how many agents and paired phones you have, and how many times your agents ran on each of the last seven days, counted by Claude Code or Codex and by replies, scheduled jobs and fresh starts. That is all of it. Nothing in it says who you are, what your agents are called or what anyone said.</p>
+    <p>The relay keeps those numbers beside your computer's random id. When it forgets a computer, the daily counts stay, with nothing to say whose they were.</p>
+    <p>To stop sending them, turn off Share usage counts in the Sidebots menu on your Mac. On a server you started yourself, run <code>pnpm counts off</code>. If you turn them on again, the counts start from then.</p>
 
     <h2>Questions</h2>
     <p>Sidebots is open source, so you can read exactly what it does. Ask anything in the <a href="https://github.com/rithwikshetty/sidebots/issues">project's issues on GitHub</a>.</p>
