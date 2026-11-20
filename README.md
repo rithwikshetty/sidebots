@@ -140,21 +140,23 @@ Anthropic's terms decide which you may use. A subscription is for the subscriber
 
 ## Connections
 
-A connection is an app outside Sidebots that your agents use as you. Sidebots has two, Gmail and Google Calendar. You connect one once and all your agents have it, on either provider, on a subscription or an API key.
+A connection is an app outside Sidebots that your agents use as you. Sidebots has three: Gmail, Google Calendar and Notion. You connect one once and all your agents have it, on either provider, on a subscription or an API key.
 
-Connect one from Connections in the app's side menu, or tell an agent to: "connect my Gmail". Either way a Connect button opens Google's own sign-in on your phone. Once you have signed in and allowed what it asks for, the agents can search, read and send your mail, or read and change your calendar. Remove a connection from the same list.
+Connect one from Connections in the app's side menu, or tell an agent to: "connect my Gmail". Either way a Connect button opens the app's own sign-in on your phone. Once you have signed in and allowed what it asks for, the agents can search, read and send your mail, read and change your calendar, or read and change your Notion. Remove a connection from the same list.
 
-Sidebots never sees your password. Google gives it a token for acting as you, which the server keeps in `~/.sidebots/connections.json`, readable only by your account. An agent's own commands can read that file, as they can any of your account's files, and on a server you share that is every person's agents. The token goes from Google to your machine and nowhere else: the relay and the phone never hold it. What an agent reads from an app does go to the model it runs on, as everything an agent reads does.
+Sidebots never sees your password. The app's maker gives it a token for acting as you, which the server keeps in `~/.sidebots/connections.json`, readable only by your account. An agent's own commands can read that file, as they can any of your account's files, and on a server you share that is every person's agents. The token goes from the maker to your machine and nowhere else: the relay and the phone never hold it. What an agent reads from an app does go to the model it runs on, as everything an agent reads does.
 
 A sign-in to Google names a client id, which says to Google which app is asking. The server names the one of the Sidebots app on the App Store. Google hasn't reviewed that app yet, so it signs in only the Google accounts its project lists as test users, and Google ends each sign-in after seven days.
 
-Your own build signs in with a client of your own. In a [Google Cloud project](https://console.cloud.google.com/auth/clients), make a client of the type iOS for your app's bundle identifier, turn on the Gmail API and the Google Calendar API, add the scopes `gmail.readonly`, `gmail.send` and `calendar.events` to the consent screen, and list yourself as a test user. Start the server with the client id in `SIDEBOTS_GOOGLE_CLIENT`. A project open to everyone needs Google's review, since it asks to read mail.
+Your own build signs in to Google with a client of your own. In a [Google Cloud project](https://console.cloud.google.com/auth/clients), make a client of the type iOS for your app's bundle identifier, turn on the Gmail API and the Google Calendar API, add the scopes `gmail.readonly`, `gmail.send` and `calendar.events` to the consent screen, and list yourself as a test user. Start the server with the client id in `SIDEBOTS_GOOGLE_CLIENT`. A project open to everyone needs Google's review, since it asks to read mail.
+
+Notion's tools are Notion's own. Notion runs a server that gives them, as [MCP](https://modelcontextprotocol.io), and your agents use whichever tools it has that day: they list them with `notion_tools`, and use one with `notion_read` or `notion_change`. A sign-in to Notion names no client id that Notion handed out. It names the address of a file, [sidebots.app/oauth-client.json](https://sidebots.app/oauth-client.json), which says what Sidebots is and where a sign-in may come back to, and Notion reads the file. Your own build signs in with the same file.
 
 Adding a connection takes three things:
 
 - An entry in `CONNECTIONS` in `server/src/contract.ts`, with the name the apps show, what connecting it lets the agents do, and its logo: the one shape and the colour [Simple Icons](https://simpleicons.org) has for the brand.
-- An entry in `APPS` in `server/src/connections.ts`, with whose app it is, what its sign-in asks for, and its tools. Each tool has a name, what the agent is told it does, what it takes, and what it does. A tool that changes something in the app, or speaks as the person, is marked `checked: "acts"`. An app of a maker that Sidebots doesn't sign in with yet also takes an entry in `MAKERS` there, with the maker's pages for OAuth, and its client id in `server/src/main.ts`.
-- A table change in `server/src/store.ts` that gives Codex sessions a fresh start, as the one for Gmail and Google Calendar does, since a Codex chat keeps the tools it started with.
+- An entry in `APPS` in `server/src/connections.ts`, with whose app it is, what its sign-in asks for, and its tools. An app whose maker runs an MCP server takes its tools from there, with `servedTools` and the server's address. For any other app, each tool has a name, what the agent is told it does, what it takes, and what it does, and a tool that changes something in the app, or speaks as the person, is marked `checked: "acts"`. An app of a maker that Sidebots doesn't sign in with yet also takes an entry in `MAKERS` there, with the maker's pages for OAuth, and its client id in `server/src/main.ts`.
+- A table change in `server/src/store.ts` that gives Codex sessions a fresh start, `FRESH_START_FOR_CODEX`, since a Codex chat keeps the tools it started with.
 
 The app lists whatever connections the server has, so it needs no change.
 
@@ -172,7 +174,7 @@ The Codex driver speaks a protocol parts of which Codex calls experimental, and 
 
 ## The website
 
-`site/` is the page at [sidebots.app](https://sidebots.app), with the privacy policy the App Store asks for and the Mac app's update feed. It is static files in `site/public`, served by Cloudflare. Publish it with `npx wrangler deploy` from `site/`, with Wrangler signed in to the account that holds the domain.
+`site/` is the page at [sidebots.app](https://sidebots.app), with the privacy policy the App Store asks for, the Mac app's update feed and the file Notion reads at a sign-in. It is static files in `site/public`, served by Cloudflare. Publish it with `npx wrangler deploy` from `site/`, with Wrangler signed in to the account that holds the domain.
 
 ## Build the Mac app
 

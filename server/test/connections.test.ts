@@ -129,3 +129,90 @@ test("the calendar's events are looked at, added, changed and removed, with time
   assert.equal(await use("calendar_remove_event", { id: "e1" }), "Removed.");
   assert.equal(sent.at(-1)![0], "DELETE https://www.googleapis.com/calendar/v3/calendars/primary/events/e1?sendUpdates=all");
 });
+
+/**
+ * A Notion that signs a person in and serves its tools as MCP, through
+ * `request`. It keeps every token it was asked for and every tool it was
+ * asked to use, and each new token that lasts ends the one before it.
+ */
+function notion() {
+  const tools = [
+    { name: "notion-search", description: "Search Notion pages and databases.\nUse short, specific keywords.", inputSchema: { type: "object", properties: { query: { type: "string" } }, required: ["query"] }, annotations: { readOnlyHint: true } },
+    { name: "notion-get-self", description: "Say who is signed in.", inputSchema: { type: "object" }, annotations: { readOnlyHint: true } },
+    { name: "notion-create-pages", description: "Create pages.", inputSchema: { type: "object" }, annotations: { readOnlyHint: false } },
+  ];
+  const swaps: URLSearchParams[] = [];
+  const used: [bearer: string | null, tool: string, input: unknown][] = [];
+  let lasting = 0;
+  const request: typeof fetch = async (url, init) => {
+    if (String(url) === "https://mcp.notion.com/token") {
+      const swap = new URLSearchParams(String(init?.body));
+      swaps.push(swap);
+      if (swap.get("grant_type") === "refresh_token" && swap.get("refresh_token") !== `lasting-${lasting}`) return Response.json({ error: "invalid_grant" }, { status: 400 });
+      return Response.json({ access_token: `access-${++lasting}`, expires_in: 3600, refresh_token: `lasting-${lasting}` });
+    }
+    assert.equal(String(url), "https://mcp.notion.com/mcp");
+    // Notion sends nothing of its own accord.
+    if (init?.method === "GET") return new Response(null, { status: 405 });
+    const { id, method, params } = JSON.parse(String(init?.body)) as { id?: number; method: string; params: { protocolVersion?: string; cursor?: string; name: string; arguments: { query?: string } } };
+    const answer = (result: unknown) => Response.json({ jsonrpc: "2.0", id, result });
+    if (method === "initialize") return answer({ protocolVersion: params.protocolVersion, capabilities: { tools: {} }, serverInfo: { name: "Notion", version: "1" } });
+    // It lists its tools a page at a time.
+    if (method === "tools/list") return answer(params?.cursor ? { tools: tools.slice(1) } : { tools: tools.slice(0, 1), nextCursor: "more" });
+    if (method !== "tools/call") return new Response(null, { status: 202 });
+    used.push([new Headers(init?.headers).get("Authorization"), params.name, params.arguments]);
+    if (params.name === "notion-get-self") return answer({ content: [{ type: "text", text: JSON.stringify({ workspace: { name: "Home" }, user: { email: "alex@example.com" } }) }] });
+    if (params.name === "notion-search") return params.arguments.query ? answer({ content: [{ type: "text", text: `Found: ${params.arguments.query}` }] }) : Response.json({ jsonrpc: "2.0", id, error: { code: -32602, message: "query is required" } });
+    return answer({ content: [{ type: "text", text: "That page is locked." }], isError: true });
+  };
+  return { request, swaps, used };
+}
+
+test("a person signs in to Notion with the file that says what Sidebots is, and their agents learn Notion's own tools and use them", async () => {
+  const store = openStore(mkdtempSync(join(tmpdir(), "sidebots-test-")));
+  const person = store.addPerson({ name: "Alex", provider: "claude", configDir: "/config/alex" });
+  const { request, swaps, used } = notion();
+  let time = 0;
+  const connections = createConnections(store, { notion: "https://sidebots.example/oauth-client.json" }, request, () => time);
+  const use = (tool: string, input: unknown) => connections.use(person.id, tool, input);
+  assert.equal(await use("notion_tools", {}), "Notion isn't connected. Call `connect` with `notion`, which asks the person to sign in to it.");
+
+  // Notion's page is asked for tokens for its tool server, and comes back to the address the file lists.
+  const signIn = connections.signIn(person.id, "notion");
+  const page = new URL(signIn.url);
+  assert.equal(`${page.origin}${page.pathname}`, "https://mcp.notion.com/authorize");
+  assert.deepEqual(
+    [signIn.redirect, ...["client_id", "redirect_uri", "scope", "resource", "code_challenge_method"].map((name) => page.searchParams.get(name))],
+    ["app.sidebots:/oauth2redirect", "https://sidebots.example/oauth-client.json", "app.sidebots:/oauth2redirect", "default", "https://mcp.notion.com/mcp", "S256"],
+  );
+  // The account is the one Notion's own tool says is signed in.
+  const connected = await connections.finish(person.id, "notion", `${signIn.redirect}?state=${page.searchParams.get("state")}&code=one-time`);
+  assert.deepEqual([connected.account, store.connection(person.id, "notion")], ["alex@example.com", { account: "alex@example.com", token: "lasting-1" }]);
+  assert.deepEqual(["code", "client_id", "resource"].map((name) => swaps[0].get(name)), ["one-time", "https://sidebots.example/oauth-client.json", "https://mcp.notion.com/mcp"]);
+
+  // The list names each tool with how it starts to say what it does and which tool uses it, and one tool in full.
+  assert.equal(
+    await use("notion_tools", {}),
+    ["notion-search (notion_read): Search Notion pages and databases.", "notion-get-self (notion_read): Say who is signed in.", "notion-create-pages (notion_change): Create pages."].join("\n"),
+  );
+  assert.equal(
+    await use("notion_tools", { tool: "notion-search" }),
+    `notion-search, used with notion_read\n\nSearch Notion pages and databases.\nUse short, specific keywords.\n\nWhat it takes, as a JSON schema:\n{"type":"object","properties":{"query":{"type":"string"}},"required":["query"]}`,
+  );
+
+  // A tool is used as the person, each through the one of the two that the list names for it.
+  assert.equal(await use("notion_read", { tool: "notion-search", input: { query: "roadmap" } }), "Found: roadmap");
+  assert.deepEqual(used.at(-1), ["Bearer access-1", "notion-search", { query: "roadmap" }]);
+  assert.equal(await use("notion_read", { tool: "notion-create-pages" }), "notion-create-pages doesn't only read. Use it with notion_change.");
+  assert.equal(await use("notion_change", { tool: "notion-search", input: { query: "roadmap" } }), "notion-search only reads. Use it with notion_read.");
+  assert.equal(await use("notion_read", { tool: "notion-fly" }), "Notion has no tool called notion-fly. notion_tools lists the ones it has.");
+  // What Notion refuses, the agent is told in Notion's words.
+  assert.equal(await use("notion_change", { tool: "notion-create-pages" }), "That page is locked.");
+  assert.equal(await use("notion_read", { tool: "notion-search" }), "Notion refused that: MCP error -32602: query is required");
+
+  // Notion ends the token that lasts as it answers with the next, so tools used at once ask for one new token between them, and the new one is kept.
+  time = 3_600_000;
+  assert.deepEqual(await Promise.all([use("notion_read", { tool: "notion-search", input: { query: "a" } }), use("notion_read", { tool: "notion-search", input: { query: "b" } })]), ["Found: a", "Found: b"]);
+  assert.deepEqual([swaps.length, swaps[1].get("refresh_token"), store.connection(person.id, "notion")?.token], [2, "lasting-1", "lasting-2"]);
+  assert.deepEqual(used.slice(-2).map(([bearer]) => bearer), ["Bearer access-2", "Bearer access-2"]);
+});

@@ -1846,6 +1846,7 @@ test("an agent asks for a connection, the person makes it by signing in on their
     [
       [{ connection: "gmail", name: "Gmail", allows: "Your agents can search, read and send your mail.", account: null }, "#EA4335", true],
       [{ connection: "calendar", name: "Google Calendar", allows: "Your agents can read your calendar, and add, change and remove its events.", account: null }, "#4285F4", true],
+      [{ connection: "notion", name: "Notion", allows: "Your agents can search and read your Notion, and add to it and change it.", account: null }, null, true],
     ],
   );
 

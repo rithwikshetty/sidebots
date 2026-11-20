@@ -3,6 +3,9 @@
 // module that talks to those apps.
 
 import { createHash, randomBytes } from "node:crypto";
+import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
+import { McpError, type Tool as ServedTool } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
 import { CONNECTIONS, type Connected, type Connection, type SignIn } from "./contract.ts";
 import type { Store } from "./store.ts";
@@ -11,41 +14,108 @@ import type { Store } from "./store.ts";
 type Granted = { access_token: string; expires_in: number; refresh_token?: string; scope?: string; id_token?: string };
 type Refused = { error: string; error_description?: string };
 
+/** Something a tool can't do, in words the agent reads. */
+class Told extends Error {}
+
 /**
- * The makers of the apps, and how a person signs in with each: OAuth's
- * authorization code flow with PKCE, which is how an app that can keep no
- * secret signs in. `authorize` is the maker's page the person signs in on,
- * `asks` is what that page takes besides what OAuth names, and `token` is
- * where the code the page hands back is swapped for tokens. `scopes` go with
- * every sign-in, to learn who signed in, which `account` reads from what was
- * granted. `redirect` is the address the page goes to once the person has
- * signed in, for the client id the maker gave Sidebots.
+ * Opens the tool server an app's maker runs, at `url`, for as long as `ask`
+ * takes. The server speaks MCP, and every request to it goes through
+ * `asPerson`.
  */
-const MAKERS = {
+async function served<Said>(url: string, asPerson: typeof fetch, ask: (server: Client) => Promise<Said>): Promise<Said> {
+  const server = new Client({ name: "Sidebots", version: "1" });
+  await server.connect(new StreamableHTTPClientTransport(new URL(url), { fetch: asPerson }));
+  try {
+    return await ask(server);
+  } finally {
+    await server.close().catch(() => undefined);
+  }
+}
+/** Every tool a maker's server has, which it lists a page at a time. */
+async function toolsOf(server: Client): Promise<ServedTool[]> {
+  const tools: ServedTool[] = [];
+  let cursor: string | undefined;
+  do {
+    const page = await server.listTools({ cursor });
+    tools.push(...page.tools);
+    cursor = page.nextCursor;
+  } while (cursor);
+  return tools;
+}
+/** What one of a maker's tools answers, as words. A part of it that isn't words, as a picture, is named by its kind. */
+async function saidBy(server: Client, tool: string, input: Record<string, unknown>): Promise<string> {
+  const said = await server.callTool({ name: tool, arguments: input });
+  const words = (said.content as { type: string; text?: string }[]).map((part) => part.text ?? `(${part.type})`).join("\n");
+  if (said.isError) throw new Told(words || `${tool} failed.`);
+  return words;
+}
+
+const NOTION = "https://mcp.notion.com/mcp";
+
+/**
+ * How a person signs in with an app's maker: OAuth's authorization code flow
+ * with PKCE, which is how an app that can keep no secret signs in.
+ * `authorize` is the maker's page the person signs in on, `asks` is what that
+ * page takes besides what OAuth names, and `token` is where the code the page
+ * hands back is swapped for tokens. `scopes` go with every sign-in.
+ * `resource` is the server the tokens are for, which the maker of a tool
+ * server is told with every request. `account` says who signed in, from what
+ * was granted or by asking the app as them. `redirect` is the address the
+ * page goes to once the person has signed in, for the client id Sidebots
+ * signs in with.
+ */
+type SignInWith = {
+  name: string;
+  authorize: string;
+  asks: Record<string, string>;
+  token: string;
+  scopes: string[];
+  resource?: string;
+  account(granted: Granted, asPerson: typeof fetch): string | undefined | Promise<string | undefined>;
+  redirect(client: string): string;
+};
+
+/** The makers of the apps. */
+const MAKERS: Record<"google" | "notion", SignInWith> = {
   google: {
     name: "Google",
     authorize: "https://accounts.google.com/o/oauth2/v2/auth",
     // Offline access has Google grant a token that lasts, and asking for consent has it grant one at every sign-in, not only the first.
     asks: { access_type: "offline", prompt: "consent" },
     token: "https://oauth2.googleapis.com/token",
+    // These have Google say who signed in.
     scopes: ["openid", "email"],
     // The id token names the account. It comes straight from Google, so there is no signature to check.
     account: (granted: Granted) => (JSON.parse(Buffer.from(granted.id_token?.split(".")[1] ?? "", "base64url").toString() || "{}") as { email?: string }).email,
     // Google's address for the client of an iOS app: the client id, turned about.
     redirect: (client: string) => `${client.split(".").reverse().join(".")}:/oauth2redirect`,
   },
+  notion: {
+    name: "Notion",
+    authorize: "https://mcp.notion.com/authorize",
+    asks: {},
+    token: "https://mcp.notion.com/token",
+    scopes: ["default"],
+    resource: NOTION,
+    // Notion has a tool that says who is signed in. A Notion without it leaves the account unnamed.
+    account: (_granted, asPerson) =>
+      served(NOTION, asPerson, async (server) => {
+        const self = JSON.parse(await saidBy(server, "notion-get-self", {})) as { user?: { email?: string }; workspace?: { name?: string } };
+        return self.user?.email ?? self.workspace?.name;
+      }).catch(() => undefined),
+    // Notion reads the client from a file, whose address is the client id, and the file lists this address. It is no one app's: the sheet iOS signs in with hands it to the app that opened it.
+    redirect: () => "app.sidebots:/oauth2redirect",
+  },
 };
 type Maker = keyof typeof MAKERS;
-
-/** Something a tool can't do, in words the agent reads. */
-class Told extends Error {}
 
 /** Asks an app something as the person, and answers what the app said. */
 type Call = <Said>(url: string, request?: { method?: string; body?: unknown }) => Promise<Said>;
 
 /**
  * A tool an app gives the agents: its name, what the agent is told it does,
- * what it takes, and what it does through `call`, in words the agent reads. A
+ * what it takes, and what it does, in words the agent reads. It asks the app
+ * through `call`, or through `asPerson` when the app isn't asked in JSON. A
  * tool that is `checked` acts as the person: it changes something in the app
  * or speaks as them, as sending a mail does.
  */
@@ -54,7 +124,7 @@ type AppTool<Input extends z.ZodRawShape = z.ZodRawShape> = {
   description: string;
   checked?: "acts";
   input: Input;
-  run(input: z.infer<z.ZodObject<Input>>, call: Call): Promise<string>;
+  run(input: z.infer<z.ZodObject<Input>>, call: Call, asPerson: typeof fetch): Promise<string>;
 };
 const define = <Input extends z.ZodRawShape>(tool: AppTool<Input>): AppTool => tool as AppTool;
 
@@ -148,6 +218,53 @@ const EVENT_PARTS = {
   guests: z.array(z.string()).optional().describe("Who is invited, each an email address. Google mails each of them the invitation."),
 };
 const WHEN = "as YYYY-MM-DDTHH:MM by this machine's clock, or as YYYY-MM-DD for an event that takes whole days";
+
+// The most of what a maker says a tool does that the list of its tools gives.
+const ABOUT_CHARS = 200;
+
+/**
+ * The tools of an app whose maker serves them itself, at `url`: one that
+ * lists what the maker has, and two that use one of them. An agent learns the
+ * maker's tools as it needs them, so a maker with many, each told at length,
+ * adds three tools to a chat, and a tool the maker adds is there the day it
+ * does. The maker says of each tool whether it only reads. One that doesn't
+ * is used through the tool that is `checked`.
+ */
+function servedTools(connection: Connection, url: string): AppTool[] {
+  const { name } = CONNECTIONS[connection];
+  const [list, read, change] = [`${connection}_tools`, `${connection}_read`, `${connection}_change`];
+  const usedWith = (tool: ServedTool) => (tool.annotations?.readOnlyHint ? read : change);
+  const takes = {
+    tool: z.string().describe(`The tool's name, as ${list} gives it`),
+    input: z.record(z.string(), z.unknown()).optional().describe(`What the tool takes, as ${list} says of it`),
+  };
+  const use =
+    (through: string): AppTool<typeof takes>["run"] =>
+    ({ tool, input = {} }, _call, asPerson) =>
+      served(url, asPerson, async (server) => {
+        const asked = (await toolsOf(server)).find((each) => each.name === tool);
+        if (!asked) throw new Told(`${name} has no tool called ${tool}. ${list} lists the ones it has.`);
+        if (usedWith(asked) !== through) throw new Told(`${tool} ${through === read ? "doesn't only read" : "only reads"}. Use it with ${usedWith(asked)}.`);
+        return (await saidBy(server, tool, input)) || "Done.";
+      });
+  return [
+    define({
+      name: list,
+      description: `List the tools ${name} itself gives you for the person's ${name}: each with its name, how it starts to say what it does, and which of ${read} and ${change} uses it. Name one in \`tool\` for all ${name} says of it and what it takes, and read that before you first use it.`,
+      input: { tool: z.string().optional().describe("One tool's name, for all of what it does and takes") },
+      run: ({ tool }, _call, asPerson) =>
+        served(url, asPerson, async (server) => {
+          const tools = await toolsOf(server);
+          if (tool === undefined) return tools.map((each) => `${each.name} (${usedWith(each)}): ${(each.description ?? "").split("\n")[0].slice(0, ABOUT_CHARS)}`).join("\n") || `${name} has no tools.`;
+          const asked = tools.find((each) => each.name === tool);
+          if (!asked) throw new Told(`${name} has no tool called ${tool}.`);
+          return [`${asked.name}, used with ${usedWith(asked)}`, asked.description ?? "", `What it takes, as a JSON schema:\n${JSON.stringify(asked.inputSchema)}`].join("\n\n");
+        }),
+    }),
+    define({ name: read, description: `Use one of ${name}'s tools that only reads, as one that searches does.`, input: takes, run: use(read) }),
+    define({ name: change, description: `Use one of ${name}'s tools that changes something in the person's ${name}, or acts as them there. Use it only for what the person asked for.`, checked: "acts", input: takes, run: use(change) }),
+  ];
+}
 
 /**
  * What Sidebots knows of each connection: whose app it is, what its sign-in
@@ -279,6 +396,7 @@ const APPS: Record<Connection, { maker: Maker; scopes: string[]; tools: AppTool[
       }),
     ],
   },
+  notion: { maker: "notion", scopes: [], tools: servedTools("notion", NOTION) },
 };
 
 /** Every connection's tools, each with the connection it is of. */
@@ -300,13 +418,25 @@ const EARLY_MS = 60_000;
 export function createConnections(store: Store, clients: Partial<Record<Maker, string>>, request: typeof fetch = fetch, now: () => number = Date.now) {
   // The sign-ins that phones have started and not finished, by the `state` each sent the maker's page off with.
   const signIns = new Map<string, { personId: string; connection: Connection; verifier: string; until: number }>();
-  // The token each connection is asking its app with, until it runs out.
+  // The token each connection is asking its app with, until it runs out, and the next one while its maker is asked for it.
   const tokens = new Map<string, { token: string; until: number }>();
+  const renewals = new Map<string, Promise<string>>();
   const key = (personId: string, connection: Connection) => `${personId} ${connection}`;
 
   /** Asks a maker for tokens. */
-  const grant = async (maker: Maker, fields: Record<string, string>): Promise<Granted | Refused> =>
-    (await request(MAKERS[maker].token, { method: "POST", body: new URLSearchParams({ client_id: clients[maker] ?? "", ...fields }) })).json() as Promise<Granted | Refused>;
+  const grant = async (maker: Maker, fields: Record<string, string>): Promise<Granted | Refused> => {
+    const { token, resource } = MAKERS[maker];
+    return (await request(token, { method: "POST", body: new URLSearchParams({ client_id: clients[maker] ?? "", ...(resource && { resource }), ...fields }) })).json() as Promise<Granted | Refused>;
+  };
+
+  /** Asks an app as whoever a token is for. */
+  const bearing =
+    (token: string): typeof fetch =>
+    (url, init) => {
+      const headers = new Headers(init?.headers);
+      headers.set("Authorization", `Bearer ${token}`);
+      return request(url, { ...init, headers });
+    };
 
   const listed = (personId: string, connection: Connection): Connected => ({ connection, ...CONNECTIONS[connection], account: store.connection(personId, connection)?.account ?? null });
 
@@ -315,24 +445,42 @@ export function createConnections(store: Store, clients: Partial<Record<Maker, s
     return granted.access_token;
   };
 
-  /** A token to ask a connection's app with as the person: the one in hand, or a new one from the maker once that has run out. */
-  async function token(personId: string, connection: Connection): Promise<string> {
+  /** The token a connection is asking its app with, while it lasts. */
+  const inHand = (personId: string, connection: Connection) => {
+    const held = tokens.get(key(personId, connection));
+    return held && held.until > now() ? held.token : undefined;
+  };
+
+  /** A new token for a connection, from its maker. */
+  async function renewed(personId: string, connection: Connection): Promise<string> {
     const { name } = CONNECTIONS[connection];
     const connect = `Call \`connect\` with \`${connection}\`, which asks the person to sign in to it.`;
     const kept = store.connection(personId, connection);
     if (!kept) throw new Told(`${name} isn't connected. ${connect}`);
-    const held = tokens.get(key(personId, connection));
-    if (held && held.until > now()) return held.token;
     const maker = APPS[connection].maker;
     const granted = await grant(maker, { grant_type: "refresh_token", refresh_token: kept.token });
     // The person may have removed the connection, or made it again, while the maker answered. What it said is then of a sign-in that is gone.
-    if (store.connection(personId, connection)?.token !== kept.token) return token(personId, connection);
-    if (!("error" in granted)) return hold(personId, connection, granted);
+    if (store.connection(personId, connection)?.token !== kept.token) return inHand(personId, connection) ?? renewed(personId, connection);
+    if (!("error" in granted)) {
+      // A maker may answer with a new token that lasts, which ends the one before it.
+      if (granted.refresh_token && granted.refresh_token !== kept.token) store.setConnection(personId, connection, { ...kept, token: granted.refresh_token });
+      return hold(personId, connection, granted);
+    }
     if (granted.error !== "invalid_grant") throw new Told(`${MAKERS[maker].name} wouldn't renew the sign-in to ${name}: ${granted.error_description ?? granted.error}`);
     // The person took the connection back at the maker's, or the maker ended it.
     store.setConnection(personId, connection, null);
     tokens.delete(key(personId, connection));
     throw new Told(`${name} is no longer connected. ${connect}`);
+  }
+
+  /** A token to ask a connection's app with as the person: the one in hand, or a new one from the maker once that has run out. */
+  function token(personId: string, connection: Connection): Promise<string> {
+    const held = inHand(personId, connection);
+    if (held && store.connection(personId, connection)) return Promise.resolve(held);
+    // Tools used at once wait for one new token between them, since a maker may end the token that lasts as it answers with the next.
+    const renewal = renewals.get(key(personId, connection)) ?? renewed(personId, connection).finally(() => renewals.delete(key(personId, connection)));
+    renewals.set(key(personId, connection), renewal);
+    return renewal;
   }
 
   return {
@@ -349,7 +497,7 @@ export function createConnections(store: Store, clients: Partial<Record<Maker, s
     /** Starts the person's sign-in to a connection, and answers where a phone opens it. It fails in words for the person. */
     signIn(personId: string, connection: Connection): SignIn {
       const { maker, scopes } = APPS[connection];
-      const { name, authorize, asks, redirect, scopes: who } = MAKERS[maker];
+      const { name, authorize, asks, redirect, scopes: who, resource } = MAKERS[maker];
       const client = clients[maker];
       if (!client) throw new Error(`Sidebots on your computer isn't set up to sign in to ${name}.`);
       for (const [state, signIn] of signIns) if (signIn.until <= now()) signIns.delete(state);
@@ -357,6 +505,7 @@ export function createConnections(store: Store, clients: Partial<Record<Maker, s
       signIns.set(state, { personId, connection, verifier, until: now() + SIGN_IN_MS });
       const asked = {
         ...asks,
+        ...(resource && { resource }),
         client_id: client,
         redirect_uri: redirect(client),
         response_type: "code",
@@ -392,7 +541,7 @@ export function createConnections(store: Store, clients: Partial<Record<Maker, s
       if (!granted.refresh_token || scopes.some((scope) => !allowed.has(scope))) {
         throw new Error(`${name} didn't allow everything ${CONNECTIONS[connection].name} needs. Connect it again, and allow all it asks for.`);
       }
-      store.setConnection(personId, connection, { account: MAKERS[maker].account(granted) ?? name, token: granted.refresh_token });
+      store.setConnection(personId, connection, { account: (await MAKERS[maker].account(granted, bearing(granted.access_token))) ?? name, token: granted.refresh_token });
       hold(personId, connection, granted);
       return listed(personId, connection);
     },
@@ -409,21 +558,20 @@ export function createConnections(store: Store, clients: Partial<Record<Maker, s
       if (!tool) return `You have no tool called ${toolName}.`;
       const { name } = CONNECTIONS[tool.connection];
       try {
-        const held = await token(personId, tool.connection);
+        const asPerson = bearing(await token(personId, tool.connection));
         const call: Call = async <Said>(url: string, { method = "GET", body }: { method?: string; body?: unknown } = {}) => {
-          const response = await request(url, {
-            method,
-            headers: { Authorization: `Bearer ${held}`, ...(body !== undefined && { "Content-Type": "application/json" }) },
-            body: body === undefined ? undefined : JSON.stringify(body),
-          });
+          const response = await asPerson(url, { method, headers: body === undefined ? undefined : { "Content-Type": "application/json" }, body: body === undefined ? undefined : JSON.stringify(body) });
           // An app answers some things, such as a removal, with nothing.
           const answered = (await response.json().catch(() => ({}))) as Said & { error?: { message?: string } };
           if (!response.ok) throw new Told(`${name} refused that: ${answered.error?.message ?? response.statusText}`);
           return answered;
         };
-        return await tool.run(input as never, call);
+        return await tool.run(input as never, call, asPerson);
       } catch (error) {
-        return error instanceof Told ? error.message : `${name} couldn't be reached: ${error instanceof Error ? error.message : String(error)}`;
+        if (error instanceof Told) return error.message;
+        // What a maker's tool server refuses, as a tool given what it doesn't take.
+        if (error instanceof McpError) return `${name} refused that: ${error.message}`;
+        return `${name} couldn't be reached: ${error instanceof Error ? error.message : String(error)}`;
       }
     },
   };
