@@ -41,12 +41,19 @@ test("what two agents ask and answer one after another is one exchange, through 
   );
 });
 
-test("an exchange ends when the agent gives the person its reply, and when the person sends a message", () => {
-  assert.deepEqual(said([asks("What did the shop quote?"), row("It's sorted: £85."), asks("Can they do Friday?"), person("and the lights?"), asks("Do they fit lights?")]), [
-    ["What did the shop quote?"],
-    ["Can they do Friday?"],
-    ["Do they fit lights?"],
-  ]);
+test("an exchange ends when the agent gives the person a reply, its own or a job's, and when the person sends a message", () => {
+  assert.deepEqual(
+    said([
+      asks("What did the shop quote?"),
+      row("It's sorted: £85."),
+      asks("Can they do Friday?"),
+      person("and the lights?"),
+      asks("Do they fit lights?"),
+      row("The fare is $880.", { job_id: "fare" }),
+      asks("Is the bike ready?"),
+    ]),
+    [["What did the shop quote?"], ["Can they do Friday?"], ["Do they fit lights?"], ["Is the bike ready?"]],
+  );
 });
 
 test("an answer stays with what it answers however late it comes, and each other agent has an exchange of its own", () => {

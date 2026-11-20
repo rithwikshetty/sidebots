@@ -156,8 +156,8 @@ export const betweenAgents = (message: Pick<Message, "peer_id" | "ask">): boolea
  * The exchanges in a chat's messages, each oldest first: what two of the
  * person's agents asked and answered each other, one thing after another.
  * An exchange ends when the person sends a message or the chat's agent gives
- * them its reply, so what either agent asks next begins another. An answer
- * belongs with what it answers, whenever it comes.
+ * them a reply, its own or a job's, so what either agent asks next begins
+ * another. An answer belongs with what it answers, whenever it comes.
  */
 export function exchanges(messages: Message[]): Message[][] {
   const all: Message[][] = [];
