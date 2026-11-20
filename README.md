@@ -144,14 +144,15 @@ A connection is an app outside Sidebots that your agents use as you. Sidebots ha
 
 Connect one from Connections in the app's side menu, or tell an agent to: "connect my Gmail". Either way a Connect button opens Google's own sign-in on your phone. Once you have signed in and allowed what it asks for, the agents can search, read and send your mail, or read and change your calendar. Remove a connection from the same list.
 
-Sidebots never sees your password. Google gives it a token for acting as you, which the server keeps in `~/.sidebots/connections.json`, readable only by your account. The token goes from Google to your machine and nowhere else: the relay and the phone never hold it. What an agent reads from an app does go to the model it runs on, as everything an agent reads does.
+Sidebots never sees your password. Google gives it a token for acting as you, which the server keeps in `~/.sidebots/connections.json`, readable only by your account. An agent's own commands can read that file, as they can any of your account's files, and on a server you share that is every person's agents. The token goes from Google to your machine and nowhere else: the relay and the phone never hold it. What an agent reads from an app does go to the model it runs on, as everything an agent reads does.
 
 Signing in to Google needs a client id, which says to Google which app is asking. Make one in a [Google Cloud project](https://console.cloud.google.com/auth/clients) of your own: a client of the type iOS, for your app's bundle identifier. Turn on the Gmail API and the Google Calendar API in the project, add the scopes `gmail.readonly`, `gmail.send` and `calendar.events` to its consent screen, and start the server with the client id in `SIDEBOTS_GOOGLE_CLIENT`. While the project is in testing, only the Google accounts you list as test users can sign in, and Google ends each sign-in after seven days. A project open to everyone needs Google's review, since it asks to read mail.
 
-Adding a connection takes two things:
+Adding a connection takes three things:
 
 - An entry in `CONNECTIONS` in `server/src/contract.ts`, with the name the apps show and what connecting it lets the agents do.
-- An entry in `APPS` in `server/src/connections.ts`, with whose app it is, what its sign-in asks for, and its tools. Each tool has a name, what the agent is told it does, what it takes, and what it does. A tool that changes something in the app, or speaks as the person, is marked `acts`. An app of a maker that Sidebots doesn't sign in with yet also takes an entry in `MAKERS` there, with the maker's pages for OAuth.
+- An entry in `APPS` in `server/src/connections.ts`, with whose app it is, what its sign-in asks for, and its tools. Each tool has a name, what the agent is told it does, what it takes, and what it does. A tool that changes something in the app, or speaks as the person, is marked `checked: "acts"`. An app of a maker that Sidebots doesn't sign in with yet also takes an entry in `MAKERS` there, with the maker's pages for OAuth, and its client id in `server/src/main.ts`.
+- A table change in `server/src/store.ts` that gives Codex sessions a fresh start, as the one for Gmail and Google Calendar does, since a Codex chat keeps the tools it started with.
 
 The app lists whatever connections the server has, so it needs no change.
 

@@ -304,8 +304,13 @@ const runTurn = (start: () => Promise<Start>): RunTurn => async (turn) => {
       const given = called && z.object(called.input).safeParse(input);
       if (!given) return said(`You have no tool called ${tool}.`, false);
       if (!given.success) return said(z.prettifyError(given.error), false);
-      const answer = called.checked === "acts" ? await ask(toolQuestion("Sidebots", called.name, given.data), withdrawn) : undefined;
-      return answer?.allowed === false ? said(answer.words, false) : said(await called.run(given.data));
+      if (called.checked === "acts") {
+        const answer = await ask(toolQuestion("Sidebots", called.name, given.data), withdrawn);
+        if (!answer.allowed) return said(answer.words, false);
+        // A yes that comes once the person has stopped the turn is too late.
+        if (stop.signal.aborted) return said("The turn was stopped.", false);
+      }
+      return said(await called.run(given.data));
     });
 
     // The files Codex is about to change, by the step that changes them, which its ask names.

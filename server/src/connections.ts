@@ -35,7 +35,7 @@ const MAKERS = {
     redirect: (client: string) => `${client.split(".").reverse().join(".")}:/oauth2redirect`,
   },
 };
-export type Maker = keyof typeof MAKERS;
+type Maker = keyof typeof MAKERS;
 
 /** Something a tool can't do, in words the agent reads. */
 class Told extends Error {}
@@ -46,13 +46,13 @@ type Call = <Said>(url: string, request?: { method?: string; body?: unknown }) =
 /**
  * A tool an app gives the agents: its name, what the agent is told it does,
  * what it takes, and what it does through `call`, in words the agent reads. A
- * tool that `acts` changes something in the app or speaks as the person, as
- * sending a mail does.
+ * tool that is `checked` acts as the person: it changes something in the app
+ * or speaks as them, as sending a mail does.
  */
 type AppTool<Input extends z.ZodRawShape = z.ZodRawShape> = {
   name: string;
   description: string;
-  acts?: true;
+  checked?: "acts";
   input: Input;
   run(input: z.infer<z.ZodObject<Input>>, call: Call): Promise<string>;
 };
@@ -83,12 +83,11 @@ const wordsOn = (html: string) =>
     .replace(/\n{3,}/g, "\n\n")
     .trim();
 /** What a mail says: its plain text when it has some, and otherwise its HTML as words. */
-function said(mail: Mail): string {
+function mailWords(mail: Mail): string {
   const parts = everyPart(mail.payload ?? {}).filter((part) => !part.filename && part.body?.data);
-  const read = (part: Part) => Buffer.from(part.body!.data!, "base64url").toString();
-  const text = parts.find((part) => part.mimeType === "text/plain");
-  const page = parts.find((part) => part.mimeType === "text/html");
-  const words = text ? read(text).trim() : page ? wordsOn(read(page)) : "";
+  const read = (type: string) => parts.filter((part) => part.mimeType === type).map((part) => Buffer.from(part.body!.data!, "base64url").toString().trim()).find(Boolean);
+  const page = read("text/html");
+  const words = read("text/plain") ?? (page ? wordsOn(page) : "");
   return words.length > MAIL_CHARS ? `${words.slice(0, MAIL_CHARS)}\n\nThe mail goes on past here.` : words;
 }
 /** A value as one line of a mail's header. */
@@ -131,7 +130,7 @@ const eventOf = ({ title, start, end, place, notes, guests }: { title?: string; 
   ...(guests !== undefined && { attendees: guests.map((email) => ({ email })) }),
 });
 /** An event as an agent reads it. */
-const told = (event: Event) =>
+const eventLines = (event: Event) =>
   [
     `id ${event.id}`,
     event.summary ?? "(No title)",
@@ -183,28 +182,31 @@ const APPS: Record<Connection, { maker: Maker; scopes: string[]; tools: AppTool[
         run: async ({ id }, call) => {
           const mail = await call<Mail>(`${GMAIL}/messages/${encodeURIComponent(id)}?format=full`);
           const files = everyPart(mail.payload ?? {}).flatMap((part) => (part.filename ? [part.filename] : []));
-          return [...headers(mail, ["From", "To", "Cc", "Subject", "Date"]), ...(files.length ? [`Files: ${files.join(", ")}`] : []), "", said(mail)].join("\n");
+          return [...headers(mail, ["From", "To", "Cc", "Subject", "Date"]), ...(files.length ? [`Files: ${files.join(", ")}`] : []), "", mailWords(mail)].join("\n");
         },
       }),
       define({
         name: "gmail_send",
         description: "Send a mail from the person's Gmail, as them. Use it only for a mail the person asked for, to the people they named.",
-        acts: true,
+        checked: "acts",
         input: {
           to: z.array(z.string()).describe("Who it goes to, each an email address"),
-          subject: z.string().describe("The mail's subject"),
+          subject: z.string().optional().describe("The mail's subject. Leave it out of an answer, which takes the subject of the mail it answers."),
           body: z.string().describe("What the mail says, as plain text"),
           cc: z.array(z.string()).optional().describe("Who gets a copy, each an email address"),
           answers: z.string().optional().describe("The id of the mail this one answers, as gmail_search gives it. The mail then joins that one's thread."),
         },
         run: async ({ to, subject, body, cc = [], answers }, call) => {
           if (to.length === 0) throw new Told("Say who the mail goes to.");
-          const answered = answers ? await call<Mail>(`${GMAIL}/messages/${encodeURIComponent(answers)}?format=metadata&metadataHeaders=Message-ID&metadataHeaders=References`) : undefined;
+          const answered = answers ? await call<Mail>(`${GMAIL}/messages/${encodeURIComponent(answers)}?format=metadata&metadataHeaders=Message-ID&metadataHeaders=References&metadataHeaders=Subject`) : undefined;
           const id = answered && header(answered, "Message-ID");
+          // Gmail keeps an answer in a thread only under the subject of the mail it answers.
+          const about = answered ? header(answered, "Subject").replace(/^(?!re:)/i, "Re: ") : subject;
+          if (!about) throw new Told("Say the mail's subject.");
           const head = [
             `To: ${to.map(oneLine).join(", ")}`,
             ...(cc.length ? [`Cc: ${cc.map(oneLine).join(", ")}`] : []),
-            `Subject: ${subjectLine(subject)}`,
+            `Subject: ${subjectLine(about)}`,
             ...(id ? [`In-Reply-To: ${id}`, `References: ${[header(answered, "References"), id].filter(Boolean).join(" ")}`] : []),
             "MIME-Version: 1.0",
             "Content-Type: text/plain; charset=utf-8",
@@ -231,14 +233,15 @@ const APPS: Record<Connection, { maker: Maker; scopes: string[]; tools: AppTool[
         },
         run: async ({ from, to, text }, call) => {
           const asked = { timeMin: instant(from, "from"), timeMax: instant(to, "to"), singleEvents: "true", orderBy: "startTime", maxResults: String(EVENTS_MOST), ...(text && { q: text }) };
-          const { items = [] } = await call<{ items?: Event[] }>(`${EVENTS}?${new URLSearchParams(asked)}`);
-          return items.map(told).join("\n\n") || "The calendar has nothing then.";
+          const { items = [], nextPageToken } = await call<{ items?: Event[]; nextPageToken?: string }>(`${EVENTS}?${new URLSearchParams(asked)}`);
+          const more = nextPageToken ? `\n\nThe calendar has more then than these ${EVENTS_MOST}. Look in a shorter time for the rest.` : "";
+          return `${items.map(eventLines).join("\n\n") || "The calendar has nothing then."}${more}`;
         },
       }),
       define({
         name: "calendar_add_event",
         description: "Add an event to the person's Google Calendar.",
-        acts: true,
+        checked: "acts",
         input: {
           title: z.string().describe("What the event is called"),
           start: z.string().describe(`When it starts, ${WHEN}`),
@@ -253,7 +256,7 @@ const APPS: Record<Connection, { maker: Maker; scopes: string[]; tools: AppTool[
       define({
         name: "calendar_change_event",
         description: "Change an event in the person's Google Calendar. Give only what changes. Google mails the event's guests the change.",
-        acts: true,
+        checked: "acts",
         input: {
           id: z.string().describe("The event's id, as calendar_events gives it"),
           title: z.string().optional().describe("What the event is called"),
@@ -261,12 +264,12 @@ const APPS: Record<Connection, { maker: Maker; scopes: string[]; tools: AppTool[
           end: z.string().optional().describe("When it ends, written the same way"),
           ...EVENT_PARTS,
         },
-        run: async ({ id, ...changes }, call) => told(await call<Event>(`${EVENTS}/${encodeURIComponent(id)}?sendUpdates=all`, { method: "PATCH", body: eventOf(changes) })),
+        run: async ({ id, ...changes }, call) => eventLines(await call<Event>(`${EVENTS}/${encodeURIComponent(id)}?sendUpdates=all`, { method: "PATCH", body: eventOf(changes) })),
       }),
       define({
         name: "calendar_remove_event",
         description: "Remove an event from the person's Google Calendar. Google mails its guests that it is off.",
-        acts: true,
+        checked: "acts",
         input: { id: z.string().describe("The event's id, as calendar_events gives it") },
         run: async ({ id }, call) => {
           await call(`${EVENTS}/${encodeURIComponent(id)}?sendUpdates=all`, { method: "DELETE" });
@@ -321,6 +324,8 @@ export function createConnections(store: Store, clients: Partial<Record<Maker, s
     if (held && held.until > now()) return held.token;
     const maker = APPS[connection].maker;
     const granted = await grant(maker, { grant_type: "refresh_token", refresh_token: kept.token });
+    // The person may have removed the connection, or made it again, while the maker answered. What it said is then of a sign-in that is gone.
+    if (store.connection(personId, connection)?.token !== kept.token) return token(personId, connection);
     if (!("error" in granted)) return hold(personId, connection, granted);
     if (granted.error !== "invalid_grant") throw new Told(`${MAKERS[maker].name} wouldn't renew the sign-in to ${name}: ${granted.error_description ?? granted.error}`);
     // The person took the connection back at the maker's, or the maker ended it.

@@ -227,7 +227,7 @@ export function createApi(store: Store, queue: Queue, connections: Connections, 
     return c.json({});
   });
 
-  /** The person's answer to an ask: whether the agent may do what it asked about. Answers with the ask as it now stands. */
+  /** The person's answer to an ask: whether the agent may do what it asked about. Answers with the ask as it now stands. An ask for a connection takes only a no here, since making the connection is its yes. */
   app.post("/agents/:id/asks/:message", async (c) => {
     const agent = ownAgent(c.var.person, c.req.param("id"));
     if (!agent) return c.json({ error: "No such agent." }, 404);

@@ -1914,6 +1914,8 @@ test("an agent is told when the person doesn't make a connection, or allows less
   const left = (await call(ME, "POST", "/connections/gmail/sign-in")).json as { url: string; redirect: string };
   assert.equal((await call(ME, "PUT", "/connections/gmail", { url: `${left.redirect}?state=${new URL(left.url).searchParams.get("state")}&error=access_denied` })).json.error, "Google didn't sign you in.");
 
+  // Only signing in says yes to a connection. No is said as it is to any ask.
+  assert.equal((await call(ME, "POST", `/agents/${agent.id}/asks/${ask.id}`, { allow: true })).status, 409);
   assert.equal((await call(ME, "POST", `/agents/${agent.id}/asks/${ask.id}`, { allow: false })).json.ask, "refused");
   await turn;
   assert.deepEqual(told, ["Alex said no to this. Don't do it, or the same thing another way. Finish the rest and say in your reply what you left out."]);

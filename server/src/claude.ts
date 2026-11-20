@@ -126,8 +126,8 @@ function inbox() {
  * reads to say yes or no. A command leads with the agent's own account of it,
  * the `description` Claude Code lets an agent give with a command, and with
  * the command's first line when the agent gave none. A page leads with its
- * site, a file with its name, and a connection's tool with what it is called. `connection` is the person's
- * connection the tool comes from, when it comes from one.
+ * site, a file with its name, and a connection's tool with what it is called. `connection` is the
+ * connection in the person's Claude Code that the tool comes from, when it comes from one.
  */
 export function question(toolName: string, input: Record<string, unknown>, connection: string | undefined, why: string | undefined): Question {
   const given = (name: string) => (typeof input[name] === "string" ? input[name] : "");

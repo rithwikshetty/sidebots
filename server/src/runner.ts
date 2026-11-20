@@ -204,7 +204,7 @@ export function toolsFor(turn: Turn): Tool[] {
       input: { app: z.enum(Object.keys(CONNECTIONS) as [Connection, ...Connection[]]).describe("The app to connect") },
       run: ({ app }) => turn.connect(app),
     }),
-    ...CONNECTION_TOOLS.map(({ name, description, acts, input }) => define({ name, description, ...(acts && { checked: "acts" as const }), input, run: (given) => turn.useConnection(name, given) })),
+    ...CONNECTION_TOOLS.map(({ name, description, checked, input }) => define({ name, description, checked, input, run: (given) => turn.useConnection(name, given) })),
     ...(sendUpdate
       ? [
           define({
@@ -474,10 +474,7 @@ export function createQueue(store: Store, drivers: Drivers, connections: Connect
             const already = connections.account(person.id, connection);
             if (already) return `${name} is already connected, as ${already}.`;
             const answer = await ask({ kind: "connection", connection, title: `Connect ${name}`, what: allows, facts: [], detail: "" }, stop.signal);
-            // The connection is what says the person signed in, whatever the ask was answered with.
-            const account = connections.account(person.id, connection);
-            if (account) return `${name} is connected, as ${account}. You and ${person.name}'s other agents can use it from now on.`;
-            return answer.allowed ? `${name} didn't connect.` : answer.words;
+            return answer.allowed ? `${name} is connected, as ${connections.account(person.id, connection)}. You and ${person.name}'s other agents can use it from now on.` : answer.words;
           },
           useConnection: (tool, input) => connections.use(person.id, tool, input),
           sendFiles: (paths) => {
@@ -690,10 +687,10 @@ export function createQueue(store: Store, drivers: Drivers, connections: Connect
       }
     },
 
-    /** Gives an ask the person's answer, and the agent goes on with it. False when the agent has no such ask waiting. */
+    /** Gives an ask the person's answer, and the agent goes on with it. False when the agent has no such ask waiting, and for a yes to an ask for a connection, which only making the connection says. */
     answer(agentId: string, messageId: string, allow: boolean): boolean {
       const ask = asks.get(messageId);
-      if (ask?.agentId !== agentId) return false;
+      if (ask?.agentId !== agentId || (allow && ask.connection)) return false;
       ask.answer(allow);
       return true;
     },

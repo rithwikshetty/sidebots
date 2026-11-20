@@ -202,6 +202,12 @@ test("a tool that acts as the person outside the machine asks them first, and on
   await driver.runTurn(turn("tool calendar_remove_event e1", { ask: async () => ({ allowed: false, words: "No." }) }));
   assert.deepEqual(asks, [{ kind: "tool", title: "Use Sidebots", what: "Calendar remove event", facts: [["Id", "e1"]], detail: JSON.stringify({ id: "e1" }, null, 2) }]);
   assert.deepEqual(replies.map(([reply]) => reply), ["Tool said: Used gmail_read.", "Tool said: Used calendar_remove_event.", "Tool failed: No."]);
+
+  // A yes that comes once the person has stopped the turn acts on nothing.
+  const stop = new AbortController();
+  const used: string[] = [];
+  await driver.runTurn(turn("tool calendar_remove_event e1", { stop, ask: async () => (stop.abort(), { allowed: true }), useConnection: async (tool) => (used.push(tool), "") }));
+  assert.deepEqual(used, []);
 });
 
 test("what Codex asks its client before it acts goes to the person, whose answer it takes", async () => {

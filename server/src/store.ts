@@ -53,6 +53,8 @@ const TABLE_CHANGES: (string | { table: string; change: string })[] = [
   "alter table messages add column peer_id text references agents(id)",
   { table: "usage", change: "alter table usage add column tokens integer not null default 0" },
   { table: "usage", change: "alter table usage add column session_tokens integer" },
+  // A Codex session keeps the tools it started with, so each one from before the connections' tools gets a fresh start.
+  "insert into messages (id, agent_id, sender, body, status, created_at) select lower(hex(randomblob(16))), id, 'sidebots', 'Fresh start', 'queued', cast(unixepoch('subsec') * 1000 as integer) from agents where provider = 'codex' and session_id is not null",
 ];
 
 const SCHEMA = `
