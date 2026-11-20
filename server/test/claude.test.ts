@@ -68,7 +68,7 @@ test("an ask leads with plain words, lists the facts that matter, and keeps the 
     ["In", "~/Documents/Rides"],
     ["Size", "1 line"],
   ]);
-  // A connection's tool leads with its name in words. What it was given in a few words is its facts, and the rest stays in its detail.
+  // A connection's tool leads with its name in words. What it was given in a few words is its facts, a short list among them, and the rest stays in its detail.
   const mail = { to: "bookings@shop.example", subject: "Brake cable", body: "Hello,\n\nPlease confirm.", urgent: false, labels: ["a"] };
   assert.deepEqual(question("mcp__gmail__send_email", mail, "gmail", undefined), {
     kind: "tool",
@@ -78,6 +78,7 @@ test("an ask leads with plain words, lists the facts that matter, and keeps the 
       ["To", "bookings@shop.example"],
       ["Subject", "Brake cable"],
       ["Urgent", "false"],
+      ["Labels", "a"],
     ],
     detail: JSON.stringify(mail, null, 2),
   });

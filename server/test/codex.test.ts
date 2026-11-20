@@ -84,6 +84,8 @@ function setup({ signedIn = true, keyLogin = false } = {}) {
     sendFiles: () => "",
     listAgents: () => "",
     askAgent: () => "",
+    connect: async () => "",
+    useConnection: async (tool) => `Used ${tool}.`,
     ask: async (question) => (asks.push(question), { allowed: true }),
     limits: (said) => limits.push(said),
     ...rest,
@@ -132,7 +134,10 @@ test("a turn starts a thread with the agent's tools, on the newest model of its 
   );
   // Every tool is there from the start, `send_update` too, since a thread keeps the tools it started with.
   const tools = (started.dynamicTools as { name: string; inputSchema: { properties: object } }[]).map((tool) => tool.name);
-  assert.deepEqual(tools, ["search_history", "schedule_job", "list_jobs", "cancel_job", "list_agents", "ask_agent", "send_files", "send_update"]);
+  assert.deepEqual(tools, [
+    ...["search_history", "schedule_job", "list_jobs", "cancel_job", "list_agents", "ask_agent", "send_files", "connect"],
+    ...["gmail_search", "gmail_read", "gmail_send", "calendar_events", "calendar_add_event", "calendar_change_event", "calendar_remove_event", "send_update"],
+  ]);
   assert.match(started.developerInstructions, /memory\/MEMORY\.md/);
   // The agent is told when its reply comes with something to look at.
   assert.match(started.developerInstructions, /better seen than read/);
@@ -187,6 +192,16 @@ test("the agent's tools answer in words, and a call that is wrong says so to the
   // A call without what the tool takes.
   await driver.runTurn(turn("tool search_history"));
   assert.match(replies.at(-1)![0], /^Tool failed: .*expected string/s);
+});
+
+test("a tool that acts as the person outside the machine asks them first, and one that only reads runs", async () => {
+  const { driver, turn, replies, asks } = setup();
+  await driver.runTurn(turn("tool gmail_read m1"));
+  assert.deepEqual(asks, []);
+  await driver.runTurn(turn("tool calendar_remove_event e1"));
+  await driver.runTurn(turn("tool calendar_remove_event e1", { ask: async () => ({ allowed: false, words: "No." }) }));
+  assert.deepEqual(asks, [{ kind: "tool", title: "Use Sidebots", what: "Calendar remove event", facts: [["Id", "e1"]], detail: JSON.stringify({ id: "e1" }, null, 2) }]);
+  assert.deepEqual(replies.map(([reply]) => reply), ["Tool said: Used gmail_read.", "Tool said: Used calendar_remove_event.", "Tool failed: No."]);
 });
 
 test("what Codex asks its client before it acts goes to the person, whose answer it takes", async () => {

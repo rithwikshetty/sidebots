@@ -5,8 +5,9 @@ import { extname } from "node:path";
 import { Hono } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import { streamSSE } from "hono/streaming";
-import { COLOR, CONTRACT_HEADER, CONTRACT_VERSION, MESSAGE_BYTES, PROVIDERS } from "./contract.ts";
-import type { Effort, Model, Paired, Provider, PushToken, StreamEvent } from "./contract.ts";
+import { COLOR, CONNECTIONS, CONTRACT_HEADER, CONTRACT_VERSION, MESSAGE_BYTES, PROVIDERS } from "./contract.ts";
+import type { Connection, Effort, Model, Paired, Provider, PushToken, StreamEvent } from "./contract.ts";
+import type { Connections } from "./connections.ts";
 import type { AgentChanges, Device, Person, Store } from "./store.ts";
 import type { Queue } from "./runner.ts";
 
@@ -42,7 +43,7 @@ function credential(header: string | undefined, scheme: string): string | undefi
  * once it has paired. `pushes` says whether the server sends through a relay,
  * without which it can't end a Live Activity.
  */
-export function createApi(store: Store, queue: Queue, machine: string, pushes: boolean) {
+export function createApi(store: Store, queue: Queue, connections: Connections, machine: string, pushes: boolean) {
   const app = new Hono<{ Variables: { person: Person; device: Device } }>();
 
   /** Every answer says which version of the contract the server speaks, so the app can tell which side to update. */
@@ -234,6 +235,51 @@ export function createApi(store: Store, queue: Queue, machine: string, pushes: b
     if (typeof allow !== "boolean") return c.json({ error: "An answer is yes or no." }, 400);
     if (!queue.answer(agent.id, c.req.param("message"), allow)) return c.json({ error: "The agent is no longer waiting for an answer to that." }, 409);
     return c.json(store.message(agent.id, c.req.param("message")));
+  });
+
+  /** The connection a request names, when Sidebots has one by that id. */
+  const connectionNamed = (id: string) => (Object.hasOwn(CONNECTIONS, id) ? (id as Connection) : undefined);
+  const said = (failure: unknown) => (failure instanceof Error ? failure.message : String(failure));
+
+  /** The apps the person's agents can use as them, each with the account it is connected as. */
+  app.get("/connections", (c) => c.json(connections.list(c.var.person.id)));
+
+  /** Starts the person's sign-in to a connection, and answers where the phone opens it. */
+  app.post("/connections/:id/sign-in", (c) => {
+    const connection = connectionNamed(c.req.param("id"));
+    if (!connection) return c.json({ error: "No such connection." }, 404);
+    try {
+      return c.json(connections.signIn(c.var.person.id, connection), 201);
+    } catch (failure) {
+      return c.json({ error: said(failure) }, 501);
+    }
+  });
+
+  /**
+   * Makes a connection from `url`, the address its sign-in's page ended on in
+   * the phone, and answers with it as it now stands. The person's agents that
+   * wait for the connection go on.
+   */
+  app.put("/connections/:id", async (c) => {
+    const connection = connectionNamed(c.req.param("id"));
+    if (!connection) return c.json({ error: "No such connection." }, 404);
+    const { url } = await c.req.json<{ url?: string }>();
+    if (typeof url !== "string") return c.json({ error: "A connection is made from the address its sign-in ended on." }, 400);
+    try {
+      const connected = await connections.finish(c.var.person.id, connection, url);
+      queue.connected(c.var.person.id, connection);
+      return c.json(connected);
+    } catch (failure) {
+      return c.json({ error: said(failure) }, 400);
+    }
+  });
+
+  /** Forgets a connection, so none of the person's agents can use it. */
+  app.delete("/connections/:id", (c) => {
+    const connection = connectionNamed(c.req.param("id"));
+    if (!connection) return c.json({ error: "No such connection." }, 404);
+    connections.remove(c.var.person.id, connection);
+    return c.json({});
   });
 
   /** The messages that contain `text`, in any of the person's chats. */

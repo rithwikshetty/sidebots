@@ -27,7 +27,7 @@ import { useWorkingLine } from "@/lib/lines";
 import { preview } from "@/lib/messages";
 import { HIDE, MOVE, SHOW, arrive } from "@/lib/motion";
 import { askForPush, showChatOnScreen } from "@/lib/push";
-import { answerAsk, freshStart, loadMessages, loadOlder, markRead, resend, send, stop, useAgent, useChatColor, useMessages, useOnline } from "@/lib/state";
+import { answerAsk, connect, freshStart, loadMessages, loadOlder, markRead, resend, send, stop, useAgent, useChatColor, useMessages, useOnline } from "@/lib/state";
 import { ChatColor, type Theme, useTheme } from "@/lib/theme";
 import { dayLabel, listTime, sameDay } from "@/lib/time";
 
@@ -411,26 +411,29 @@ function Receipt({ message, theme }: { message: Message; theme: Theme }) {
 /**
  * At the foot of an ask's bubble: Allow and Don't allow while the agent waits
  * for the person's answer, and how the ask ended once it has. The agent goes
- * on, or leaves the thing undone, as soon as one is tapped.
+ * on, or leaves the thing undone, as soon as one is tapped. An ask for a
+ * connection has Connect, which takes the person through the app's sign-in,
+ * and the agent goes on once they have signed in.
  */
 function AskAnswer({ message, ask, theme }: { message: Message; ask: Ask; theme: Theme }) {
   const [sending, setSending] = useState(false);
-  if (ask !== "waiting") return <FadingText style={[styles.asked, { color: theme.ink2 }]}>{ASKED[ask]}</FadingText>;
+  const connection = message.question?.connection;
+  if (ask !== "waiting") return <FadingText style={[styles.asked, { color: theme.ink2 }]}>{(connection ? CONNECTED : ASKED)[ask]}</FadingText>;
   const answer = (allow: boolean) => {
     haptics.select();
     setSending(true);
-    answerAsk(message, allow)
-      .catch((failure) => problem("Couldn't answer", failure))
+    (connection && allow ? connect(connection) : answerAsk(message, allow))
+      .catch((failure) => problem(connection && allow ? "Couldn't connect" : "Couldn't answer", failure))
       .finally(() => setSending(false));
   };
   return (
     <Animated.View exiting={HIDE} style={styles.answers}>
       {/* On the bubble's grey, the quieter button is the page colour, as code is. */}
       <Pressable onPress={() => answer(false)} disabled={sending} accessibilityRole="button" style={({ pressed }) => [styles.answer, { backgroundColor: theme.bg, opacity: pressed || sending ? 0.6 : 1 }]}>
-        <Text style={[styles.answerText, { color: theme.ink }]}>Don't allow</Text>
+        <Text style={[styles.answerText, { color: theme.ink }]}>{connection ? "Not now" : "Don't allow"}</Text>
       </Pressable>
       <Pressable onPress={() => answer(true)} disabled={sending} accessibilityRole="button" style={({ pressed }) => [styles.answer, { backgroundColor: theme.tint, opacity: pressed || sending ? 0.6 : 1 }]}>
-        <Text style={[styles.answerText, { color: theme.onTint }]}>Allow</Text>
+        <Text style={[styles.answerText, { color: theme.onTint }]}>{connection ? "Connect" : "Allow"}</Text>
       </Pressable>
     </Animated.View>
   );
@@ -504,6 +507,8 @@ const RISE = arrive(0, 12);
 const SETTLE = arrive(PENDING_OPACITY, 0);
 // How an ask ended, as its bubble says it.
 const ASKED: Record<Exclude<Ask, "waiting">, string> = { allowed: "Allowed", refused: "Not allowed", unanswered: "Not answered" };
+// How an ask for a connection ended.
+const CONNECTED: typeof ASKED = { allowed: "Connected", refused: "Not connected", unanswered: "Not connected" };
 // The messages that have come in with motion, so a row scrolled away and back shows as it is.
 const arrived = new Set<string>();
 // The phone's clock and the server's may disagree by a little.

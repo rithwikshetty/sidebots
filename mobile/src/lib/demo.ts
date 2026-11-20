@@ -8,6 +8,7 @@
 
 import { Image } from "react-native";
 import {
+  CONNECTIONS,
   CONTRACT_HEADER,
   CONTRACT_VERSION,
   type About,
@@ -339,6 +340,8 @@ export async function demoFetch(url: string, init: { method?: string; body?: unk
       return answer(AVATARS);
     case "GET /usage":
       return answer(usage());
+    case "GET /connections":
+      return answer(Object.entries(CONNECTIONS).map(([connection, about]) => ({ connection, ...about, account: null })));
     case "GET /search":
       return answer(found(searchParams.get("text") ?? ""));
     case "PUT /push-token":

@@ -1,7 +1,7 @@
 import { Alert } from "react-native";
-import type { Agent } from "@server/contract";
+import type { Agent, Connected } from "@server/contract";
 import { disconnect } from "./api";
-import { deleteAgent } from "./state";
+import { deleteAgent, removeConnection } from "./state";
 
 /** Tells the person something didn't work, with the reason when there is one. */
 export function problem(title: string, failure: unknown): void {
@@ -16,6 +16,18 @@ export function confirmDelete(agent: Agent): void {
       text: "Delete",
       style: "destructive",
       onPress: () => void deleteAgent(agent.id).catch((failure) => problem("Couldn't delete it", failure)),
+    },
+  ]);
+}
+
+/** Asks before removing a connection, since every agent loses it until the person signs in to it again. */
+export function confirmRemoveConnection(connected: Connected): void {
+  Alert.alert(`Remove ${connected.name}?`, "None of your agents can use it until you connect it again.", [
+    { text: "Cancel", style: "cancel" },
+    {
+      text: "Remove",
+      style: "destructive",
+      onPress: () => void removeConnection(connected).catch((failure) => problem("Couldn't remove it", failure)),
     },
   ]);
 }

@@ -8,7 +8,7 @@
  * its own. The app sends its own in the same header, and the server refuses
  * to pair an app on another version.
  */
-export const CONTRACT_VERSION = 4;
+export const CONTRACT_VERSION = 5;
 export const CONTRACT_HEADER = "Sidebots-Contract";
 
 export type Sender = "person" | "agent" | "sidebots";
@@ -18,7 +18,8 @@ export type Status = "queued" | "running" | "done" | "failed";
  * safety check won't decide by itself. The ask is `waiting` until the person
  * answers, then `allowed` or `refused`. It is `unanswered` when the agent
  * stopped waiting first: the person took too long or sent a message instead,
- * or the turn ended.
+ * or the turn ended. An ask for a connection is `allowed` once the person has
+ * signed in to it.
  */
 export type Ask = "waiting" | "allowed" | "refused" | "unanswered";
 /**
@@ -29,9 +30,19 @@ export type Ask = "waiting" | "allowed" | "refused" | "unanswered";
  * matter, each a label and its value, as where a file is or who an email
  * goes to. `detail` is the thing itself, such as the command or the change,
  * which Allow lets happen in full. `why` is the provider's reason for not
- * deciding this one by itself.
+ * deciding this one by itself. An agent that needs one of the person's apps
+ * asks for it the same way: the `kind` is `connection`, `connection` is the
+ * app, and the person says yes by signing in to it.
  */
-export type Question = { kind: "command" | "page" | "file" | "tool"; title: string; what: string; facts: [label: string, value: string][]; detail: string; why?: string };
+export type Question = {
+  kind: "command" | "page" | "file" | "tool" | "connection";
+  title: string;
+  what: string;
+  facts: [label: string, value: string][];
+  detail: string;
+  why?: string;
+  connection?: Connection;
+};
 
 /** Text as a markdown code block. The fence is longer than any run of backticks inside it, so nothing in the text can close it. */
 export function fenced(text: string): string {
@@ -118,6 +129,30 @@ export type Model = { [P in Provider]: keyof (typeof PROVIDERS)[P]["models"] }[P
 export type Effort = { [P in Provider]: keyof (typeof PROVIDERS)[P]["efforts"] }[Provider];
 /** What a provider offers, read for an agent whichever provider it runs on: its name, and the names the app shows for its models and efforts. */
 export type Offered = { name: string; models: Partial<Record<Model, string>>; efforts: Partial<Record<Effort, string>> };
+
+/**
+ * The apps outside Sidebots that a person's agents can use as them, by id.
+ * Each has the name the apps show and what connecting it lets the agents do.
+ * A person connects one once, by signing in to it, and all their agents have
+ * it, whichever provider each runs on.
+ */
+export const CONNECTIONS = {
+  gmail: { name: "Gmail", allows: "Your agents can search, read and send your mail." },
+  calendar: { name: "Google Calendar", allows: "Your agents can read your calendar, and add, change and remove its events." },
+} as const;
+export type Connection = keyof typeof CONNECTIONS;
+/**
+ * A connection as the app lists it, with its name and what it allows, so an
+ * app lists one it has never heard of. `account` is the account the person
+ * signed in to it with, or null while it isn't connected.
+ */
+export type Connected = { connection: Connection; name: string; allows: string; account: string | null };
+/**
+ * Where a phone signs in to a connection: the page it opens, and the address
+ * that page goes to once the person has signed in. The phone hands the
+ * address it came back with to the server, which makes the connection.
+ */
+export type SignIn = { url: string; redirect: string };
 
 /**
  * `read_at` is the time up to which the person has read the chat. A `muted`

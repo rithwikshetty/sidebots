@@ -7,7 +7,7 @@ import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
 
 import { COLOR, PROVIDERS, USAGE_DAYS, betweenAgents, readableColor } from "./contract.ts";
-import type { About, Agent, AgentWithLatest, Ask, Avatar, Day, Found, Job, Limit, Memory, Message, Provider, PushToken, Question, Schedule, Sender, Status, TurnKind, Usage, Used } from "./contract.ts";
+import type { About, Agent, AgentWithLatest, Ask, Avatar, Connection, Day, Found, Job, Limit, Memory, Message, Provider, PushToken, Question, Schedule, Sender, Status, TurnKind, Usage, Used } from "./contract.ts";
 
 export type Person = { id: string; name: string };
 /** How a person's agents sign in to a provider: the provider's config folder of the person's own, which holds their login, rules, skills and sessions. */
@@ -16,6 +16,8 @@ export type Account = { person_id: string; provider: Provider; config_dir: strin
 export type Device = { id: string; person_id: string; name: string; paired_at: number };
 /** Where Apple delivers a phone's notifications, and the key, in base64, that only that phone can read them with. */
 export type PushTarget = PushToken & { notificationKey: string };
+/** What Sidebots keeps of a connection a person made: the account they signed in to the app with, and the token the app gave for acting as them from then on. */
+export type Kept = { account: string; token: string };
 /** A file as it arrives with a message. */
 export type Upload = { name: string; bytes: Uint8Array };
 /** What a message can carry besides its text: files, the message it answers, the job that sent it, when it is an ask, where the ask stands and what it asks, and the other agent when it is between two. */
@@ -235,6 +237,15 @@ export function openStore(home: string) {
     const saved = JSON.parse(readFileSync(apiKeysPath, "utf8")) as Record<string, string | Partial<Record<Provider, string>>>;
     return Object.fromEntries(Object.entries(saved).map(([personId, keys]) => [personId, typeof keys === "string" ? { claude: keys } : keys]));
   };
+  const connectionsPath = join(home, "connections.json");
+  /** Each person's connections, by the person's id and then by connection, for the people who have made one. */
+  const connections = (): Record<string, Partial<Record<Connection, Kept>>> => (existsSync(connectionsPath) ? JSON.parse(readFileSync(connectionsPath, "utf8")) : {});
+  /** Saves a file only this account can read. The file is swapped in whole, since the server reads it for a turn that may start while it is being saved. */
+  const swapIn = (path: string, contents: unknown) => {
+    const written = `${path}.new`;
+    writeFileSync(written, JSON.stringify(contents), { mode: 0o600 });
+    renameSync(written, path);
+  };
   const listeners = new Set<(change: Change) => void>();
   const changed = (change: Change) => listeners.forEach((listener) => listener(change));
 
@@ -351,9 +362,7 @@ export function openStore(home: string) {
 
     /**
      * Has the person's agents on a provider run on this API key from their
-     * next turn, or with no key, on the login in their config folder. The
-     * file is swapped in whole, since the server reads it for a turn that may
-     * start while a key is being saved.
+     * next turn, or with no key, on the login in their config folder.
      */
     setApiKey(personId: string, provider: Provider, key: string | null): void {
       const keys = apiKeys();
@@ -361,14 +370,27 @@ export function openStore(home: string) {
       if (key === null) delete theirs[provider];
       else theirs[provider] = key;
       keys[personId] = theirs;
-      const written = `${apiKeysPath}.new`;
-      writeFileSync(written, JSON.stringify(keys), { mode: 0o600 });
-      renameSync(written, apiKeysPath);
+      swapIn(apiKeysPath, keys);
     },
 
     /** The API key the person's agents on a provider run on. Without one, they use the login in the person's config folder. */
     apiKey(personId: string, provider: Provider): string | undefined {
       return apiKeys()[personId]?.[provider];
+    },
+
+    /** Keeps a connection the person made, for all their agents from their next turn, or forgets it. */
+    setConnection(personId: string, connection: Connection, kept: Kept | null): void {
+      const all = connections();
+      const theirs = { ...all[personId] };
+      if (kept === null) delete theirs[connection];
+      else theirs[connection] = kept;
+      all[personId] = theirs;
+      swapIn(connectionsPath, all);
+    },
+
+    /** What Sidebots keeps of a connection the person made. Nothing for one they haven't. */
+    connection(personId: string, connection: Connection): Kept | undefined {
+      return connections()[personId]?.[connection];
     },
 
     /** Adds an agent that runs on a provider, on the model and effort a new agent starts on there. */

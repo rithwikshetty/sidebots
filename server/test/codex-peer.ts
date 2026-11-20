@@ -69,7 +69,8 @@ if (process.argv[2] === "app-server") {
         if (words === "fail") return end("failed", undefined, "You've hit your usage limit. Upgrade to Pro, or try again at 3:37 PM.");
         if (words.startsWith("tool ")) {
           const [, tool, text] = words.split(" ");
-          const { contentItems, success }: { contentItems: { text: string }[]; success: boolean } = await ask("item/tool/call", { tool, arguments: { text } });
+          // The one word is whichever of the two the tool takes.
+          const { contentItems, success }: { contentItems: { text: string }[]; success: boolean } = await ask("item/tool/call", { tool, arguments: { text, id: text } });
           return end("completed", `${success ? "Tool said" : "Tool failed"}: ${contentItems[0].text}`);
         }
         if (words === "command") {

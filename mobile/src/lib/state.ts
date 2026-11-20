@@ -8,7 +8,8 @@ import { fetch as streamingFetch } from "expo/fetch";
 import { File } from "expo-file-system";
 import { Image } from "expo-image";
 import Storage from "expo-sqlite/kv-store";
-import type { About, Agent, AgentWithLatest, Avatar, Effort, Found, Message, Model, Provider, StreamEvent, Usage } from "@server/contract";
+import * as WebBrowser from "expo-web-browser";
+import type { About, Agent, AgentWithLatest, Avatar, Connected, Connection, Effort, Found, Message, Model, Provider, SignIn, StreamEvent, Usage } from "@server/contract";
 import { ApiError, avatarSheet, behind, isPaired, onPairing, remote, request, unpair, type Behind } from "./api";
 import { demoFetch, isDemo } from "./demo";
 import type { Picked } from "./files";
@@ -21,6 +22,8 @@ type State = {
   about: Record<string, About>;
   /** Where the person's plan or API credit goes, as the computer last said. Null until the phone has asked. */
   usage: Usage | null;
+  /** The apps the person's agents can use as them, as the computer last listed them. Null until the phone has asked. */
+  connections: Connected[] | null;
   /**
    * Changes to agents that the server hasn't taken yet. The app shows them
    * at once and keeps them on the phone, over whatever the server says, until
@@ -48,7 +51,7 @@ function saved(): Partial<State> {
   }
 }
 
-const EMPTY = { agents: [], messages: {}, avatars: [], about: {}, usage: null, pending: {} };
+const EMPTY = { agents: [], messages: {}, avatars: [], about: {}, usage: null, connections: null, pending: {} };
 
 let state: State = { ...EMPTY, ...saved(), online: true, behind: null };
 const listeners = new Set<() => void>();
@@ -98,6 +101,10 @@ export function useAbout(agentId: string): About | undefined {
 
 export function useUsage(): Usage | null {
   return useSyncExternalStore(subscribe, () => state.usage);
+}
+
+export function useConnections(): Connected[] | null {
+  return useSyncExternalStore(subscribe, () => state.connections);
 }
 
 export function useOnline(): boolean {
@@ -331,6 +338,34 @@ export async function loadAbout(agentId: string): Promise<void> {
 /** Fetches where the person's plan or API credit goes: what their agents used lately, and what is left of their plan. */
 export async function loadUsage(): Promise<void> {
   set({ usage: await request<Usage>("/usage") });
+}
+
+/** Fetches the apps the person's agents can use as them, and which are connected. */
+export async function loadConnections(): Promise<void> {
+  set({ connections: await request<Connected[]>("/connections") });
+}
+
+/** Keeps a connection as the computer now says it stands, in the list the phone has. */
+function keepConnection(now: Connected): void {
+  if (state.connections) set({ connections: state.connections.map((each) => (each.connection === now.connection ? now : each)) });
+}
+
+/**
+ * Connects one of the person's apps for all their agents. The app's own
+ * sign-in opens in the sheet iOS has for one, and the computer makes the
+ * connection from the address the sign-in ends on. A person who closes the
+ * sheet has connected nothing.
+ */
+export async function connect(connection: Connection): Promise<void> {
+  const { url, redirect } = await request<SignIn>(`/connections/${connection}/sign-in`, { method: "POST" });
+  const ended = await WebBrowser.openAuthSessionAsync(url, redirect);
+  if (ended.type === "success") keepConnection(await request<Connected>(`/connections/${connection}`, { method: "PUT", body: { url: ended.url } }));
+}
+
+/** Removes a connection, so none of the person's agents can use it. */
+export async function removeConnection(connected: Connected): Promise<void> {
+  await request(`/connections/${connected.connection}`, { method: "DELETE" });
+  keepConnection({ ...connected, account: null });
 }
 
 export async function removeJob(agentId: string, jobId: string): Promise<void> {

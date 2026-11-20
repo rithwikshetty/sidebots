@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { Pressable, StyleSheet, Text, View } from "react-native";
 import Animated, { useAnimatedStyle, withTiming } from "react-native-reanimated";
-import { ChevronRight, FilePenLine, Globe, Plug, Terminal } from "lucide-react-native";
+import { Cable, ChevronRight, FilePenLine, Globe, Plug, Terminal } from "lucide-react-native";
 import { fenced, type Question } from "@server/contract";
 import { AvatarView } from "@/components/AvatarView";
 import { Markdown } from "@/components/Markdown";
@@ -10,9 +10,9 @@ import { EASE, HIDE, SHOW } from "@/lib/motion";
 import { useAgent } from "@/lib/state";
 import { useTheme } from "@/lib/theme";
 
-const ICONS = { command: Terminal, page: Globe, file: FilePenLine, tool: Plug };
-// What an ask of each kind keeps behind its tap, as the words after "Show" and "Hide".
-const DETAIL = { command: "the command", page: "the address", file: "the file", tool: "everything it was given" };
+const ICONS = { command: Terminal, page: Globe, file: FilePenLine, tool: Plug, connection: Cable };
+// What an ask of each kind keeps behind its tap, as the words after "Show" and "Hide". An ask for a connection keeps nothing there.
+const DETAIL = { command: "the command", page: "the address", file: "the file", tool: "everything it was given", connection: "" };
 
 /**
  * What an agent asks to do, inside its bubble: the sort of thing it is, this

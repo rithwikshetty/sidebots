@@ -10,6 +10,7 @@ The full design is in [docs/specs/2026-11-15-sidebots.md](docs/specs/2026-11-15-
 
 - **Agents act on their own.** Each runs under its provider's own safety check, which decides what is safe to run, and nobody is asked about those actions. On Claude Code that is auto mode. An action it can't decide on, the agent asks its person about on their phone. It leaves the action undone when they say no, or don't answer within half an hour. On Codex it is the sandbox, which lets an agent write in its own folder and read the rest of the machine, and Codex's reviewer, a model that allows or refuses whatever needs more, such as the network. An agent it refuses says so in its reply.
 - **Agents can reach everything the server's user account can.** Every agent runs as the account that started the server, and can read and change that account's files, run commands as it, and use the skills and connections each person has in their providers.
+- **A connection is for all your agents.** An app you connect in Sidebots, such as Gmail, can be read and acted in as you by every one of your agents. An agent's mail and calendar changes go through its provider's safety check on Claude Code, and to your phone for a yes or no on Codex.
 - **Share a server only with people you would trust with that machine.** Each person sees only their own agents in the app, but all agents run as the same account.
 - **A pairing code lets a phone in.** The server has no passwords. It answers only phones that have paired with it, and a phone pairs by scanning a code you make for one person. Whoever scans the code reaches that person's agents, so show it only to them.
 
@@ -80,7 +81,7 @@ pnpm start
 
 The server listens on `127.0.0.1:4317` only. When it starts, it registers with the relay, which gives the machine an address of its own, such as `k3v9x2m8q1w7p4ta.sidebots.app`, and a Cloudflare Tunnel to it. The server keeps `cloudflared` running with the tunnel, and phones reach the machine at that address from anywhere, with nothing to change on the router. The server prints the address as it starts. It finds `cloudflared` on the `PATH`, or at the path in `SIDEBOTS_CLOUDFLARED`.
 
-Two settings change where things live: `PORT` for the port, and `SIDEBOTS_HOME` for the data folder, which is `~/.sidebots` unless you set it. That folder holds the database, each agent's home folder with its instructions, memory and attachments, the avatars, the API keys, and the machine's key, address and tunnel token. If you set `SIDEBOTS_HOME` or `PORT` for the server, set them for its other commands too.
+Two settings change where things live: `PORT` for the port, and `SIDEBOTS_HOME` for the data folder, which is `~/.sidebots` unless you set it. That folder holds the database, each agent's home folder with its instructions, memory and attachments, the avatars, the API keys, each person's connections, and the machine's key, address and tunnel token. If you set `SIDEBOTS_HOME` or `PORT` for the server, set them for its other commands too.
 
 To keep the server running on a Mac, use a launchd agent with `RunAtLoad` and `KeepAlive` set, `server/` as its working directory, and the full path to `node` running `src/main.ts`. Keep the code outside `~/Downloads`, `~/Documents` and `~/Desktop`, which macOS doesn't let a background service read.
 
@@ -137,13 +138,30 @@ Usage, in the app's side menu, shows where either one goes: what is left of a su
 
 Anthropic's terms decide which you may use. A subscription is for the subscriber's own use. For a product built on the Agent SDK, as Sidebots is, Anthropic [asks for API keys](https://code.claude.com/docs/en/agent-sdk/overview) and doesn't allow Claude sign-ins to be offered to its users without its approval. OpenAI's terms decide the same for a ChatGPT sign-in. So read the terms before you set Sidebots up for anyone but yourself, and when in doubt give each person an API key.
 
+## Connections
+
+A connection is an app outside Sidebots that your agents use as you. Sidebots has two, Gmail and Google Calendar. You connect one once and all your agents have it, on either provider, on a subscription or an API key.
+
+Connect one from Connections in the app's side menu, or tell an agent to: "connect my Gmail". Either way a Connect button opens Google's own sign-in on your phone. Once you have signed in and allowed what it asks for, the agents can search, read and send your mail, or read and change your calendar. Remove a connection from the same list.
+
+Sidebots never sees your password. Google gives it a token for acting as you, which the server keeps in `~/.sidebots/connections.json`, readable only by your account. The token goes from Google to your machine and nowhere else: the relay and the phone never hold it. What an agent reads from an app does go to the model it runs on, as everything an agent reads does.
+
+Signing in to Google needs a client id, which says to Google which app is asking. Make one in a [Google Cloud project](https://console.cloud.google.com/auth/clients) of your own: a client of the type iOS, for your app's bundle identifier. Turn on the Gmail API and the Google Calendar API in the project, add the scopes `gmail.readonly`, `gmail.send` and `calendar.events` to its consent screen, and start the server with the client id in `SIDEBOTS_GOOGLE_CLIENT`. While the project is in testing, only the Google accounts you list as test users can sign in, and Google ends each sign-in after seven days. A project open to everyone needs Google's review, since it asks to read mail.
+
+Adding a connection takes two things:
+
+- An entry in `CONNECTIONS` in `server/src/contract.ts`, with the name the apps show and what connecting it lets the agents do.
+- An entry in `APPS` in `server/src/connections.ts`, with whose app it is, what its sign-in asks for, and its tools. Each tool has a name, what the agent is told it does, what it takes, and what it does. A tool that changes something in the app, or speaks as the person, is marked `acts`. An app of a maker that Sidebots doesn't sign in with yet also takes an entry in `MAKERS` there, with the maker's pages for OAuth.
+
+The app lists whatever connections the server has, so it needs no change.
+
 ## Providers
 
 A provider is a program that runs agents: Claude Code or Codex. Each agent runs on one, and each person signs in to each provider their agents use with a config folder of their own. Sidebots carries no provider's program. The server looks for each on the PATH of your shell, then in the folders their installers use, and runs the one it finds when that is no older than its driver works with. Adding a provider takes three things:
 
 - An entry in `PROVIDERS` in `server/src/contract.ts`, with the name the apps show, its models and levels of effort, and the file its agents read their instructions from. The phone shows an agent's models from there.
 - An entry in `PROGRAMS` in `server/src/programs.ts`, with the command a terminal runs it by, the oldest version its driver works with, its maker's installer, its config folder, and its commands to sign in and to say whether it is signed in.
-- A driver, the module that runs a turn on the program: `server/src/claude.ts` is Claude Code's and `server/src/codex.ts` is Codex's. It hands the program the agent's tools from `toolsFor` in `server/src/runner.ts`, says what the session has cost, says where the limits of the person's plan stand as a turn runs and when it is asked, ends a turn the person stops with its session kept, puts the program's failures in words for the person, and removes the program's sessions when an agent is deleted. `server/src/main.ts` passes each driver to the queue.
+- A driver, the module that runs a turn on the program: `server/src/claude.ts` is Claude Code's and `server/src/codex.ts` is Codex's. It hands the program the agent's tools from `toolsFor` in `server/src/runner.ts`, has a tool that acts as the person outside the machine judged by the program's safety check or allowed by the person first, says what the session has cost, says where the limits of the person's plan stand as a turn runs and when it is asked, ends a turn the person stops with its session kept, puts the program's failures in words for the person, and removes the program's sessions when an agent is deleted. `server/src/main.ts` passes each driver to the queue.
 
 The Mac app sets a person up on either, which takes a few lines in `mac/Sources/Provider.swift`: the app's words for the provider, and how its sign-in reads.
 

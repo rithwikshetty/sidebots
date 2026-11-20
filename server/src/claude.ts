@@ -19,7 +19,7 @@ import {
 } from "@anthropic-ai/claude-agent-sdk";
 import type { Limit, Question } from "./contract.ts";
 import { environment, inFolder, program } from "./programs.ts";
-import { SHOW, short, toolsFor, type Driver, type Prompt, type RunTurn } from "./runner.ts";
+import { SHOW, short, toolQuestion, toolsFor, type Driver, type Prompt, type RunTurn } from "./runner.ts";
 
 // Added to Claude Code's own prompt. An ask leads with a command's `description`, which Claude Code leaves the agent free to skip, and agents skip it unless told.
 const DESCRIBE_COMMANDS =
@@ -160,20 +160,10 @@ export function question(toolName: string, input: Record<string, unknown>, conne
     const title = input.replace_all === true ? "Change every match in a file" : "Change a file";
     return ask("file", title, basename(path), `${path}\n\n${lines("-", before)}\n${lines("+", after)}`, [where, ["Changes", count(before.length > after.length ? before : after)]]);
   }
-  // A connection's tool is named mcp__<connection>__<tool>. What it was given in a few words is its facts, and all of it is its detail.
-  const name = connection ? toolName.split("__").slice(2).join("__") : toolName;
-  const brief = Object.entries(input).flatMap(([key, value]): Question["facts"] => {
-    const text = typeof value === "string" ? value : typeof value === "number" || typeof value === "boolean" ? String(value) : "";
-    return text && text.length <= FACT_CHARS && !text.includes("\n") ? [[words(key), text]] : [];
-  });
-  return ask("tool", connection ? `Use ${connection}` : "Use a tool", words(name), JSON.stringify(input, null, 2), brief.slice(0, FACTS));
+  // A connection's tool is named mcp__<connection>__<tool>.
+  const { title, what, facts, detail } = toolQuestion(connection, connection ? toolName.split("__").slice(2).join("__") : toolName, input);
+  return ask("tool", title, what, detail, facts);
 }
-
-// The most facts a tool's ask lists from what it was given, and the longest a value among them can be.
-const FACTS = 4;
-const FACT_CHARS = 80;
-/** A name as code writes one, as words: `send_email` is "Send email". */
-const words = (name: string) => name.replace(/[_-]+/g, " ").trim().replace(/^./, (first) => first.toUpperCase());
 
 /**
  * Runs a turn through Claude Code. A message the person sends while the turn
@@ -198,7 +188,7 @@ const runTurn: RunTurn = async (turn) => {
   const tools = toolsFor(turn);
   const sidebots = createSdkMcpServer({
     name: "sidebots",
-    tools: tools.map((each) => tool(each.name, each.description, each.input, async (input) => text(each.run(input)))),
+    tools: tools.map((each) => tool(each.name, each.description, each.input, async (input) => text(await each.run(input)))),
   });
   const input = inbox();
   // Sent to Claude Code and not yet answered.
@@ -260,7 +250,7 @@ const runTurn: RunTurn = async (turn) => {
       permissionMode: "auto",
       // The agent asks the person in its reply, as anyone does in a chat.
       disallowedTools: ["AskUserQuestion"],
-      // Auto mode asks here when its classifier can't decide, and the person answers on their phone.
+      // Auto mode judges every tool that isn't allowed above, a checked one among them. It asks here when its classifier can't decide, and the person answers on their phone.
       canUseTool: async (toolName, input, { signal, mcpServer, decisionReason }) => {
         const answer = await ask(question(toolName, input, mcpServer?.name, decisionReason), signal);
         return answer.allowed ? { behavior: "allow", updatedInput: input } : { behavior: "deny", message: answer.words };
