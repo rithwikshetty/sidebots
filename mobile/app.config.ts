@@ -11,7 +11,7 @@ const MICROPHONE_PERMISSION = "Sidebots listens while you dictate a message, and
 const config: ExpoConfig = {
   name: development ? "Sidebots Dev" : "Sidebots",
   slug: "sidebots",
-  version: "1.0.0",
+  version: "1.0.1",
   scheme: development ? "sidebots-dev" : "sidebots",
   orientation: "portrait",
   icon: development ? "./assets/icon-dev.png" : "./assets/icon.png",
