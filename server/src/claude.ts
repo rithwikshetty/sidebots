@@ -128,7 +128,8 @@ function inbox() {
  * the `description` Claude Code lets an agent give with a command, and with
  * the command's first line when the agent gave none. A page leads with its
  * site, a file with its name, and a connection's tool with what it is called. `connection` is the
- * connection in the person's Claude Code that the tool comes from, when it comes from one.
+ * connection the tool comes from, when it comes from one: one in the person's Claude Code, or one
+ * made in Sidebots whose maker serves its tools.
  */
 export function question(toolName: string, input: Record<string, unknown>, connection: string | undefined, why: string | undefined): Question {
   const given = (name: string) => (typeof input[name] === "string" ? input[name] : "");
