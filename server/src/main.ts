@@ -253,8 +253,8 @@ if (process.argv[2] === "status") {
 }
 
 store.installStarterAvatars(join(dirname(fileURLToPath(import.meta.url)), "..", "..", "avatars"));
-// The client id Google gave this Sidebots, which a person's sign-in to a Google app names.
-const connections = createConnections(store, { google: process.env.SIDEBOTS_GOOGLE_CLIENT });
+// The client id a person's sign-in to a Google app names: the one Google gave the Sidebots app on the App Store, or the one a build of your own names.
+const connections = createConnections(store, { google: process.env.SIDEBOTS_GOOGLE_CLIENT ?? "161867342001-s22m1k5cbkf1vg7s9qhsb66cqhs12ehh.apps.googleusercontent.com" });
 const queue = createQueue(store, { claude, codex }, connections);
 for (const agentId of store.requeueInterrupted()) void queue.kick(agentId);
 queue.startClock();

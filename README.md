@@ -146,7 +146,9 @@ Connect one from Connections in the app's side menu, or tell an agent to: "conne
 
 Sidebots never sees your password. Google gives it a token for acting as you, which the server keeps in `~/.sidebots/connections.json`, readable only by your account. An agent's own commands can read that file, as they can any of your account's files, and on a server you share that is every person's agents. The token goes from Google to your machine and nowhere else: the relay and the phone never hold it. What an agent reads from an app does go to the model it runs on, as everything an agent reads does.
 
-Signing in to Google needs a client id, which says to Google which app is asking. Make one in a [Google Cloud project](https://console.cloud.google.com/auth/clients) of your own: a client of the type iOS, for your app's bundle identifier. Turn on the Gmail API and the Google Calendar API in the project, add the scopes `gmail.readonly`, `gmail.send` and `calendar.events` to its consent screen, and start the server with the client id in `SIDEBOTS_GOOGLE_CLIENT`. While the project is in testing, only the Google accounts you list as test users can sign in, and Google ends each sign-in after seven days. A project open to everyone needs Google's review, since it asks to read mail.
+A sign-in to Google names a client id, which says to Google which app is asking. The server names the one of the Sidebots app on the App Store. Google hasn't reviewed that app yet, so it signs in only the Google accounts its project lists as test users, and Google ends each sign-in after seven days.
+
+Your own build signs in with a client of your own. In a [Google Cloud project](https://console.cloud.google.com/auth/clients), make a client of the type iOS for your app's bundle identifier, turn on the Gmail API and the Google Calendar API, add the scopes `gmail.readonly`, `gmail.send` and `calendar.events` to the consent screen, and list yourself as a test user. Start the server with the client id in `SIDEBOTS_GOOGLE_CLIENT`. A project open to everyone needs Google's review, since it asks to read mail.
 
 Adding a connection takes three things:
 
