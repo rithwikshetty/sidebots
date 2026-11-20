@@ -18,6 +18,7 @@ import { serve } from "@hono/node-server";
 import qrcode from "qrcode-terminal";
 import { openStore, type Person } from "./store.ts";
 import { CONTRACT_HEADER, PROVIDERS, type Provider } from "./contract.ts";
+import { createConnections } from "./connections.ts";
 import { createQueue } from "./runner.ts";
 import { claude } from "./claude.ts";
 import { codex } from "./codex.ts";
@@ -270,7 +271,9 @@ if (process.argv[2] === "status") {
 }
 
 store.installStarterAvatars(join(dirname(fileURLToPath(import.meta.url)), "..", "..", "avatars"));
-const queue = createQueue(store, { claude, codex });
+// The client id a person's sign-in to a Google app names: the one Google gave the Sidebots app on the App Store, or the one a build of your own names.
+const connections = createConnections(store, { google: process.env.SIDEBOTS_GOOGLE_CLIENT ?? "161867342001-s22m1k5cbkf1vg7s9qhsb66cqhs12ehh.apps.googleusercontent.com" });
+const queue = createQueue(store, { claude, codex }, connections);
 for (const agentId of store.requeueInterrupted()) void queue.kick(agentId);
 queue.startClock();
 
@@ -292,6 +295,6 @@ if (relayOrigin !== "off") {
 // The machine's name as its owner knows it. macOS keeps one apart from the network's name for the machine.
 const machine = process.platform === "darwin" ? execFileSync("scutil", ["--get", "ComputerName"], { encoding: "utf8" }).trim() : hostname();
 // Local only. The tunnel, or `tailscale serve`, brings the phone's requests here.
-serve({ fetch: createApi(store, queue, machine, relayOrigin !== "off").fetch, hostname: "127.0.0.1", port }, () => {
+serve({ fetch: createApi(store, queue, connections, machine, relayOrigin !== "off").fetch, hostname: "127.0.0.1", port }, () => {
   console.log(`Sidebots is listening on http://127.0.0.1:${port}, with data in ${home}`);
 });

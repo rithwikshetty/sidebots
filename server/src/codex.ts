@@ -11,7 +11,7 @@ import { createInterface } from "node:readline";
 import { z } from "zod";
 import { PROVIDERS, type Limit, type Question } from "./contract.ts";
 import { environment, inFolder, later, program } from "./programs.ts";
-import { SHOW, short, toolsFor, type Driver, type Prompt, type RunTurn } from "./runner.ts";
+import { SHOW, short, toolQuestion, toolsFor, type Driver, type Prompt, type RunTurn } from "./runner.ts";
 
 // Added to Codex's own prompt. Codex keeps what it remembers in its config folder, for everything that runs there, so an agent keeps its own in its folder, in the files its page in the app shows.
 const MEMORY = `You have a memory that outlives every session: the folder \`memory/\` in your home folder. Each memory is a file of its own there, named for what it is about and ending in \`.md\`. It starts with a name and a one-line description between \`---\` lines, then the memory itself:
@@ -298,12 +298,19 @@ const runTurn = (start: () => Promise<Start>): RunTurn => async (turn) => {
       : codex.request<{ thread: { id: string } }>("thread/start", { ...settings, dynamicTools, ephemeral: !keepSession }));
     threadId = thread.id;
 
-    // Every tool runs as it is called. Codex's sandbox lets an agent read any file on the machine, which is all a checked tool does there.
-    codex.serve<{ tool: string; arguments: unknown }>("item/tool/call", ({ tool, arguments: input }) => {
+    // A tool that reads runs as it is called, since Codex's sandbox lets an agent read any file on the machine. Codex's reviewer judges only what an agent runs there, so the person is asked before a tool acts as them outside it.
+    codex.serve<{ tool: string; arguments: unknown }>("item/tool/call", async ({ tool, arguments: input }, withdrawn) => {
       const called = tools.find((each) => each.name === tool);
       const given = called && z.object(called.input).safeParse(input);
       if (!given) return said(`You have no tool called ${tool}.`, false);
-      return given.success ? said(called.run(given.data)) : said(z.prettifyError(given.error), false);
+      if (!given.success) return said(z.prettifyError(given.error), false);
+      if (called.checked === "acts") {
+        const answer = await ask(toolQuestion("Sidebots", called.name, given.data), withdrawn);
+        if (!answer.allowed) return said(answer.words, false);
+        // A yes that comes once the person has stopped the turn is too late.
+        if (stop.signal.aborted) return said("The turn was stopped.", false);
+      }
+      return said(await called.run(given.data));
     });
 
     // The files Codex is about to change, by the step that changes them, which its ask names.

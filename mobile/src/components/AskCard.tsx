@@ -1,18 +1,19 @@
 import { useState } from "react";
 import { Pressable, StyleSheet, Text, View } from "react-native";
 import Animated, { useAnimatedStyle, withTiming } from "react-native-reanimated";
-import { ChevronRight, FilePenLine, Globe, Plug, Terminal } from "lucide-react-native";
+import { Cable, ChevronRight, FilePenLine, Globe, Plug, Terminal } from "lucide-react-native";
 import { fenced, type Question } from "@server/contract";
 import { AvatarView } from "@/components/AvatarView";
+import { ConnectionLogo } from "@/components/ConnectionLogo";
 import { Markdown } from "@/components/Markdown";
 import { haptics } from "@/lib/haptics";
 import { EASE, HIDE, SHOW } from "@/lib/motion";
-import { useAgent } from "@/lib/state";
+import { useAgent, useConnections } from "@/lib/state";
 import { useTheme } from "@/lib/theme";
 
-const ICONS = { command: Terminal, page: Globe, file: FilePenLine, tool: Plug };
-// What an ask of each kind keeps behind its tap, as the words after "Show" and "Hide".
-const DETAIL = { command: "the command", page: "the address", file: "the file", tool: "everything it was given" };
+const ICONS = { command: Terminal, page: Globe, file: FilePenLine, tool: Plug, connection: Cable };
+// What an ask of each kind keeps behind its tap, as the words after "Show" and "Hide". An ask for a connection keeps nothing there.
+const DETAIL = { command: "the command", page: "the address", file: "the file", tool: "everything it was given", connection: "" };
 
 /**
  * What an agent asks to do, inside its bubble: the sort of thing it is, this
@@ -20,7 +21,8 @@ const DETAIL = { command: "the command", page: "the address", file: "the file", 
  * asking. The thing itself, such as the command, opens on a tap, so a person
  * reads words first and can still see all that Allow lets happen. `from` is
  * the agent that asks, for an ask shown in another agent's chat, and the card
- * then says whose it is.
+ * then says whose it is. An ask for a connection wears the connection's logo,
+ * once the phone has the computer's list of them.
  */
 export function AskCard({ question, from }: { question: Question; from?: string }) {
   const theme = useTheme();
@@ -28,6 +30,7 @@ export function AskCard({ question, from }: { question: Question; from?: string 
   const [open, setOpen] = useState(false);
   const turned = useAnimatedStyle(() => ({ transform: [{ rotate: withTiming(open ? "90deg" : "0deg", EASE) }] }));
   const Icon = ICONS[question.kind];
+  const logo = useConnections()?.find((each) => each.connection === question.connection)?.logo;
   const toggle = () => {
     haptics.select();
     setOpen((shown) => !shown);
@@ -41,7 +44,7 @@ export function AskCard({ question, from }: { question: Question; from?: string 
         </View>
       ) : null}
       <View style={styles.kind}>
-        <Icon size={14} strokeWidth={2.25} color={theme.ink2} />
+        {logo ? <ConnectionLogo logo={logo} size={14} /> : <Icon size={14} strokeWidth={2.25} color={theme.ink2} />}
         <Text style={[styles.small, { color: theme.ink2 }]}>{question.title}</Text>
       </View>
       <Text selectable style={[styles.what, { color: theme.ink }]}>

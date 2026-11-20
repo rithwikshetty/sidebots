@@ -3,8 +3,9 @@
 
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
-import { MESSAGE_BYTES, PROVIDERS, fenced, scheduleWords } from "./contract.ts";
-import type { Agent, Ask, Effort, Found, Job, Limit, Message, Model, Provider, Question, Schedule, TurnKind } from "./contract.ts";
+import { CONNECTIONS, MESSAGE_BYTES, PROVIDERS, fenced, scheduleWords } from "./contract.ts";
+import type { Agent, Ask, Connection, Effort, Found, Job, Limit, Message, Model, Provider, Question, Schedule, TurnKind } from "./contract.ts";
+import { CONNECTION_TOOLS, type Connections } from "./connections.ts";
 import type { Person, Store, Upload } from "./store.ts";
 
 /** A job as an agent asks for one: what to do on each run, and one of three ways to say when. */
@@ -58,6 +59,10 @@ export type Turn = {
   /** The agent's tools for the person's other agents: their names, and a message to one of them. Each answers in words the agent reads. */
   listAgents: () => string;
   askAgent: (name: string, text: string) => string;
+  /** Asks the person to connect one of their apps, with a card that takes them through its sign-in, and waits for them. Answers in words the agent reads. */
+  connect: (connection: Connection) => Promise<string>;
+  /** Uses a tool of one of the person's connections as them. Answers in words the agent reads. */
+  useConnection: (tool: string, input: unknown) => Promise<string>;
   /** Asks the person before the agent does something, and waits for their answer. `withdrawn` aborts when the provider no longer wants one. */
   ask: (question: Question, withdrawn: AbortSignal) => Promise<Answer>;
   /** The provider says where limits of the person's plan stand. */
@@ -102,17 +107,38 @@ export type Drivers = Record<Provider, Driver>;
 /**
  * A tool Sidebots gives the agent: its name, what the agent is told it does,
  * what it takes, and what it does, in words the agent reads. A tool that is
- * `checked` reaches the machine's files, so the provider's safety check judges
- * each call to it, as it does the agent's own actions. The rest always run.
+ * `checked` is one a driver doesn't just run: it `reads` the machine's files,
+ * or it `acts` as the person outside the machine, as sending a mail does. The
+ * rest always run.
  */
 export type Tool<Input extends z.ZodRawShape = z.ZodRawShape> = {
   name: string;
   description: string;
-  checked?: true;
+  checked?: "reads" | "acts";
   input: Input;
-  run(input: z.infer<z.ZodObject<Input>>): string;
+  run(input: z.infer<z.ZodObject<Input>>): string | Promise<string>;
 };
 const define = <Input extends z.ZodRawShape>(tool: Tool<Input>): Tool => tool as Tool;
+
+// The most facts a tool's ask lists from what it was given, and the longest a value among them can be.
+const FACTS = 4;
+const FACT_CHARS = 80;
+/** A name as code writes one, as words: `send_email` is "Send email". */
+const words = (name: string) => name.replace(/[_-]+/g, " ").trim().replace(/^./, (first) => first.toUpperCase());
+
+/**
+ * A call to a tool, in the parts the person reads to say yes or no: `from` is
+ * whose tool it is, when it is somebody's, and the tool's name is what it
+ * does. What it was given in a few words is its facts, a short list as its
+ * items in a line, and all of it is its detail.
+ */
+export function toolQuestion(from: string | undefined, name: string, input: Record<string, unknown>): Question {
+  const facts = Object.entries(input).flatMap(([key, value]): Question["facts"] => {
+    const text = Array.isArray(value) && value.every((item) => typeof item === "string") ? value.join(", ") : typeof value === "string" || typeof value === "number" || typeof value === "boolean" ? String(value) : "";
+    return text && text.length <= FACT_CHARS && !text.includes("\n") ? [[words(key), text]] : [];
+  });
+  return { kind: "tool", title: from ? `Use ${from}` : "Use a tool", what: words(name), facts: facts.slice(0, FACTS), detail: JSON.stringify(input, null, 2) };
+}
 
 /**
  * Added to every provider's own prompt: when a reply comes with something to
@@ -166,10 +192,19 @@ export function toolsFor(turn: Turn): Tool[] {
       name: "send_files",
       description:
         "Send the person files: a photo, a chart, a PDF, anything you made or found for them. The files go with the next message you send, which is your reply unless you send an update first, and show above its text: a picture as a picture, a page as a page, any other file as a card that opens it. Use it whenever the person should have the file itself and not only your words about it. Up to 95 MB to a message. A file whose name ends in .html is a page: it is drawn in the chat and opens full screen, so use one for what words can't carry, such as a chart, a table or a layout. Write it as one file for a phone's width, with its styles and scripts inside it. A picture goes inside it too, or stays on the web as an https address. The chat shows the file's name above the page as its title, so name it as one, such as `Flats in Brunswick.html`, and give the page no title of its own and no space around its edges. The chat shows the top of a long page until the person opens it, so what matters most goes first. The page is given the chat's background and text colour, which change between light and dark, so set neither yourself. Colour the rest with the CSS variables it is also given: var(--ink) for text, var(--ink2) for quiet text, var(--line) for rules, var(--field) for a fill behind something, and var(--tint) for the one thing to pick out. Any colour of your own has to read on both white and black.",
-      checked: true,
+      checked: "reads",
       input: { paths: z.array(z.string()).describe("Each file's path, in full or from your home folder") },
       run: ({ paths }) => turn.sendFiles(paths),
     }),
+    define({
+      name: "connect",
+      description: `Connect one of the person's apps, so that you and their other agents can use it as them: ${Object.entries(CONNECTIONS)
+        .map(([id, { name }]) => `\`${id}\` for ${name}`)
+        .join(", ")}. It puts a card in the chat that takes the person through the app's own sign-in, and waits for them. Use it when they ask you to connect an app, or when one of an app's tools answers that it isn't connected.`,
+      input: { app: z.enum(Object.keys(CONNECTIONS) as [Connection, ...Connection[]]).describe("The app to connect") },
+      run: ({ app }) => turn.connect(app),
+    }),
+    ...CONNECTION_TOOLS.map(({ name, description, checked, input }) => define({ name, description, checked, input, run: (given) => turn.useConnection(name, given) })),
     ...(sendUpdate
       ? [
           define({
@@ -323,7 +358,7 @@ function fromAgent(message: Message, person: Person, { recent, quoted }: { recen
  * the same way, so each agent's turn ends before the other's begins and
  * neither holds a turn open while it waits.
  */
-export function createQueue(store: Store, drivers: Drivers, now: () => number = Date.now) {
+export function createQueue(store: Store, drivers: Drivers, connections: Connections, now: () => number = Date.now) {
   const busy = new Map<string, Promise<void>>();
   // What stops the turn each working agent is running.
   const stops = new Map<string, AbortController>();
@@ -331,8 +366,8 @@ export function createQueue(store: Store, drivers: Drivers, now: () => number = 
   const removed = new Set<string>();
   // For an agent running a turn the person can talk to, what to call when they send another message.
   const arrivals = new Map<string, () => void>();
-  // The asks that wait for the person, by the message that asks: whose agent's it is, what to call with the person's answer, and what closes it unanswered, with what the agent is told.
-  const asks = new Map<string, { agentId: string; answer: (allow: boolean) => void; close: (words: string) => void }>();
+  // The asks that wait for the person, by the message that asks: whose agent's it is, the connection it asks for when it asks for one, what to call with the person's answer, and what closes it unanswered, with what the agent is told.
+  const asks = new Map<string, { agentId: string; connection?: Connection; answer: (allow: boolean) => void; close: (words: string) => void }>();
   // The last time each person's provider was asked where the limits of their plan stand: when, and the ask itself, which ends once what it said is kept.
   const limitsAsked = new Map<string, { at: number; done: Promise<void> }>();
   // The logins a provider last said are API keys, each as the person and the provider.
@@ -387,6 +422,7 @@ export function createQueue(store: Store, drivers: Drivers, now: () => number = 
             withdrawn.addEventListener("abort", late);
             asks.set(message.id, {
               agentId: agent.id,
+              connection: question.connection,
               answer: (allow) => settle(allow ? "allowed" : "refused", `${person.name} said no to this. Don't do it, or the same thing another way. Finish the rest and say in your reply what you left out.`),
               close: (words) => settle("unanswered", words),
             });
@@ -433,6 +469,14 @@ export function createQueue(store: Store, drivers: Drivers, now: () => number = 
             void kick(other.id);
             return `Sent to ${other.name}. Its answer will come to you as a message, in a turn of its own. Don't wait for it here: end your reply now, and say in a line that you've asked ${other.name}.`;
           },
+          connect: async (connection) => {
+            const { name, allows } = CONNECTIONS[connection];
+            const already = connections.account(person.id, connection);
+            if (already) return `${name} is already connected, as ${already}.`;
+            const answer = await ask({ kind: "connection", connection, title: `Connect ${name}`, what: allows, facts: [], detail: "" }, stop.signal);
+            return answer.allowed ? `${name} is connected, as ${connections.account(person.id, connection)}. You and ${person.name}'s other agents can use it from now on.` : answer.words;
+          },
+          useConnection: (tool, input) => connections.use(person.id, tool, input),
           sendFiles: (paths) => {
             // Each file is read as it is counted, so a call that can't fit stops at the file that takes it too far.
             const added: Upload[] = [];
@@ -643,12 +687,17 @@ export function createQueue(store: Store, drivers: Drivers, now: () => number = 
       }
     },
 
-    /** Gives an ask the person's answer, and the agent goes on with it. False when the agent has no such ask waiting. */
+    /** Gives an ask the person's answer, and the agent goes on with it. False when the agent has no such ask waiting, and for a yes to an ask for a connection, which only making the connection says. */
     answer(agentId: string, messageId: string, allow: boolean): boolean {
       const ask = asks.get(messageId);
-      if (ask?.agentId !== agentId) return false;
+      if (ask?.agentId !== agentId || (allow && ask.connection)) return false;
       ask.answer(allow);
       return true;
+    },
+
+    /** Has the agents that wait for the person to make a connection go on, once they have made it. */
+    connected(personId: string, connection: Connection): void {
+      for (const ask of [...asks.values()]) if (ask.connection === connection && store.agent(ask.agentId)?.person_id === personId) ask.answer(true);
     },
 
     /** Stops whatever the agent is running, waits for it to end, and removes the sessions its provider keeps for it, as the agent is deleted. */

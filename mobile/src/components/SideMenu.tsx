@@ -5,7 +5,7 @@ import { useRouter } from "expo-router";
 import { useDrawerProgress } from "react-native-drawer-layout";
 import Animated, { interpolate, useAnimatedStyle } from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { ArrowUpRight, ChartNoAxesColumn, ChevronRight, Laptop, ShieldCheck, Unplug } from "lucide-react-native";
+import { ArrowUpRight, Cable, ChartNoAxesColumn, ChevronRight, Laptop, ShieldCheck, Unplug } from "lucide-react-native";
 import { FadingText } from "@/components/FadingText";
 import { confirmDisconnect } from "@/lib/alerts";
 import { UPDATE, useMachine } from "@/lib/api";
@@ -34,7 +34,8 @@ export function useSideMenu() {
 /**
  * The side menu the home screen slides aside to uncover: the computer this
  * phone has paired with and whether the phone reaches it, with Usage under
- * it, which opens what the agents on that computer used. At its foot are
+ * it, which opens what the agents on that computer used, and Connections,
+ * which opens the apps those agents can use as the person. At its foot are
  * the privacy policy, Disconnect and the app's version. Disconnect asks
  * first, has the computer forget the phone, and leaves the phone on the
  * welcome screen. The menu fades up from faint as the screens slide off it.
@@ -73,6 +74,9 @@ export function SideMenu() {
         </View>
       </View>
       <Row icon={ChartNoAxesColumn} label="Usage" color={theme.ink} onPress={() => router.push("/usage")}>
+        <ChevronRight size={18} strokeWidth={2} color={theme.ink2} />
+      </Row>
+      <Row icon={Cable} label="Connections" color={theme.ink} onPress={() => router.push("/connections")}>
         <ChevronRight size={18} strokeWidth={2} color={theme.ink2} />
       </Row>
       <View style={styles.flex} />

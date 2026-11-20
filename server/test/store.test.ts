@@ -91,3 +91,25 @@ test("a database that counted turns without their tokens keeps the turns, and co
   store.addUsage(agent.id, "reply", { sessionId: "chat", cost: 3.5, tokens: 950_000 }, true);
   assert.deepEqual(store.usage(person.id, []).used.map((used) => ({ ...used })), [{ agent_id: agent.id, kind: "reply", turns: 3, cost: 3.5, tokens: 50_000 }]);
 });
+
+test("a Codex session from before the connections' tools gets a fresh start, since a Codex chat keeps the tools it started with", () => {
+  const home = mkdtempSync(join(tmpdir(), "sidebots-store-test-"));
+  const fresh = openStore(home);
+  const person = fresh.addPerson({ name: "Rithwik", provider: "claude", configDir: "/tmp/claude" });
+  fresh.addAccount(person.id, "codex", "/tmp/codex");
+  const [maya, theo, ruby] = [fresh.createAgent(person, "Maya", "mochi", "codex"), fresh.createAgent(person, "Theo", "mochi", "codex"), fresh.createAgent(person, "Ruby", "mochi", "claude")];
+  // Maya and Ruby are in the middle of a session. Theo has yet to start one.
+  fresh.setSession(maya.id, "thread-1");
+  fresh.setSession(ruby.id, "session-1");
+  fresh.close();
+  const old = new DatabaseSync(join(home, "sidebots.sqlite"));
+  old.exec("pragma user_version = 10");
+  old.close();
+
+  const store = openStore(home);
+  assert.deepEqual([maya, theo, ruby].map((agent) => store.nextQueued(agent.id)?.body), ["Fresh start", undefined, undefined]);
+  assert.deepEqual(store.requeueInterrupted(), [maya.id]);
+  // A database that has had the change doesn't get it again.
+  store.close();
+  assert.equal(openStore(home).messages(maya.id).length, 1);
+});

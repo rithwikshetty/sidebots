@@ -8,7 +8,7 @@
  * its own. The app sends its own in the same header, and the server refuses
  * to pair an app on another version.
  */
-export const CONTRACT_VERSION = 4;
+export const CONTRACT_VERSION = 5;
 export const CONTRACT_HEADER = "Sidebots-Contract";
 
 export type Sender = "person" | "agent" | "sidebots";
@@ -18,7 +18,8 @@ export type Status = "queued" | "running" | "done" | "failed";
  * safety check won't decide by itself. The ask is `waiting` until the person
  * answers, then `allowed` or `refused`. It is `unanswered` when the agent
  * stopped waiting first: the person took too long or sent a message instead,
- * or the turn ended.
+ * or the turn ended. An ask for a connection is `allowed` once the person has
+ * signed in to it.
  */
 export type Ask = "waiting" | "allowed" | "refused" | "unanswered";
 /**
@@ -29,9 +30,19 @@ export type Ask = "waiting" | "allowed" | "refused" | "unanswered";
  * matter, each a label and its value, as where a file is or who an email
  * goes to. `detail` is the thing itself, such as the command or the change,
  * which Allow lets happen in full. `why` is the provider's reason for not
- * deciding this one by itself.
+ * deciding this one by itself. An agent that needs one of the person's apps
+ * asks for it the same way: the `kind` is `connection`, `connection` is the
+ * app, and the person says yes by signing in to it.
  */
-export type Question = { kind: "command" | "page" | "file" | "tool"; title: string; what: string; facts: [label: string, value: string][]; detail: string; why?: string };
+export type Question = {
+  kind: "command" | "page" | "file" | "tool" | "connection";
+  title: string;
+  what: string;
+  facts: [label: string, value: string][];
+  detail: string;
+  why?: string;
+  connection?: Connection;
+};
 
 /** Text as a markdown code block. The fence is longer than any run of backticks inside it, so nothing in the text can close it. */
 export function fenced(text: string): string {
@@ -118,6 +129,46 @@ export type Model = { [P in Provider]: keyof (typeof PROVIDERS)[P]["models"] }[P
 export type Effort = { [P in Provider]: keyof (typeof PROVIDERS)[P]["efforts"] }[Provider];
 /** What a provider offers, read for an agent whichever provider it runs on: its name, and the names the app shows for its models and efforts. */
 export type Offered = { name: string; models: Partial<Record<Model, string>>; efforts: Partial<Record<Effort, string>> };
+
+/**
+ * A brand's mark: one shape in a box 24 by 24, as Simple Icons draws a
+ * brand's, and the brand's colour. A mark with no colour of its own, as a
+ * black one, takes the colour of the text around it, so it shows in light
+ * and dark.
+ */
+export type Logo = { path: string; color: string | null };
+
+/**
+ * The apps outside Sidebots that a person's agents can use as them, by id.
+ * Each has the name the apps show, its logo, and what connecting it lets the
+ * agents do. A person connects one once, by signing in to it, and all their
+ * agents have it, whichever provider each runs on.
+ */
+export const CONNECTIONS = {
+  gmail: {
+    name: "Gmail",
+    allows: "Your agents can search, read and send your mail.",
+    logo: { color: "#EA4335", path: "M24 5.457v13.909c0 .904-.732 1.636-1.636 1.636h-3.819V11.73L12 16.64l-6.545-4.91v9.273H1.636A1.636 1.636 0 0 1 0 19.366V5.457c0-2.023 2.309-3.178 3.927-1.964L5.455 4.64 12 9.548l6.545-4.91 1.528-1.145C21.69 2.28 24 3.434 24 5.457z" },
+  },
+  calendar: {
+    name: "Google Calendar",
+    allows: "Your agents can read your calendar, and add, change and remove its events.",
+    logo: { color: "#4285F4", path: "M18.316 5.684H24v12.632h-5.684V5.684zM5.684 24h12.632v-5.684H5.684V24zM18.316 5.684V0H1.895A1.894 1.894 0 0 0 0 1.895v16.421h5.684V5.684h12.632zm-7.207 6.25v-.065c.272-.144.5-.349.687-.617s.279-.595.279-.982c0-.379-.099-.72-.3-1.025a2.05 2.05 0 0 0-.832-.714 2.703 2.703 0 0 0-1.197-.257c-.6 0-1.094.156-1.481.467-.386.311-.65.671-.793 1.078l1.085.452c.086-.249.224-.461.413-.633.189-.172.445-.257.767-.257.33 0 .602.088.816.264a.86.86 0 0 1 .322.703c0 .33-.12.589-.36.778-.24.19-.535.284-.886.284h-.567v1.085h.633c.407 0 .748.109 1.02.327.272.218.407.499.407.843 0 .336-.129.614-.387.832s-.565.327-.924.327c-.351 0-.651-.103-.897-.311-.248-.208-.422-.502-.521-.881l-1.096.452c.178.616.505 1.082.977 1.401.472.319.984.478 1.538.477a2.84 2.84 0 0 0 1.293-.291c.382-.193.684-.458.902-.794.218-.336.327-.72.327-1.149 0-.429-.115-.797-.344-1.105a2.067 2.067 0 0 0-.881-.689zm2.093-1.931l.602.913L15 10.045v5.744h1.187V8.446h-.827l-2.158 1.557zM22.105 0h-3.289v5.184H24V1.895A1.894 1.894 0 0 0 22.105 0zm-3.289 23.5l4.684-4.684h-4.684V23.5zM0 22.105C0 23.152.848 24 1.895 24h3.289v-5.184H0v3.289z" },
+  },
+} as const;
+export type Connection = keyof typeof CONNECTIONS;
+/**
+ * A connection as the app lists it, with its name, its logo and what it
+ * allows, so an app lists one it has never heard of. `account` is the
+ * account the person signed in to it with, or null while it isn't connected.
+ */
+export type Connected = { connection: Connection; name: string; allows: string; logo: Logo; account: string | null };
+/**
+ * Where a phone signs in to a connection: the page it opens, and the address
+ * that page goes to once the person has signed in. The phone hands the
+ * address it came back with to the server, which makes the connection.
+ */
+export type SignIn = { url: string; redirect: string };
 
 /**
  * `read_at` is the time up to which the person has read the chat. A `muted`
