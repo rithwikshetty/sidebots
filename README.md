@@ -152,7 +152,7 @@ Your own build signs in with a client of your own. In a [Google Cloud project](h
 
 Adding a connection takes three things:
 
-- An entry in `CONNECTIONS` in `server/src/contract.ts`, with the name the apps show and what connecting it lets the agents do.
+- An entry in `CONNECTIONS` in `server/src/contract.ts`, with the name the apps show, what connecting it lets the agents do, and its logo: the one shape and the colour [Simple Icons](https://simpleicons.org) has for the brand.
 - An entry in `APPS` in `server/src/connections.ts`, with whose app it is, what its sign-in asks for, and its tools. Each tool has a name, what the agent is told it does, what it takes, and what it does. A tool that changes something in the app, or speaks as the person, is marked `checked: "acts"`. An app of a maker that Sidebots doesn't sign in with yet also takes an entry in `MAKERS` there, with the maker's pages for OAuth, and its client id in `server/src/main.ts`.
 - A table change in `server/src/store.ts` that gives Codex sessions a fresh start, as the one for Gmail and Google Calendar does, since a Codex chat keeps the tools it started with.
 
@@ -229,4 +229,4 @@ The server's tests run through its HTTP routes with the providers' turns swapped
 
 ## Licence
 
-[MIT](LICENSE). The avatars, the app icon and the notification sound were made for Sidebots and are under the same licence.
+[MIT](LICENSE). The avatars, the app icon and the notification sound were made for Sidebots and are under the same licence. The logos of the connections are their makers' trademarks, drawn as Simple Icons draws them.

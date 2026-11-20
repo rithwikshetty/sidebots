@@ -197,6 +197,8 @@ async function refresh(): Promise<void> {
   const ofKept = <T>(record: Record<string, T>) => Object.fromEntries(Object.entries(record).filter(([agentId]) => kept.has(agentId)));
   set({ pending: ofKept(state.pending), messages: ofKept(state.messages), about: ofKept(state.about) });
   set({ agents: agents.map(withPending), avatars });
+  // The apps the agents can use come too, for the logo an ask for one wears. A computer that has none leaves the list as it was.
+  void loadConnections().catch(() => undefined);
   told.forEach((listener) => listener(state.agents));
   keepSheets(avatars);
   // Changes made while the server was out of reach go now.

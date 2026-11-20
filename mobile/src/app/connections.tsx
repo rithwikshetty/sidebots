@@ -4,6 +4,7 @@ import { useRouter } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import Animated, { LayoutAnimationConfig } from "react-native-reanimated";
 import type { Connected } from "@server/contract";
+import { ConnectionLogo } from "@/components/ConnectionLogo";
 import { FadingText } from "@/components/FadingText";
 import { Rule, Section } from "@/components/Section";
 import { confirmRemoveConnection, problem } from "@/lib/alerts";
@@ -15,7 +16,7 @@ import { useTheme } from "@/lib/theme";
 
 /**
  * The apps the person's agents can use as them, opened from the side menu:
- * each with what connecting it lets the agents do, or the account it is
+ * each with its logo and what connecting it lets the agents do, or the account it is
  * connected as, and a button that connects it through the app's own sign-in
  * or removes it. It opens on what the phone last had, and what the computer
  * then says fades in.
@@ -63,7 +64,7 @@ export default function ConnectionsPage() {
   );
 }
 
-/** One app: its name, what connecting it allows or the account it is connected as, and Connect or Remove. */
+/** One app: its logo, its name, what connecting it allows or the account it is connected as, and Connect or Remove. */
 function ConnectionRow({ connected }: { connected: Connected }) {
   const theme = useTheme();
   const [connecting, setConnecting] = useState(false);
@@ -77,6 +78,7 @@ function ConnectionRow({ connected }: { connected: Connected }) {
   };
   return (
     <View style={styles.row}>
+      <ConnectionLogo logo={connected.logo} size={LOGO} />
       <View style={styles.about}>
         <Text style={[styles.name, { color: theme.ink }]}>{connected.name}</Text>
         <FadingText style={[styles.note, { color: theme.ink2 }]}>{connected.account ? `Connected as ${connected.account}` : connected.allows}</FadingText>
@@ -87,6 +89,8 @@ function ConnectionRow({ connected }: { connected: Connected }) {
     </View>
   );
 }
+
+const LOGO = 28;
 
 const styles = StyleSheet.create({
   sheet: { flex: 1 },

@@ -1839,10 +1839,15 @@ test("an agent asks for a connection, the person makes it by signing in on their
   await new Promise((resolve) => setTimeout(resolve, 1));
   const ask = ((await call(ME, "GET", `/agents/${theo.id}/messages`)).json as Message[]).at(-1)!;
   assert.deepEqual([ask.ask, ask.body, ask.question?.kind, ask.question?.connection], ["waiting", "Connect Gmail: Your agents can search, read and send your mail.", "connection", "gmail"]);
-  assert.deepEqual((await call(ME, "GET", "/connections")).json, [
-    { connection: "gmail", name: "Gmail", allows: "Your agents can search, read and send your mail.", account: null },
-    { connection: "calendar", name: "Google Calendar", allows: "Your agents can read your calendar, and add, change and remove its events.", account: null },
-  ]);
+  // Each comes with what the app draws it from, its logo among it, so the app lists one it has never heard of.
+  const listed = (await call(ME, "GET", "/connections")).json as { connection: string; name: string; allows: string; logo: { path: string; color: string | null }; account: string | null }[];
+  assert.deepEqual(
+    listed.map(({ logo, ...rest }) => [rest, logo.color, /^M[\d\s.,a-zA-Z-]+$/.test(logo.path)]),
+    [
+      [{ connection: "gmail", name: "Gmail", allows: "Your agents can search, read and send your mail.", account: null }, "#EA4335", true],
+      [{ connection: "calendar", name: "Google Calendar", allows: "Your agents can read your calendar, and add, change and remove its events.", account: null }, "#4285F4", true],
+    ],
+  );
 
   // The phone opens Google's page, which is asked for what Gmail needs and comes back to the app.
   const signIn = (await call(ME, "POST", "/connections/gmail/sign-in")).json as { url: string; redirect: string };
