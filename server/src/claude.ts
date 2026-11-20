@@ -190,6 +190,8 @@ const remote = (servers: Servers) => Object.fromEntries(Object.entries(servers).
 const runTurn: RunTurn = async (turn) => {
   const { prompt, followUps, seen, replied, ask, limits, cwd, sessionId, configDir, apiKey, model, effort, keepSession, stop } = turn;
   const [claudeCode, env, servers] = [await program("claude"), await environment(), await turn.servers()];
+  // A turn that was stopped while a connection's token was asked for never starts.
+  if (stop.signal.aborted) throw new Error("The turn was stopped before it started");
   // A connection the agent's `connect` makes, to an app whose maker serves its tools, gives the agent those tools in the same turn. `setMcpServers` takes the place of every server the query had from here, Sidebots' own among them, so that one goes with the rest.
   const tools = toolsFor({
     ...turn,

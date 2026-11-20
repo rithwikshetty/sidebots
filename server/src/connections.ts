@@ -325,7 +325,7 @@ export const CONNECTION_TOOLS = (Object.keys(APPS) as Connection[]).flatMap((con
 
 // How long a sign-in a phone started stays open.
 const SIGN_IN_MS = 10 * 60_000;
-// A token can go to a turn for as long as the turn runs, so one with less than this left is replaced.
+// A token can go to a turn for as long as the turn runs, so one in hand with less than this left is replaced.
 const TURN_MS = 30 * 60_000;
 // How long a maker has to answer a request for tokens, since a turn waits for it before it starts.
 const GRANT_MS = 10_000;
