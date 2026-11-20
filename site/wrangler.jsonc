@@ -1,8 +1,15 @@
 // The page at sidebots.app: static files in public/, served by Cloudflare.
+// Requests for the film go through worker.js, which answers byte ranges.
 {
   "name": "sidebots-site",
   "compatibility_date": "2026-11-01",
-  "assets": { "directory": "./public", "html_handling": "drop-trailing-slash" },
+  "main": "worker.js",
+  "assets": {
+    "directory": "./public",
+    "binding": "ASSETS",
+    "html_handling": "drop-trailing-slash",
+    "run_worker_first": ["/film.mp4"]
+  },
   "routes": [
     { "pattern": "sidebots.app", "custom_domain": true },
     { "pattern": "www.sidebots.app", "custom_domain": true }
