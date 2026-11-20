@@ -4,8 +4,11 @@
 // comes encrypted for the phone it goes to, so the relay can't read it. It
 // also ends a Live Activity for the server, which says only the state the
 // avatar is left in. It knows each server as a machine: a public key the server
-// registered, an id, and its tunnel. It keeps nothing about people, agents or
-// messages.
+// registered, an id, and its tunnel. As a machine registers it may say how
+// much it is used: the version of the Mac app it runs in, how many agents and
+// paired phones it has, and how many turns its agents ran each day, by provider
+// and kind of turn. The relay keeps those numbers, and nothing about who
+// anyone is or what was said.
 //
 // Every request is signed with the machine's private key, in the header
 //
@@ -52,6 +55,13 @@ const SEALED = /^[A-Za-z0-9+/]{1,3800}={0,2}$/;
 const MESSAGE_ID = /^[\w-]{1,64}$/;
 // The server's port on its machine, when a machine registers without one.
 const DEFAULT_PORT = 4317;
+// What a machine may say of its use. The relay keeps a count or one of these words, and never words of the machine's choosing. It leaves out what is neither and registers the machine all the same, since a machine needs its address whatever it counts.
+const VERSION = /^\d{1,4}(\.\d{1,4}){1,3}$/;
+const DAY = /^\d{4}-\d{2}-\d{2}$/;
+const PROVIDERS = ["claude", "codex"];
+const KINDS = ["reply", "job", "memory"];
+// The most a machine may say it has of anything.
+const MOST = 1_000_000;
 
 const fromBase64 = (text: string) => Uint8Array.from(atob(text.replaceAll("-", "+").replaceAll("_", "/")), (char) => char.charCodeAt(0));
 const answer = (body: object, status = 200) => Response.json(body, { status });
@@ -59,6 +69,21 @@ const answer = (body: object, status = 200) => Response.json(body, { status });
 /** A machine's id: 16 random letters and digits, which is also the label of its address. */
 function newId(): string {
   return Array.from(crypto.getRandomValues(new Uint8Array(16)), (byte) => ID_LETTERS[byte % ID_LETTERS.length]).join("");
+}
+
+/** A count a machine gave, or null when it is no count. */
+const countOf = (value: unknown): number | null => (Number.isInteger(value) && (value as number) >= 0 && (value as number) <= MOST ? (value as number) : null);
+
+/** The turns a machine said its agents ran, less what is no day near `now`, no provider or kind of turn the relay knows, or no count. */
+function turnsIn(said: unknown, now: number): { day: string; provider: string; kind: string; turns: number }[] {
+  if (!Array.isArray(said)) return [];
+  return said.slice(0, 100).flatMap((each: Record<string, unknown> | null) => {
+    const { day, provider, kind, turns } = each ?? {};
+    // A day is the date on the machine, which is up to a day ahead of the relay's. A machine counts back a week.
+    const age = typeof day === "string" && DAY.test(day) ? now - Date.parse(day) : NaN;
+    const known = age > -DAY_MS && age < 9 * DAY_MS && PROVIDERS.includes(provider as string) && KINDS.includes(kind as string) && countOf(turns);
+    return known ? [{ day: day as string, provider: provider as string, kind: kind as string, turns: turns as number }] : [];
+  });
 }
 
 const tunnelsOf = (env: Env): Tunnels => ({ token: env.CLOUDFLARE_API_TOKEN, accountId: env.CLOUDFLARE_ACCOUNT_ID, zoneId: env.ZONE_ID });
@@ -96,19 +121,31 @@ export async function handle(request: Request<unknown, unknown>, env: Env, send:
     if (!PUBLIC_KEY.test(machine) || !(await signedBy(machine, request, pathname, time, signature, body))) {
       return answer({ error: "A machine registers with a public key, and signs with it." }, 401);
     }
-    // The server says which port it listens on, and an empty body means the usual one.
-    const { port = DEFAULT_PORT } = (body.byteLength ? JSON.parse(new TextDecoder().decode(body)) : {}) as { port?: unknown };
+    // The server says which port it listens on, and an empty body means the usual one. It may say how much it is used.
+    const { port = DEFAULT_PORT, version, agents, phones, turns } = (body.byteLength ? JSON.parse(new TextDecoder().decode(body)) : {}) as Record<string, unknown>;
     if (!Number.isInteger(port) || (port as number) < 1 || (port as number) > 65535) return answer({ error: "A machine's port is a whole number up to 65535." }, 400);
     const registered = await env.DB.prepare("select 1 from machines where public_key = ?").bind(machine).first();
     if (!registered && !(await env.NEW_MACHINES.limit({ key: request.headers.get("CF-Connecting-IP") ?? "" })).success) {
       return answer({ error: "This network has registered too many machines in the last minute. Try again in a minute." }, 429);
     }
-    // A key that is already registered keeps its id and its tunnel.
+    // A key that is already registered keeps its id and its tunnel. What the machine says of itself replaces what it said before.
     const { id, tunnel_id } = (await env.DB.prepare(
-      "insert into machines (id, public_key, created_at, seen_at) values (?1, ?2, ?3, ?3) on conflict (public_key) do update set seen_at = ?3 returning id, tunnel_id",
+      `insert into machines (id, public_key, created_at, seen_at, version, agents, phones) values (?1, ?2, ?3, ?3, ?4, ?5, ?6)
+         on conflict (public_key) do update set seen_at = ?3, version = ?4, agents = ?5, phones = ?6 returning id, tunnel_id`,
     )
-      .bind(newId(), machine, now)
+      .bind(newId(), machine, now, typeof version === "string" && VERSION.test(version) ? version : null, countOf(agents), countOf(phones))
       .first<{ id: string; tunnel_id: string | null }>())!;
+    // A machine says each of its last days again as it registers, and a day's count only grows: an agent that is deleted takes its turns out of the machine's own count. SQLite reads `on conflict` after a select as part of a join unless a `where` comes first.
+    const ran = turnsIn(turns, now);
+    if (ran.length) {
+      await env.DB.prepare(
+        `insert into turns (machine_id, day, provider, kind, turns)
+           select ?1, json_extract(value, '$.day'), json_extract(value, '$.provider'), json_extract(value, '$.kind'), json_extract(value, '$.turns') from json_each(?2) where true
+           on conflict (machine_id, day, provider, kind) do update set turns = max(turns, excluded.turns)`,
+      )
+        .bind(id, JSON.stringify(ran))
+        .run();
+    }
     const address = addressOf(id, env);
     try {
       let tunnelId = tunnel_id;

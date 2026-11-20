@@ -1,10 +1,10 @@
 # Sidebots relay
 
-The relay gives each Sidebots server an address under the zone, such as `<machine id>.sidebots.app`, through a Cloudflare Tunnel, and passes the server's notifications and the ends of its Live Activities to Apple. Only the Apple Developer account that builds the app can notify it, so the relay holds that account's push key, and each server sends its notices here. The relay is a Cloudflare Worker with a D1 database. It keeps each server's public key, id and tunnel, and nothing about people, agents or messages.
+The relay gives each Sidebots server an address under the zone, such as `<machine id>.sidebots.app`, through a Cloudflare Tunnel, and passes the server's notifications and the ends of its Live Activities to Apple. Only the Apple Developer account that builds the app can notify it, so the relay holds that account's push key, and each server sends its notices here. The relay is a Cloudflare Worker with a D1 database. It keeps each server's public key, id and tunnel, and what the server says of how much it is used: the version of the Mac app it runs in, how many agents and paired phones it has, and how many turns its agents ran on each of the last seven days, by provider and kind of turn. It keeps nothing about who anyone is or what was said.
 
 | Route | Purpose |
 | --- | --- |
-| `POST /machines` | Register a machine by its public key, with its server's port. Makes its tunnel and address the first time, and answers with its id, its address and its tunnel's token |
+| `POST /machines` | Register a machine by its public key, with its server's port and, unless its owner turned that off, how much it is used. Makes its tunnel and address the first time, and answers with its id, its address and its tunnel's token |
 | `DELETE /machines/:id` | Remove a machine, its tunnel and its address |
 | `POST /notifications` | Pass one encrypted notice to Apple for one device token, or end one Live Activity by its token, and answer `sent`, `gone` or `failed` |
 
@@ -46,4 +46,4 @@ You need your own relay when you build your own copy of the app, since Apple del
 
 7. Start the server with `SIDEBOTS_RELAY=https://<the relay's address>`.
 
-The relay lets one network address register three new machines a minute, sends one machine at most `NOTICES_PER_DAY` notices a day, and once a day removes the machines it hasn't heard from in 60 days, with their tunnels and addresses. A running server registers again each day, so only a machine that has been off or away that long is removed.
+The relay lets one network address register three new machines a minute, sends one machine at most `NOTICES_PER_DAY` notices a day, and once a day removes the machines it hasn't heard from in 60 days, with their tunnels and addresses. A running server registers again each day, so only a machine that has been off or away that long is removed. The relay keeps a removed machine's rows in `turns`.
