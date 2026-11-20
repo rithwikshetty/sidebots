@@ -96,7 +96,7 @@ const oneLine = (value: string) => value.replace(/[\r\n]+/g, " ").trim();
 const subjectLine = (subject: string) => (/^[\x20-\x7e]*$/.test(oneLine(subject)) ? oneLine(subject) : `=?UTF-8?B?${Buffer.from(oneLine(subject)).toString("base64")}?=`);
 
 const EVENTS = "https://www.googleapis.com/calendar/v3/calendars/primary/events";
-// The most events one look at the calendar answers with, and the most of an event's notes.
+// The most events one look at the calendar asks Google for, and the most of an event's notes.
 const EVENTS_MOST = 50;
 const NOTES_CHARS = 300;
 type Moment = { date?: string; dateTime?: string };
@@ -234,8 +234,9 @@ const APPS: Record<Connection, { maker: Maker; scopes: string[]; tools: AppTool[
         run: async ({ from, to, text }, call) => {
           const asked = { timeMin: instant(from, "from"), timeMax: instant(to, "to"), singleEvents: "true", orderBy: "startTime", maxResults: String(EVENTS_MOST), ...(text && { q: text }) };
           const { items = [], nextPageToken } = await call<{ items?: Event[]; nextPageToken?: string }>(`${EVENTS}?${new URLSearchParams(asked)}`);
-          const more = nextPageToken ? `\n\nThe calendar has more then than these ${EVENTS_MOST}. Look in a shorter time for the rest.` : "";
-          return `${items.map(eventLines).join("\n\n") || "The calendar has nothing then."}${more}`;
+          // Google can answer part of what there is, and even none of it, with more to come.
+          const more = nextPageToken ? ["The calendar has more then than this. Look in a shorter time for the rest."] : [];
+          return [...items.map(eventLines), ...more].join("\n\n") || "The calendar has nothing then.";
         },
       }),
       define({

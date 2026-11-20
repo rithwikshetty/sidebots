@@ -99,7 +99,7 @@ test("the calendar's events are looked at, added, changed and removed, with time
   const { sent, use } = setup((request) => (request.startsWith("GET") ? { items: [event], ...(request.includes("q=busy") && { nextPageToken: "more" }) } : event));
   const [from, to] = ["2026-11-20T00:00", "2026-11-21T00:00"];
   // A time with more events than one look answers says so, so the agent doesn't take the rest of it for free.
-  assert.match(await use("calendar_events", { from, to, text: "busy" }), /\n\nThe calendar has more then than these 50\. Look in a shorter time for the rest\.$/);
+  assert.match(await use("calendar_events", { from, to, text: "busy" }), /\n\nThe calendar has more then than this\. Look in a shorter time for the rest\.$/);
   sent.length = 0;
 
   assert.equal(await use("calendar_events", { from, to, text: "bike" }), "id e1\nBike repair\n2026-11-20T15:00:00+11:00 to 2026-11-20T16:00:00+11:00\nAt The shop\nWith anna@example.com (accepted)");
