@@ -32,10 +32,6 @@ export type Machine = { privateKey: string; id?: string; address?: string; tunne
 // The app's blue, for an avatar with no colour of its own and no design to take one from.
 const DEFAULT_COLOR = "#1F5FD6";
 
-// A Codex session keeps the tools it started with. This gives each one a fresh start, for a change that adds tools, unless one already waits for it.
-const FRESH_START_FOR_CODEX =
-  "insert into messages (id, agent_id, sender, body, status, created_at) select lower(hex(randomblob(16))), id, 'sidebots', 'Fresh start', 'queued', cast(unixepoch('subsec') * 1000 as integer) from agents where provider = 'codex' and session_id is not null and not exists (select 1 from messages where agent_id = agents.id and sender = 'sidebots' and body = 'Fresh start' and status = 'queued')";
-
 /**
  * The changes made to the tables since the first published version, in order.
  * A database records how many it has had in \`user_version\`. One made from
@@ -57,10 +53,8 @@ const TABLE_CHANGES: (string | { table: string; change: string })[] = [
   "alter table messages add column peer_id text references agents(id)",
   { table: "usage", change: "alter table usage add column tokens integer not null default 0" },
   { table: "usage", change: "alter table usage add column session_tokens integer" },
-  // The tools of Gmail and Google Calendar.
-  FRESH_START_FOR_CODEX,
-  // Notion's tools.
-  FRESH_START_FOR_CODEX,
+  // A Codex session keeps the tools it started with, so each one from before the connections' tools gets a fresh start.
+  "insert into messages (id, agent_id, sender, body, status, created_at) select lower(hex(randomblob(16))), id, 'sidebots', 'Fresh start', 'queued', cast(unixepoch('subsec') * 1000 as integer) from agents where provider = 'codex' and session_id is not null",
 ];
 
 const SCHEMA = `

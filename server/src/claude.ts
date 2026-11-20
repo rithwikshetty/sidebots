@@ -17,6 +17,7 @@ import {
   type SDKResultMessage,
   type SDKUserMessage,
 } from "@anthropic-ai/claude-agent-sdk";
+import type { Servers } from "./connections.ts";
 import type { Limit, Question } from "./contract.ts";
 import { environment, inFolder, program } from "./programs.ts";
 import { SHOW, short, toolQuestion, toolsFor, type Driver, type Prompt, type RunTurn } from "./runner.ts";
@@ -165,6 +166,9 @@ export function question(toolName: string, input: Record<string, unknown>, conne
   return ask("tool", title, what, detail, facts);
 }
 
+/** The tool servers of a person's connections, as Claude Code takes them. */
+const remote = (servers: Servers) => Object.fromEntries(Object.entries(servers).map(([name, { url, token }]) => [name, { type: "http" as const, url, headers: { Authorization: `Bearer ${token}` } }]));
+
 /**
  * Runs a turn through Claude Code. A message the person sends while the turn
  * runs goes into its session: Claude Code reads it at its next pause between
@@ -184,8 +188,16 @@ export function question(toolName: string, input: Record<string, unknown>, conne
  */
 const runTurn: RunTurn = async (turn) => {
   const { prompt, followUps, seen, replied, ask, limits, cwd, sessionId, configDir, apiKey, model, effort, keepSession, stop } = turn;
-  const [claudeCode, env] = [await program("claude"), await environment()];
-  const tools = toolsFor(turn);
+  const [claudeCode, env, servers] = [await program("claude"), await environment(), await turn.servers()];
+  // A connection the agent's `connect` makes gives the agent its tools in the same turn.
+  const tools = toolsFor({
+    ...turn,
+    connect: async (app) => {
+      const said = await turn.connect(app);
+      await run.setMcpServers(remote(await turn.servers())).catch(() => undefined);
+      return said;
+    },
+  });
   const sidebots = createSdkMcpServer({
     name: "sidebots",
     tools: tools.map((each) => tool(each.name, each.description, each.input, async (input) => text(await each.run(input)))),
@@ -245,7 +257,7 @@ const runTurn: RunTurn = async (turn) => {
       // turned it off for their own Claude Code.
       settings: { autoMemoryEnabled: true, autoMemoryDirectory: join(cwd, "memory"), env: { CLAUDE_CODE_DISABLE_AUTO_MEMORY: "0" } },
       skills: "all",
-      mcpServers: { sidebots },
+      mcpServers: { sidebots, ...remote(servers) },
       allowedTools: tools.filter((each) => !each.checked).map((each) => `mcp__sidebots__${each.name}`),
       permissionMode: "auto",
       // The agent asks the person in its reply, as anyone does in a chat.

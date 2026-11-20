@@ -85,7 +85,7 @@ function setup({ signedIn = true, keyLogin = false } = {}) {
     listAgents: () => "",
     askAgent: () => "",
     connect: async () => "",
-    useConnection: async (tool) => `Used ${tool}.`,
+    servers: async () => ({}),
     ask: async (question) => (asks.push(question), { allowed: true }),
     limits: (said) => limits.push(said),
     ...rest,
@@ -136,7 +136,7 @@ test("a turn starts a thread with the agent's tools, on the newest model of its 
   const tools = (started.dynamicTools as { name: string; inputSchema: { properties: object } }[]).map((tool) => tool.name);
   assert.deepEqual(tools, [
     ...["search_history", "schedule_job", "list_jobs", "cancel_job", "list_agents", "ask_agent", "send_files", "connect"],
-    ...["gmail_search", "gmail_read", "gmail_send", "calendar_events", "calendar_add_event", "calendar_change_event", "calendar_remove_event", "notion_tools", "notion_read", "notion_change", "send_update"],
+    "send_update",
   ]);
   assert.match(started.developerInstructions, /memory\/MEMORY\.md/);
   // The agent is told when its reply comes with something to look at.
@@ -194,20 +194,15 @@ test("the agent's tools answer in words, and a call that is wrong says so to the
   assert.match(replies.at(-1)![0], /^Tool failed: .*expected string/s);
 });
 
-test("a tool that acts as the person outside the machine asks them first, and one that only reads runs", async () => {
-  const { driver, turn, replies, asks } = setup();
-  await driver.runTurn(turn("tool gmail_read m1"));
-  assert.deepEqual(asks, []);
-  await driver.runTurn(turn("tool calendar_remove_event e1"));
-  await driver.runTurn(turn("tool calendar_remove_event e1", { ask: async () => ({ allowed: false, words: "No." }) }));
-  assert.deepEqual(asks, [{ kind: "tool", title: "Use Sidebots", what: "Calendar remove event", facts: [["Id", "e1"]], detail: JSON.stringify({ id: "e1" }, null, 2) }]);
-  assert.deepEqual(replies.map(([reply]) => reply), ["Tool said: Used gmail_read.", "Tool said: Used calendar_remove_event.", "Tool failed: No."]);
-
-  // A yes that comes once the person has stopped the turn acts on nothing.
-  const stop = new AbortController();
-  const used: string[] = [];
-  await driver.runTurn(turn("tool calendar_remove_event e1", { stop, ask: async () => (stop.abort(), { allowed: true }), useConnection: async (tool) => (used.push(tool), "") }));
-  assert.deepEqual(used, []);
+test("a turn's thread is given the tool servers of the person's connections, each with its token, as Codex's settings name one", async () => {
+  const { driver, turn, requests } = setup();
+  await driver.runTurn(turn("hello", { servers: async () => ({ notion: { url: "https://mcp.notion.com/mcp", token: "access-1" } }) }));
+  const started = requests().find((each) => each.method === "thread/start")!.params;
+  assert.deepEqual(started.config, {
+    "memories.use_memories": false,
+    "memories.generate_memories": false,
+    "mcp_servers.notion": { url: "https://mcp.notion.com/mcp", http_headers: { Authorization: "Bearer access-1" } },
+  });
 });
 
 test("what Codex asks its client before it acts goes to the person, whose answer it takes", async () => {

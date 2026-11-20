@@ -11,7 +11,7 @@ import { createInterface } from "node:readline";
 import { z } from "zod";
 import { PROVIDERS, type Limit, type Question } from "./contract.ts";
 import { environment, inFolder, later, program } from "./programs.ts";
-import { SHOW, short, toolQuestion, toolsFor, type Driver, type Prompt, type RunTurn } from "./runner.ts";
+import { SHOW, short, toolsFor, type Driver, type Prompt, type RunTurn } from "./runner.ts";
 
 // Added to Codex's own prompt. Codex keeps what it remembers in its config folder, for everything that runs there, so an agent keeps its own in its folder, in the files its page in the app shows.
 const MEMORY = `You have a memory that outlives every session: the folder \`memory/\` in your home folder. Each memory is a file of its own there, named for what it is about and ending in \`.md\`. It starts with a name and a one-line description between \`---\` lines, then the memory itself:
@@ -285,8 +285,12 @@ const runTurn = (start: () => Promise<Start>): RunTurn => async (turn) => {
       approvalsReviewer: "auto_review",
       sandbox: "workspace-write",
       developerInstructions: `${MEMORY}\n\n${SHOW}`,
-      // Codex's own memory is one for the whole config folder, and stays out of an agent's sessions both ways.
-      config: { "memories.use_memories": false, "memories.generate_memories": false },
+      // Codex's own memory is one for the whole config folder, and stays out of an agent's sessions both ways. The tool servers of the person's connections go in as Codex's settings name one, and Codex reads their tools and uses them.
+      config: {
+        "memories.use_memories": false,
+        "memories.generate_memories": false,
+        ...Object.fromEntries(Object.entries(await turn.servers()).map(([name, { url, token }]) => [`mcp_servers.${name}`, { url, http_headers: { Authorization: `Bearer ${token}` } }])),
+      },
     };
     // A thread keeps the tools it starts with, so it starts with them all, and `send_update` answers for itself in a turn nobody waits on.
     const tools = toolsFor({ ...turn, sendUpdate: turn.sendUpdate ?? (() => "Nobody is waiting on this turn, so there is nobody to update. Carry on.") });
@@ -298,18 +302,12 @@ const runTurn = (start: () => Promise<Start>): RunTurn => async (turn) => {
       : codex.request<{ thread: { id: string } }>("thread/start", { ...settings, dynamicTools, ephemeral: !keepSession }));
     threadId = thread.id;
 
-    // A tool that reads runs as it is called, since Codex's sandbox lets an agent read any file on the machine. Codex's reviewer judges only what an agent runs there, so the person is asked before a tool acts as them outside it.
-    codex.serve<{ tool: string; arguments: unknown }>("item/tool/call", async ({ tool, arguments: input }, withdrawn) => {
+    // A tool that reads runs as it is called, since Codex's sandbox lets an agent read any file on the machine.
+    codex.serve<{ tool: string; arguments: unknown }>("item/tool/call", async ({ tool, arguments: input }) => {
       const called = tools.find((each) => each.name === tool);
       const given = called && z.object(called.input).safeParse(input);
       if (!given) return said(`You have no tool called ${tool}.`, false);
       if (!given.success) return said(z.prettifyError(given.error), false);
-      if (called.checked === "acts") {
-        const answer = await ask(toolQuestion("Sidebots", called.name, given.data), withdrawn);
-        if (!answer.allowed) return said(answer.words, false);
-        // A yes that comes once the person has stopped the turn is too late.
-        if (stop.signal.aborted) return said("The turn was stopped.", false);
-      }
       return said(await called.run(given.data));
     });
 
