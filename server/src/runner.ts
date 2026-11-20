@@ -5,7 +5,7 @@ import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import { CONNECTIONS, MESSAGE_BYTES, PROVIDERS, fenced, scheduleWords } from "./contract.ts";
 import type { Agent, Ask, Connection, Effort, Found, Job, Limit, Message, Model, Provider, Question, Schedule, TurnKind } from "./contract.ts";
-import { CONNECTION_TOOLS, type Connections } from "./connections.ts";
+import { CONNECTION_TOOLS, type Connections, type Servers } from "./connections.ts";
 import type { Person, Store, Upload } from "./store.ts";
 
 /** A job as an agent asks for one: what to do on each run, and one of three ways to say when. */
@@ -63,6 +63,8 @@ export type Turn = {
   connect: (connection: Connection) => Promise<string>;
   /** Uses a tool of one of the person's connections as them. Answers in words the agent reads. */
   useConnection: (tool: string, input: unknown) => Promise<string>;
+  /** The tool servers of the person's connections whose makers run one, each with a token that lasts the turn. A provider reads each server's tools and uses them itself. */
+  servers: () => Promise<Servers>;
   /** Asks the person before the agent does something, and waits for their answer. `withdrawn` aborts when the provider no longer wants one. */
   ask: (question: Question, withdrawn: AbortSignal) => Promise<Answer>;
   /** The provider says where limits of the person's plan stand. */
@@ -200,7 +202,7 @@ export function toolsFor(turn: Turn): Tool[] {
       name: "connect",
       description: `Connect one of the person's apps, so that you and their other agents can use it as them: ${Object.entries(CONNECTIONS)
         .map(([id, { name }]) => `\`${id}\` for ${name}`)
-        .join(", ")}. It puts a card in the chat that takes the person through the app's own sign-in, and waits for them. Use it when they ask you to connect an app, or when one of an app's tools answers that it isn't connected.`,
+        .join(", ")}. It puts a card in the chat that takes the person through the app's own sign-in, and waits for them. An app with no tools among yours gives you its own once it is connected. Use it when they ask you to connect an app, when one of an app's tools answers that it isn't connected, or when they ask for something in one of these apps and you have no tools of its.`,
       input: { app: z.enum(Object.keys(CONNECTIONS) as [Connection, ...Connection[]]).describe("The app to connect") },
       run: ({ app }) => turn.connect(app),
     }),
@@ -474,9 +476,10 @@ export function createQueue(store: Store, drivers: Drivers, connections: Connect
             const already = connections.account(person.id, connection);
             if (already) return `${name} is already connected, as ${already}.`;
             const answer = await ask({ kind: "connection", connection, title: `Connect ${name}`, what: allows, facts: [], detail: "" }, stop.signal);
-            return answer.allowed ? `${name} is connected, as ${connections.account(person.id, connection)}. You and ${person.name}'s other agents can use it from now on.` : answer.words;
+            return answer.allowed ? `${name} is connected, as ${connections.account(person.id, connection)}. You and ${person.name}'s other agents can use it from now on. If you have no tools of its yet, they reach you on your next turn: tell ${person.name} it is connected, and to ask again.` : answer.words;
           },
           useConnection: (tool, input) => connections.use(person.id, tool, input),
+          servers: () => connections.servers(person.id),
           sendFiles: (paths) => {
             // Each file is read as it is counted, so a call that can't fit stops at the file that takes it too far.
             const added: Upload[] = [];

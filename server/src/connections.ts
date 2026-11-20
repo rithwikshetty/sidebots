@@ -1,38 +1,75 @@
 // The apps outside Sidebots that a person's agents use as them: how the person
-// signs in to each, and the tools it gives their agents. It is the only
-// module that talks to those apps.
+// signs in to each, and the tools it gives their agents. An app whose maker
+// runs a server that gives its tools, as MCP, has no tools here: a turn is
+// handed the server with a token, and the provider it runs on reads the
+// server's tools and uses them. For the rest, this is the only module that
+// talks to the app.
 
 import { createHash, randomBytes } from "node:crypto";
 import { z } from "zod";
 import { CONNECTIONS, type Connected, type Connection, type SignIn } from "./contract.ts";
 import type { Store } from "./store.ts";
 
-/** What a maker's token address answers when it grants: a token that works for `expires_in` seconds, the one that outlasts it, what they let their holder do, and who signed in. */
-type Granted = { access_token: string; expires_in: number; refresh_token?: string; scope?: string; id_token?: string };
+/** What a maker's token address answers when it grants: a token that works for `expires_in` seconds, the one that outlasts it, what they let their holder do, and who signed in: to Google, in `id_token`, and to Notion, the workspace they chose. */
+type Granted = { access_token: string; expires_in: number; refresh_token?: string; scope?: string; id_token?: string; workspace_name?: string };
 type Refused = { error: string; error_description?: string };
 
 /**
- * The makers of the apps, and how a person signs in with each: OAuth's
- * authorization code flow with PKCE, which is how an app that can keep no
- * secret signs in. `authorize` is the maker's page the person signs in on,
- * `asks` is what that page takes besides what OAuth names, and `token` is
- * where the code the page hands back is swapped for tokens. `scopes` go with
- * every sign-in, to learn who signed in, which `account` reads from what was
- * granted. `redirect` is the address the page goes to once the person has
- * signed in, for the client id the maker gave Sidebots.
+ * The tool servers of the connections a person has made whose makers run one,
+ * by connection: each with its address and a token that asks it as the person.
  */
-const MAKERS = {
+export type Servers = Partial<Record<Connection, { url: string; token: string }>>;
+
+const NOTION = "https://mcp.notion.com/mcp";
+
+/**
+ * How a person signs in with an app's maker: OAuth's authorization code flow
+ * with PKCE, which is how an app that can keep no secret signs in.
+ * `authorize` is the maker's page the person signs in on, `asks` is what that
+ * page takes besides what OAuth names, and `token` is where the code the page
+ * hands back is swapped for tokens. `scopes` go with every sign-in.
+ * `resource` is the server the tokens are for, when the maker is told it with
+ * every request. `account` reads who signed in from what was granted, when
+ * the maker says. `redirect` is the address the page goes to once the person
+ * has signed in, for the client id Sidebots signs in with.
+ */
+type SignInWith = {
+  name: string;
+  authorize: string;
+  asks: Record<string, string>;
+  token: string;
+  scopes: string[];
+  resource?: string;
+  account(granted: Granted): string | undefined;
+  redirect(client: string): string;
+};
+
+/** The makers of the apps. */
+const MAKERS: Record<"google" | "notion", SignInWith> = {
   google: {
     name: "Google",
     authorize: "https://accounts.google.com/o/oauth2/v2/auth",
     // Offline access has Google grant a token that lasts, and asking for consent has it grant one at every sign-in, not only the first.
     asks: { access_type: "offline", prompt: "consent" },
     token: "https://oauth2.googleapis.com/token",
+    // These have Google say who signed in.
     scopes: ["openid", "email"],
     // The id token names the account. It comes straight from Google, so there is no signature to check.
-    account: (granted: Granted) => (JSON.parse(Buffer.from(granted.id_token?.split(".")[1] ?? "", "base64url").toString() || "{}") as { email?: string }).email,
+    account: (granted) => (JSON.parse(Buffer.from(granted.id_token?.split(".")[1] ?? "", "base64url").toString() || "{}") as { email?: string }).email,
     // Google's address for the client of an iOS app: the client id, turned about.
-    redirect: (client: string) => `${client.split(".").reverse().join(".")}:/oauth2redirect`,
+    redirect: (client) => `${client.split(".").reverse().join(".")}:/oauth2redirect`,
+  },
+  notion: {
+    name: "Notion",
+    authorize: "https://mcp.notion.com/authorize",
+    asks: {},
+    token: "https://mcp.notion.com/token",
+    scopes: ["default"],
+    resource: NOTION,
+    // Notion names the workspace the person signed in to, and not the person.
+    account: (granted) => granted.workspace_name,
+    // Notion reads the client from a file, whose address is the client id, and the file lists this address. It is no one app's: the sheet iOS signs in with hands it to the app that opened it.
+    redirect: () => "app.sidebots:/oauth2redirect",
   },
 };
 type Maker = keyof typeof MAKERS;
@@ -151,9 +188,10 @@ const WHEN = "as YYYY-MM-DDTHH:MM by this machine's clock, or as YYYY-MM-DD for 
 
 /**
  * What Sidebots knows of each connection: whose app it is, what its sign-in
- * asks that maker to allow, and the tools it gives the agents.
+ * asks that maker to allow, and the tools it gives the agents, or `server`,
+ * where its maker serves them.
  */
-const APPS: Record<Connection, { maker: Maker; scopes: string[]; tools: AppTool[] }> = {
+const APPS: Record<Connection, { maker: Maker; scopes: string[]; tools: AppTool[]; server?: string }> = {
   gmail: {
     maker: "google",
     scopes: ["https://www.googleapis.com/auth/gmail.readonly", "https://www.googleapis.com/auth/gmail.send"],
@@ -279,6 +317,7 @@ const APPS: Record<Connection, { maker: Maker; scopes: string[]; tools: AppTool[
       }),
     ],
   },
+  notion: { maker: "notion", scopes: [], tools: [], server: NOTION },
 };
 
 /** Every connection's tools, each with the connection it is of. */
@@ -286,8 +325,10 @@ export const CONNECTION_TOOLS = (Object.keys(APPS) as Connection[]).flatMap((con
 
 // How long a sign-in a phone started stays open.
 const SIGN_IN_MS = 10 * 60_000;
-// How long before a token runs out it is replaced.
-const EARLY_MS = 60_000;
+// A token can go to a turn for as long as the turn runs, so one in hand with less than this left is replaced.
+const TURN_MS = 30 * 60_000;
+// How long a maker has to answer a request for tokens, since a turn waits for it before it starts.
+const GRANT_MS = 10_000;
 
 /**
  * A person's connections. `clients` holds the client id each maker gave this
@@ -300,39 +341,61 @@ const EARLY_MS = 60_000;
 export function createConnections(store: Store, clients: Partial<Record<Maker, string>>, request: typeof fetch = fetch, now: () => number = Date.now) {
   // The sign-ins that phones have started and not finished, by the `state` each sent the maker's page off with.
   const signIns = new Map<string, { personId: string; connection: Connection; verifier: string; until: number }>();
-  // The token each connection is asking its app with, until it runs out.
+  // The token each connection is asking its app with, until it runs out, and the next one while its maker is asked for it.
   const tokens = new Map<string, { token: string; until: number }>();
+  const renewals = new Map<string, Promise<string>>();
   const key = (personId: string, connection: Connection) => `${personId} ${connection}`;
 
   /** Asks a maker for tokens. */
-  const grant = async (maker: Maker, fields: Record<string, string>): Promise<Granted | Refused> =>
-    (await request(MAKERS[maker].token, { method: "POST", body: new URLSearchParams({ client_id: clients[maker] ?? "", ...fields }) })).json() as Promise<Granted | Refused>;
+  const grant = async (maker: Maker, fields: Record<string, string>): Promise<Granted | Refused> => {
+    const { token, resource } = MAKERS[maker];
+    const asked = { method: "POST", body: new URLSearchParams({ client_id: clients[maker] ?? "", ...(resource && { resource }), ...fields }), signal: AbortSignal.timeout(GRANT_MS) };
+    return (await request(token, asked)).json() as Promise<Granted | Refused>;
+  };
 
   const listed = (personId: string, connection: Connection): Connected => ({ connection, ...CONNECTIONS[connection], account: store.connection(personId, connection)?.account ?? null });
 
   const hold = (personId: string, connection: Connection, granted: Granted) => {
-    tokens.set(key(personId, connection), { token: granted.access_token, until: now() + granted.expires_in * 1000 - EARLY_MS });
+    tokens.set(key(personId, connection), { token: granted.access_token, until: now() + granted.expires_in * 1000 - TURN_MS });
     return granted.access_token;
   };
 
-  /** A token to ask a connection's app with as the person: the one in hand, or a new one from the maker once that has run out. */
-  async function token(personId: string, connection: Connection): Promise<string> {
+  /** The token a connection is asking its app with, while it lasts. */
+  const inHand = (personId: string, connection: Connection) => {
+    const held = tokens.get(key(personId, connection));
+    return held && held.until > now() ? held.token : undefined;
+  };
+
+  /** A new token for a connection, from its maker. */
+  async function renewed(personId: string, connection: Connection): Promise<string> {
     const { name } = CONNECTIONS[connection];
     const connect = `Call \`connect\` with \`${connection}\`, which asks the person to sign in to it.`;
     const kept = store.connection(personId, connection);
     if (!kept) throw new Told(`${name} isn't connected. ${connect}`);
-    const held = tokens.get(key(personId, connection));
-    if (held && held.until > now()) return held.token;
     const maker = APPS[connection].maker;
     const granted = await grant(maker, { grant_type: "refresh_token", refresh_token: kept.token });
     // The person may have removed the connection, or made it again, while the maker answered. What it said is then of a sign-in that is gone.
-    if (store.connection(personId, connection)?.token !== kept.token) return token(personId, connection);
-    if (!("error" in granted)) return hold(personId, connection, granted);
+    if (store.connection(personId, connection)?.token !== kept.token) return inHand(personId, connection) ?? renewed(personId, connection);
+    if (!("error" in granted)) {
+      // A maker may answer with a new token that lasts, which ends the one before it.
+      if (granted.refresh_token && granted.refresh_token !== kept.token) store.setConnection(personId, connection, { ...kept, token: granted.refresh_token });
+      return hold(personId, connection, granted);
+    }
     if (granted.error !== "invalid_grant") throw new Told(`${MAKERS[maker].name} wouldn't renew the sign-in to ${name}: ${granted.error_description ?? granted.error}`);
     // The person took the connection back at the maker's, or the maker ended it.
     store.setConnection(personId, connection, null);
     tokens.delete(key(personId, connection));
     throw new Told(`${name} is no longer connected. ${connect}`);
+  }
+
+  /** A token to ask a connection's app with as the person: the one in hand, or a new one from the maker once that has run out. */
+  function token(personId: string, connection: Connection): Promise<string> {
+    const held = inHand(personId, connection);
+    if (held && store.connection(personId, connection)) return Promise.resolve(held);
+    // Those that ask at once wait for one new token between them, since a maker may end the token that lasts as it answers with the next.
+    const renewal = renewals.get(key(personId, connection)) ?? renewed(personId, connection).finally(() => renewals.delete(key(personId, connection)));
+    renewals.set(key(personId, connection), renewal);
+    return renewal;
   }
 
   return {
@@ -349,7 +412,7 @@ export function createConnections(store: Store, clients: Partial<Record<Maker, s
     /** Starts the person's sign-in to a connection, and answers where a phone opens it. It fails in words for the person. */
     signIn(personId: string, connection: Connection): SignIn {
       const { maker, scopes } = APPS[connection];
-      const { name, authorize, asks, redirect, scopes: who } = MAKERS[maker];
+      const { name, authorize, asks, redirect, scopes: who, resource } = MAKERS[maker];
       const client = clients[maker];
       if (!client) throw new Error(`Sidebots on your computer isn't set up to sign in to ${name}.`);
       for (const [state, signIn] of signIns) if (signIn.until <= now()) signIns.delete(state);
@@ -357,6 +420,7 @@ export function createConnections(store: Store, clients: Partial<Record<Maker, s
       signIns.set(state, { personId, connection, verifier, until: now() + SIGN_IN_MS });
       const asked = {
         ...asks,
+        ...(resource && { resource }),
         client_id: client,
         redirect_uri: redirect(client),
         response_type: "code",
@@ -401,6 +465,17 @@ export function createConnections(store: Store, clients: Partial<Record<Maker, s
     remove(personId: string, connection: Connection): void {
       store.setConnection(personId, connection, null);
       tokens.delete(key(personId, connection));
+    },
+
+    /**
+     * The tool servers of the connections the person has made whose makers
+     * run one, each with a token that lasts a turn. One whose maker won't
+     * renew its sign-in, or can't be reached, is left out.
+     */
+    async servers(personId: string): Promise<Servers> {
+      const made = (Object.keys(APPS) as Connection[]).flatMap((connection) => (APPS[connection].server && store.connection(personId, connection) ? [{ connection, url: APPS[connection].server }] : []));
+      const each = await Promise.all(made.map(({ connection, url }) => token(personId, connection).then((held) => [[connection, { url, token: held }]] as const, () => [])));
+      return Object.fromEntries(each.flat());
     },
 
     /** Uses a tool of one of the person's connections as them. Answers in words the agent reads, also when the connection isn't made or its app refuses. */

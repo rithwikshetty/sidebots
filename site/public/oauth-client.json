@@ -1,0 +1,17 @@
+{
+  "client_id": "https://sidebots.app/oauth-client.json",
+  "client_name": "Sidebots",
+  "client_uri": "https://sidebots.app",
+  "logo_uri": "https://sidebots.app/icon.png",
+  "redirect_uris": [
+    "app.sidebots:/oauth2redirect"
+  ],
+  "grant_types": [
+    "authorization_code",
+    "refresh_token"
+  ],
+  "response_types": [
+    "code"
+  ],
+  "token_endpoint_auth_method": "none"
+}

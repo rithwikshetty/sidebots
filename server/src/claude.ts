@@ -17,7 +17,8 @@ import {
   type SDKResultMessage,
   type SDKUserMessage,
 } from "@anthropic-ai/claude-agent-sdk";
-import type { Limit, Question } from "./contract.ts";
+import type { Servers } from "./connections.ts";
+import { CONNECTIONS, type Connection, type Limit, type Question } from "./contract.ts";
 import { environment, inFolder, program } from "./programs.ts";
 import { SHOW, short, toolQuestion, toolsFor, type Driver, type Prompt, type RunTurn } from "./runner.ts";
 
@@ -127,7 +128,8 @@ function inbox() {
  * the `description` Claude Code lets an agent give with a command, and with
  * the command's first line when the agent gave none. A page leads with its
  * site, a file with its name, and a connection's tool with what it is called. `connection` is the
- * connection in the person's Claude Code that the tool comes from, when it comes from one.
+ * connection the tool comes from, when it comes from one: one in the person's Claude Code, or one
+ * made in Sidebots whose maker serves its tools.
  */
 export function question(toolName: string, input: Record<string, unknown>, connection: string | undefined, why: string | undefined): Question {
   const given = (name: string) => (typeof input[name] === "string" ? input[name] : "");
@@ -160,10 +162,14 @@ export function question(toolName: string, input: Record<string, unknown>, conne
     const title = input.replace_all === true ? "Change every match in a file" : "Change a file";
     return ask("file", title, basename(path), `${path}\n\n${lines("-", before)}\n${lines("+", after)}`, [where, ["Changes", count(before.length > after.length ? before : after)]]);
   }
-  // A connection's tool is named mcp__<connection>__<tool>.
-  const { title, what, facts, detail } = toolQuestion(connection, connection ? toolName.split("__").slice(2).join("__") : toolName, input);
+  // A connection's tool is named mcp__<connection>__<tool>. A connection made in Sidebots goes by the name the apps show for it.
+  const from = connection && (Object.hasOwn(CONNECTIONS, connection) ? CONNECTIONS[connection as Connection].name : connection);
+  const { title, what, facts, detail } = toolQuestion(from, connection ? toolName.split("__").slice(2).join("__") : toolName, input);
   return ask("tool", title, what, detail, facts);
 }
+
+/** The tool servers of a person's connections, as Claude Code takes them. */
+const remote = (servers: Servers) => Object.fromEntries(Object.entries(servers).map(([name, { url, token }]) => [name, { type: "http" as const, url, headers: { Authorization: `Bearer ${token}` } }]));
 
 /**
  * Runs a turn through Claude Code. A message the person sends while the turn
@@ -184,8 +190,19 @@ export function question(toolName: string, input: Record<string, unknown>, conne
  */
 const runTurn: RunTurn = async (turn) => {
   const { prompt, followUps, seen, replied, ask, limits, cwd, sessionId, configDir, apiKey, model, effort, keepSession, stop } = turn;
-  const [claudeCode, env] = [await program("claude"), await environment()];
-  const tools = toolsFor(turn);
+  const [claudeCode, env, servers] = [await program("claude"), await environment(), await turn.servers()];
+  // A turn that was stopped while a connection's token was asked for never starts.
+  if (stop.signal.aborted) throw new Error("The turn was stopped before it started");
+  // A connection the agent's `connect` makes, to an app whose maker serves its tools, gives the agent those tools in the same turn. `setMcpServers` takes the place of every server the query had from here, Sidebots' own among them, so that one goes with the rest.
+  const tools = toolsFor({
+    ...turn,
+    connect: async (app) => {
+      const said = await turn.connect(app);
+      const now = await turn.servers();
+      if (app in now && !(app in servers)) await run.setMcpServers({ sidebots, ...remote(now) }).catch(() => undefined);
+      return said;
+    },
+  });
   const sidebots = createSdkMcpServer({
     name: "sidebots",
     tools: tools.map((each) => tool(each.name, each.description, each.input, async (input) => text(await each.run(input)))),
@@ -245,7 +262,7 @@ const runTurn: RunTurn = async (turn) => {
       // turned it off for their own Claude Code.
       settings: { autoMemoryEnabled: true, autoMemoryDirectory: join(cwd, "memory"), env: { CLAUDE_CODE_DISABLE_AUTO_MEMORY: "0" } },
       skills: "all",
-      mcpServers: { sidebots },
+      mcpServers: { sidebots, ...remote(servers) },
       allowedTools: tools.filter((each) => !each.checked).map((each) => `mcp__sidebots__${each.name}`),
       permissionMode: "auto",
       // The agent asks the person in its reply, as anyone does in a chat.

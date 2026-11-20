@@ -1846,6 +1846,7 @@ test("an agent asks for a connection, the person makes it by signing in on their
     [
       [{ connection: "gmail", name: "Gmail", allows: "Your agents can search, read and send your mail.", account: null }, "#EA4335", true],
       [{ connection: "calendar", name: "Google Calendar", allows: "Your agents can read your calendar, and add, change and remove its events.", account: null }, "#4285F4", true],
+      [{ connection: "notion", name: "Notion", allows: "Your agents can search and read your Notion, and add to it and change it.", account: null }, null, true],
     ],
   );
 
@@ -1870,7 +1871,7 @@ test("an agent asks for a connection, the person makes it by signing in on their
   assert.deepEqual([swap.get("code"), swap.get("client_id"), swap.get("redirect_uri")], ["one-time", "sidebots-test.apps.googleusercontent.com", signIn.redirect]);
   assert.equal(createHash("sha256").update(swap.get("code_verifier")!).digest("base64url"), page.searchParams.get("code_challenge"));
   await turn;
-  assert.deepEqual(told, [NOT_CONNECTED, "Gmail is connected, as alex@example.com. You and Alex's other agents can use it from now on.", "id m1, unread\nFrom: Anna <anna@example.com>\nSubject: Friday\nSee you at 3"]);
+  assert.deepEqual(told, [NOT_CONNECTED, "Gmail is connected, as alex@example.com. You and Alex's other agents can use it from now on. If you have no tools of its yet, they reach you on your next turn: tell Alex it is connected, and to ask again.", "id m1, unread\nFrom: Anna <anna@example.com>\nSubject: Friday\nSee you at 3"]);
   assert.equal(((await call(ME, "GET", `/agents/${theo.id}/messages`)).json as Message[]).find((message) => message.id === ask.id)!.ask, "allowed");
   // The code works once, and the token that lasts is in a file only this account can read.
   assert.equal((await call(ME, "PUT", "/connections/gmail", { url: back })).json.error, "That sign-in has run out. Start it again.");

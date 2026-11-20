@@ -72,7 +72,7 @@ test("an ask leads with plain words, lists the facts that matter, and keeps the 
   const mail = { to: "bookings@shop.example", subject: "Brake cable", body: "Hello,\n\nPlease confirm.", urgent: false, labels: ["a"] };
   assert.deepEqual(question("mcp__gmail__send_email", mail, "gmail", undefined), {
     kind: "tool",
-    title: "Use gmail",
+    title: "Use Gmail",
     what: "Send email",
     facts: [
       ["To", "bookings@shop.example"],

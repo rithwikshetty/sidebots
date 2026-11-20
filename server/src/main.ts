@@ -271,8 +271,11 @@ if (process.argv[2] === "status") {
 }
 
 store.installStarterAvatars(join(dirname(fileURLToPath(import.meta.url)), "..", "..", "avatars"));
-// The client id a person's sign-in to a Google app names: the one Google gave the Sidebots app on the App Store, or the one a build of your own names.
-const connections = createConnections(store, { google: process.env.SIDEBOTS_GOOGLE_CLIENT ?? "161867342001-s22m1k5cbkf1vg7s9qhsb66cqhs12ehh.apps.googleusercontent.com" });
+// The client id a person's sign-in names. To a Google app it is the one Google gave the Sidebots app on the App Store, or the one a build of your own names. To Notion it is the address of the file on Sidebots' site that says what Sidebots is.
+const connections = createConnections(store, {
+  google: process.env.SIDEBOTS_GOOGLE_CLIENT ?? "161867342001-s22m1k5cbkf1vg7s9qhsb66cqhs12ehh.apps.googleusercontent.com",
+  notion: "https://sidebots.app/oauth-client.json",
+});
 const queue = createQueue(store, { claude, codex }, connections);
 for (const agentId of store.requeueInterrupted()) void queue.kick(agentId);
 queue.startClock();

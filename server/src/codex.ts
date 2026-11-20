@@ -285,8 +285,12 @@ const runTurn = (start: () => Promise<Start>): RunTurn => async (turn) => {
       approvalsReviewer: "auto_review",
       sandbox: "workspace-write",
       developerInstructions: `${MEMORY}\n\n${SHOW}`,
-      // Codex's own memory is one for the whole config folder, and stays out of an agent's sessions both ways.
-      config: { "memories.use_memories": false, "memories.generate_memories": false },
+      // Codex's own memory is one for the whole config folder, and stays out of an agent's sessions both ways. The tool servers of the person's connections go in as Codex's settings name one, and Codex reads their tools and uses them.
+      config: {
+        "memories.use_memories": false,
+        "memories.generate_memories": false,
+        ...Object.fromEntries(Object.entries(await turn.servers()).map(([name, { url, token }]) => [`mcp_servers.${name}`, { url, http_headers: { Authorization: `Bearer ${token}` } }])),
+      },
     };
     // A thread keeps the tools it starts with, so it starts with them all, and `send_update` answers for itself in a turn nobody waits on.
     const tools = toolsFor({ ...turn, sendUpdate: turn.sendUpdate ?? (() => "Nobody is waiting on this turn, so there is nobody to update. Carry on.") });

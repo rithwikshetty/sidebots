@@ -86,6 +86,7 @@ function setup({ signedIn = true, keyLogin = false } = {}) {
     askAgent: () => "",
     connect: async () => "",
     useConnection: async (tool) => `Used ${tool}.`,
+    servers: async () => ({}),
     ask: async (question) => (asks.push(question), { allowed: true }),
     limits: (said) => limits.push(said),
     ...rest,
@@ -208,6 +209,21 @@ test("a tool that acts as the person outside the machine asks them first, and on
   const used: string[] = [];
   await driver.runTurn(turn("tool calendar_remove_event e1", { stop, ask: async () => (stop.abort(), { allowed: true }), useConnection: async (tool) => (used.push(tool), "") }));
   assert.deepEqual(used, []);
+});
+
+test("a thread is given the tool servers of the person's connections as it starts and as it resumes, each with its token, as Codex's settings name one", async () => {
+  const { driver, turn, requests } = setup();
+  const servers = async () => ({ notion: { url: "https://mcp.notion.com/mcp", token: "access-1" } });
+  const { sessionId } = await driver.runTurn(turn("hello", { servers }));
+  // A thread reads its servers as it starts and as it resumes, so one made since the last turn is there.
+  await driver.runTurn(turn("hello", { sessionId, servers }));
+  for (const method of ["thread/start", "thread/resume"]) {
+    assert.deepEqual(requests().find((each) => each.method === method)!.params.config, {
+      "memories.use_memories": false,
+      "memories.generate_memories": false,
+      "mcp_servers.notion": { url: "https://mcp.notion.com/mcp", http_headers: { Authorization: "Bearer access-1" } },
+    });
+  }
 });
 
 test("what Codex asks its client before it acts goes to the person, whose answer it takes", async () => {

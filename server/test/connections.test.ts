@@ -129,3 +129,57 @@ test("the calendar's events are looked at, added, changed and removed, with time
   assert.equal(await use("calendar_remove_event", { id: "e1" }), "Removed.");
   assert.equal(sent.at(-1)![0], "DELETE https://www.googleapis.com/calendar/v3/calendars/primary/events/e1?sendUpdates=all");
 });
+
+test("a turn is handed Notion's own server with a token, once the person has signed in with the file that says what Sidebots is", async () => {
+  const store = openStore(mkdtempSync(join(tmpdir(), "sidebots-test-")));
+  const person = store.addPerson({ name: "Alex", provider: "claude", configDir: "/config/alex" });
+  // Gmail is connected too, and has no server: its tools are Sidebots' own.
+  store.setConnection(person.id, "gmail", { account: "alex@example.com", token: "lasting" });
+  const swaps: URLSearchParams[] = [];
+  let lasting = 0;
+  let time = 0;
+  let reached = true;
+  // Notion ends the token that lasts as it answers with the next.
+  const connections = createConnections(
+    store,
+    { google: "sidebots-test.apps.googleusercontent.com", notion: "https://sidebots.example/oauth-client.json" },
+    async (url, init) => {
+      assert.equal(String(url), "https://mcp.notion.com/token");
+      if (!reached) throw new Error("fetch failed");
+      const swap = new URLSearchParams(String(init?.body));
+      swaps.push(swap);
+      if (swap.get("grant_type") === "refresh_token" && swap.get("refresh_token") !== `lasting-${lasting}`) return Response.json({ error: "invalid_grant" }, { status: 400 });
+      return Response.json({ access_token: `access-${++lasting}`, expires_in: 3600, refresh_token: `lasting-${lasting}`, workspace_name: "Home" });
+    },
+    () => time,
+  );
+  assert.deepEqual(await connections.servers(person.id), {});
+
+  // Notion's page is asked for tokens for its tool server, and comes back to the address the file lists.
+  const signIn = connections.signIn(person.id, "notion");
+  const page = new URL(signIn.url);
+  assert.equal(`${page.origin}${page.pathname}`, "https://mcp.notion.com/authorize");
+  assert.deepEqual(
+    [signIn.redirect, ...["client_id", "redirect_uri", "scope", "resource", "code_challenge_method"].map((name) => page.searchParams.get(name))],
+    ["app.sidebots:/oauth2redirect", "https://sidebots.example/oauth-client.json", "app.sidebots:/oauth2redirect", "default", "https://mcp.notion.com/mcp", "S256"],
+  );
+  // Notion names the workspace the person signed in to, which the connection is listed as.
+  const connected = await connections.finish(person.id, "notion", `${signIn.redirect}?state=${page.searchParams.get("state")}&code=one-time`);
+  assert.deepEqual([connected.account, store.connection(person.id, "notion")], ["Home", { account: "Home", token: "lasting-1" }]);
+  assert.deepEqual(["code", "client_id", "resource"].map((name) => swaps[0].get(name)), ["one-time", "https://sidebots.example/oauth-client.json", "https://mcp.notion.com/mcp"]);
+  assert.deepEqual(await connections.servers(person.id), { notion: { url: "https://mcp.notion.com/mcp", token: "access-1" } });
+
+  // A token with less than half an hour left wouldn't last a turn. Turns that start at once ask for one new token between them, and the new token that lasts is kept.
+  time = 1_800_000;
+  const [one, other] = await Promise.all([connections.servers(person.id), connections.servers(person.id)]);
+  assert.deepEqual([one.notion?.token, other.notion?.token], ["access-2", "access-2"]);
+  assert.deepEqual([swaps.length, swaps[1].get("refresh_token"), store.connection(person.id, "notion")?.token], [2, "lasting-1", "lasting-2"]);
+
+  // A Notion that can't be reached leaves its server out of the turn and the connection be. One that has ended the sign-in has the connection forgotten.
+  time = 3_600_000;
+  reached = false;
+  assert.deepEqual([await connections.servers(person.id), connections.account(person.id, "notion")], [{}, "Home"]);
+  reached = true;
+  lasting = 9;
+  assert.deepEqual([await connections.servers(person.id), connections.account(person.id, "notion")], [{}, null]);
+});
