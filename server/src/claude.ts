@@ -19,7 +19,7 @@ import {
 } from "@anthropic-ai/claude-agent-sdk";
 import type { Limit, Question } from "./contract.ts";
 import { environment, inFolder, program } from "./programs.ts";
-import { short, toolsFor, type Driver, type Prompt, type RunTurn } from "./runner.ts";
+import { SHOW, short, toolsFor, type Driver, type Prompt, type RunTurn } from "./runner.ts";
 
 // Added to Claude Code's own prompt. An ask leads with a command's `description`, which Claude Code leaves the agent free to skip, and agents skip it unless told.
 const DESCRIBE_COMMANDS =
@@ -249,7 +249,7 @@ const runTurn: RunTurn = async (turn) => {
       env: { ...inFolder("claude", configDir, env), ...(apiKey && { ANTHROPIC_API_KEY: apiKey }) },
       settingSources: ["user", "project"],
       // Claude Code's full prompt. Left out, the SDK gives a short one that says nothing of memory.
-      systemPrompt: { type: "preset", preset: "claude_code", append: DESCRIBE_COMMANDS },
+      systemPrompt: { type: "preset", preset: "claude_code", append: `${DESCRIBE_COMMANDS}\n\n${SHOW}` },
       // Claude Code's own memory, kept in the agent's folder so it outlives
       // every session. It is on for a Sidebots agent even when its owner has
       // turned it off for their own Claude Code.

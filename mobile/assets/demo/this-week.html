@@ -1,0 +1,15 @@
+<!doctype html>
+<meta charset="utf-8">
+<style>
+  .row { display: grid; grid-template-columns: 1fr auto; row-gap: 5px; font-size: 15px; }
+  .row + .row { margin-top: 12px; }
+  .row span + span { color: var(--ink2); font-variant-numeric: tabular-nums; }
+  .bar { grid-column: 1 / -1; height: 8px; border-radius: 4px; background: var(--field); }
+  .bar i { display: block; width: var(--share); height: 100%; border-radius: 4px; background: var(--ink2); }
+  .most i { background: var(--tint); }
+</style>
+<div class="row most"><span>Groceries</span><span>$410</span><div class="bar"><i style="--share: 100%"></i></div></div>
+<div class="row"><span>Eating out</span><span>$265</span><div class="bar"><i style="--share: 65%"></i></div></div>
+<div class="row"><span>Transport</span><span>$180</span><div class="bar"><i style="--share: 44%"></i></div></div>
+<div class="row"><span>Bills</span><span>$160</span><div class="bar"><i style="--share: 39%"></i></div></div>
+<div class="row"><span>Everything else</span><span>$125</span><div class="bar"><i style="--share: 30%"></i></div></div>

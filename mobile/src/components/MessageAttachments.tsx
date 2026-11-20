@@ -19,6 +19,7 @@ import { useReducedMotion } from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { WebView } from "react-native-webview";
 import { Maximize2, Share as ShareIcon, X } from "lucide-react-native";
+import { EdgeFade } from "@/components/EdgeFade";
 import { IconButton } from "@/components/IconButton";
 import { FILE_ICONS, fileKind, fileKindWord, formatFileSize } from "@/lib/files";
 import { haptics } from "@/lib/haptics";
@@ -36,10 +37,11 @@ const FILE_CARD_WIDTH = 280;
 const VIEWER_TOP_BAR = 56;
 /** How far a picture at rest is pulled down before the viewer lets it go. */
 const DISMISS_PULL = 90;
-// A page in the chat is as tall as what it holds, between these, and the third until it is measured. Full screen shows the rest of a longer one.
+// A page in the chat is as tall as what it holds, between these, and the third until it is measured. Full screen shows the rest of a longer one, whose last points in the chat fade out.
 const PAGE_SHORTEST = 60;
 const PAGE_TALLEST = 480;
 const PAGE_UNMEASURED = 160;
+const PAGE_FADE = 56;
 // A touch on a page is a tap when the finger lifts this near to where it came down, and a link may open this long after one.
 const TAP_SLOP = 10;
 const TAP_MS = 1000;
@@ -47,7 +49,7 @@ const TAP_MS = 1000;
 // Each photo's shape once it has loaded, so a lone photo keeps its shape when the chat draws it again.
 const shapes = new Map<string, { width: number; height: number }>();
 
-// Each page's text and the copy of it saved on the phone, and its height in the chat once measured, so a page scrolled away and back shows as it was.
+// Each page's text and the copy of it saved on the phone, and how tall its content is once measured, so a page scrolled away and back shows as it was.
 const pages = new Map<string, { html: string; file: string }>();
 const pageHeights = new Map<string, number>();
 
@@ -336,13 +338,14 @@ function PageView({ html, scrolls, onHeight }: { html: string; scrolls: boolean;
  * A page the agent sent, as T3 Code shows one: drawn in the chat above the
  * reply, in the chat's colours, as tall as what it holds up to a limit. The
  * button beside its name opens it full screen, where a longer page scrolls.
+ * A longer page fades out at that limit, over "Show all", which opens it too.
  * A page the phone can't fetch shows as its file card.
  */
 export function MessagePage({ page }: { page: Shown }) {
   const theme = useTheme();
   const [saved, setSaved] = useState(pages.get(page.uri));
   const [failed, setFailed] = useState(false);
-  const [height, setHeight] = useState(pageHeights.get(page.uri) ?? PAGE_UNMEASURED);
+  const [measured, setMeasured] = useState(pageHeights.get(page.uri));
   const [full, setFull] = useState(false);
   useEffect(() => {
     if (pages.has(page.uri)) return;
@@ -362,7 +365,10 @@ export function MessagePage({ page }: { page: Shown }) {
     // The page is the same one for as long as its address is.
   }, [page.uri]);
   if (failed) return <FileCard file={page} />;
-  const title = page.name.replace(/\.html$/i, "");
+  // The computer writes a dash for each space in a sent file's name, so the title reads them as spaces.
+  const title = page.name.replace(/\.html$/i, "").replace(/[-_]+/g, " ");
+  const height = measured === undefined ? PAGE_UNMEASURED : Math.min(PAGE_TALLEST, Math.max(PAGE_SHORTEST, measured));
+  const cut = measured !== undefined && measured > PAGE_TALLEST;
   return (
     <View style={styles.pageCard}>
       <View style={styles.pageHead}>
@@ -376,16 +382,21 @@ export function MessagePage({ page }: { page: Shown }) {
           <PageView
             html={saved.html}
             scrolls={false}
-            onHeight={(measured) => {
-              const fitted = Math.min(PAGE_TALLEST, Math.max(PAGE_SHORTEST, measured));
-              pageHeights.set(page.uri, fitted);
-              setHeight(fitted);
+            onHeight={(tall) => {
+              pageHeights.set(page.uri, tall);
+              setMeasured(tall);
             }}
           />
         ) : (
           <ActivityIndicator style={StyleSheet.absoluteFill} color={theme.ink2} />
         )}
+        {cut ? <EdgeFade edge="bottom" height={PAGE_FADE} solid={0} /> : null}
       </View>
+      {cut ? (
+        <Pressable onPress={() => setFull(true)} hitSlop={8} accessibilityRole="button" accessibilityLabel={`Show all of ${title}`} style={styles.pageMore}>
+          <Text style={[styles.pageMoreText, { color: theme.tintInk }]}>Show all</Text>
+        </Pressable>
+      ) : null}
       {/* Share hands on the copy the phone already has, so it works out of the computer's reach. */}
       {full && saved ? <FullScreenPage page={{ ...page, uri: saved.file }} title={title} html={saved.html} onClose={() => setFull(false)} /> : null}
     </View>
@@ -442,9 +453,12 @@ const styles = StyleSheet.create({
   cardText: { flex: 1, minWidth: 0, gap: 1 },
   name: { fontSize: 15, lineHeight: 20, fontWeight: "500" },
   meta: { fontSize: 13, lineHeight: 18 },
-  pageCard: { alignSelf: "stretch" },
+  // A page ends where its content does, so it keeps its own distance from the bubble under it.
+  pageCard: { alignSelf: "stretch", marginBottom: 10 },
   pageHead: { flexDirection: "row", alignItems: "center", gap: 8, paddingLeft: 2 },
   pageName: { flex: 1, fontSize: 13, lineHeight: 18 },
+  pageMore: { alignSelf: "flex-start", paddingLeft: 2, paddingVertical: 4 },
+  pageMoreText: { fontSize: 13, lineHeight: 18, fontWeight: "600" },
   pageView: { flex: 1 },
   pageWeb: { flex: 1, backgroundColor: "transparent" },
   pageBar: { height: VIEWER_TOP_BAR, flexDirection: "row", alignItems: "center", paddingHorizontal: 16, gap: 12 },

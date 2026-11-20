@@ -8,7 +8,7 @@ import { deviceName } from "expo-device";
 import * as SecureStore from "expo-secure-store";
 import Storage from "expo-sqlite/kv-store";
 import { CONTRACT_HEADER, CONTRACT_VERSION, type Paired } from "@server/contract";
-import { DEMO_HOST, demoFetch, demoSheet, isDemo } from "./demo";
+import { DEMO_HOST, demoFetch, demoFile, demoSheet, isDemo } from "./demo";
 
 const HOST_KEY = "host";
 const MACHINE_KEY = "machine";
@@ -172,9 +172,9 @@ export function avatarSheet(avatarId: string): Remote {
   return pairing?.host === DEMO_HOST ? { uri: demoSheet(avatarId), headers: {} } : remote(`/avatars/${avatarId}/spritesheet`);
 }
 
-/** A file sent with a message, from its path in the agent's folder. */
+/** A file sent with a message, from its path in the agent's folder. The demo computer's are in the app's own files. */
 export function attachment(agentId: string, path: string): Remote {
-  return remote(`/agents/${agentId}/${path}`);
+  return pairing?.host === DEMO_HOST ? { uri: demoFile(path), headers: {} } : remote(`/agents/${agentId}/${path}`);
 }
 
 /** Calls the computer this phone has paired with. A `body` is sent as JSON, or as it is when it is a form. It fails when the phone leaves that computer before the answer comes. */
