@@ -18,7 +18,7 @@ import {
   type SDKUserMessage,
 } from "@anthropic-ai/claude-agent-sdk";
 import type { Servers } from "./connections.ts";
-import type { Limit, Question } from "./contract.ts";
+import { CONNECTIONS, type Connection, type Limit, type Question } from "./contract.ts";
 import { environment, inFolder, program } from "./programs.ts";
 import { SHOW, short, toolQuestion, toolsFor, type Driver, type Prompt, type RunTurn } from "./runner.ts";
 
@@ -161,8 +161,9 @@ export function question(toolName: string, input: Record<string, unknown>, conne
     const title = input.replace_all === true ? "Change every match in a file" : "Change a file";
     return ask("file", title, basename(path), `${path}\n\n${lines("-", before)}\n${lines("+", after)}`, [where, ["Changes", count(before.length > after.length ? before : after)]]);
   }
-  // A connection's tool is named mcp__<connection>__<tool>.
-  const { title, what, facts, detail } = toolQuestion(connection, connection ? toolName.split("__").slice(2).join("__") : toolName, input);
+  // A connection's tool is named mcp__<connection>__<tool>. A connection made in Sidebots goes by the name the apps show for it.
+  const from = connection && (Object.hasOwn(CONNECTIONS, connection) ? CONNECTIONS[connection as Connection].name : connection);
+  const { title, what, facts, detail } = toolQuestion(from, connection ? toolName.split("__").slice(2).join("__") : toolName, input);
   return ask("tool", title, what, detail, facts);
 }
 
@@ -189,12 +190,13 @@ const remote = (servers: Servers) => Object.fromEntries(Object.entries(servers).
 const runTurn: RunTurn = async (turn) => {
   const { prompt, followUps, seen, replied, ask, limits, cwd, sessionId, configDir, apiKey, model, effort, keepSession, stop } = turn;
   const [claudeCode, env, servers] = [await program("claude"), await environment(), await turn.servers()];
-  // A connection the agent's `connect` makes gives the agent its tools in the same turn.
+  // A connection the agent's `connect` makes, to an app whose maker serves its tools, gives the agent those tools in the same turn. `setMcpServers` takes the place of every server the query had from here, Sidebots' own among them, so that one goes with the rest.
   const tools = toolsFor({
     ...turn,
     connect: async (app) => {
       const said = await turn.connect(app);
-      await run.setMcpServers(remote(await turn.servers())).catch(() => undefined);
+      const now = await turn.servers();
+      if (app in now && !(app in servers)) await run.setMcpServers({ sidebots, ...remote(now) }).catch(() => undefined);
       return said;
     },
   });

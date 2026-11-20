@@ -1784,73 +1784,80 @@ test("an agent that can't finish what another asked tells it why, and a deleted 
   assert.deepEqual((await chat(mochi.id)).map((message) => message.body), ["book my bike in", "I've asked Cog.", "Cog couldn't book it."]);
 });
 
-const GMAIL_SCOPES = "openid https://www.googleapis.com/auth/userinfo.email https://www.googleapis.com/auth/gmail.readonly https://www.googleapis.com/auth/gmail.compose https://www.googleapis.com/auth/gmail.modify";
-const GMAIL_SERVER = "https://gmailmcp.googleapis.com/mcp/v1";
+const GMAIL_SCOPES = "openid https://www.googleapis.com/auth/userinfo.email https://www.googleapis.com/auth/gmail.readonly https://www.googleapis.com/auth/gmail.send";
 
 /**
  * Google, as it answers Sidebots: tokens for the account `email`, which let
- * their holder do what `allows` names. It keeps what it was asked, each as
- * the request and what came with it.
+ * their holder do what `allows` names, and a Gmail with one unread mail. It
+ * keeps what it was asked, each as the request and what came with it.
  */
 function google(web: ReturnType<typeof setup>["web"], email: string, allows = GMAIL_SCOPES) {
   const asked: [request: string, body: string][] = [];
   const state = { ended: false };
   let granted = 0;
+  const mail = {
+    id: "m1",
+    threadId: "t1",
+    labelIds: ["UNREAD"],
+    snippet: "See you at 3",
+    payload: { mimeType: "text/plain", headers: [{ name: "From", value: "Anna <anna@example.com>" }, { name: "Subject", value: "Friday" }], body: { data: Buffer.from("See you at 3, at the shop.").toString("base64url") } },
+  };
   web.request = async (url, init) => {
-    asked.push([`${init?.method ?? "GET"} ${url}`, String(init?.body ?? "")]);
-    assert.equal(url, "https://oauth2.googleapis.com/token");
-    if (state.ended) return Response.json({ error: "invalid_grant", error_description: "Token has been expired or revoked." }, { status: 400 });
-    const first = new URLSearchParams(String(init?.body)).get("grant_type") === "authorization_code";
-    const who = Buffer.from(JSON.stringify({ email })).toString("base64url");
-    return Response.json({ access_token: `access-${++granted}`, expires_in: 3600, scope: allows, ...(first && { refresh_token: "lasting", id_token: `head.${who}.signature` }) });
+    asked.push([`${init?.method ?? "GET"} ${url.split("?")[0]}`, `${new Headers(init?.headers).get("Authorization") ?? ""} ${String(init?.body ?? "")}`.trim()]);
+    if (url === "https://oauth2.googleapis.com/token") {
+      if (state.ended) return Response.json({ error: "invalid_grant", error_description: "Token has been expired or revoked." }, { status: 400 });
+      const first = new URLSearchParams(String(init?.body)).get("grant_type") === "authorization_code";
+      const who = Buffer.from(JSON.stringify({ email })).toString("base64url");
+      return Response.json({ access_token: `access-${++granted}`, expires_in: 3600, scope: allows, ...(first && { refresh_token: "lasting", id_token: `head.${who}.signature` }) });
+    }
+    if (url.startsWith("https://gmail.googleapis.com/gmail/v1/users/me/messages?")) return Response.json({ messages: [{ id: "m1" }] });
+    if (url.startsWith("https://gmail.googleapis.com/gmail/v1/users/me/messages/m1?")) return Response.json(mail);
+    return Response.json({ error: { message: "Requested entity was not found." } }, { status: 404 });
   };
   return { asked, state };
 }
 
-test("an agent asks for a connection, the person makes it by signing in on their phone, and all their agents' turns are then handed its server", async () => {
-  const told: unknown[] = [];
+test("an agent asks for a connection, the person makes it by signing in on their phone, and all their agents then use it", async () => {
+  const told: string[] = [];
   const { home, queue, web, call, say } = setup(async (turn) => {
-    told.push(await turn.servers());
-    if (turn.prompt.text.includes("check my mail")) told.push(await turn.connect("gmail"), await turn.servers());
+    if (turn.prompt.text.includes("check my mail")) {
+      told.push(await turn.useConnection("gmail_search", { query: "is:unread" }));
+      told.push(await turn.connect("gmail"));
+      told.push(await turn.useConnection("gmail_search", { query: "is:unread" }));
+    } else told.push(await turn.useConnection("gmail_read", { id: "m1" }));
     return reply("Done.");
   });
   const { asked } = google(web, "alex@example.com");
   const theo = (await call(ME, "POST", "/agents", { name: "Theo", avatarId: "mochi" })).json;
   const ruby = (await call(ME, "POST", "/agents", { name: "Ruby", avatarId: "mochi" })).json;
   const hers = (await call(HER, "POST", "/agents", { name: "Leo", avatarId: "mochi" })).json;
+  const NOT_CONNECTED = "Gmail isn't connected. Call `connect` with `gmail`, which asks the person to sign in to it.";
 
-  // The agent has no tools of Gmail's, and asks for it with a card in the chat.
+  // The agent finds Gmail isn't connected, and asks for it with a card in the chat.
   await say(ME, theo.id, "check my mail");
   const turn = queue.kick(theo.id);
   await new Promise((resolve) => setTimeout(resolve, 1));
   const ask = ((await call(ME, "GET", `/agents/${theo.id}/messages`)).json as Message[]).at(-1)!;
-  assert.deepEqual([ask.ask, ask.body, ask.question?.kind, ask.question?.connection], ["waiting", "Connect Gmail: Your agents can search and read your mail, write drafts for you to send, and label and bin it.", "connection", "gmail"]);
+  assert.deepEqual([ask.ask, ask.body, ask.question?.kind, ask.question?.connection], ["waiting", "Connect Gmail: Your agents can search, read and send your mail.", "connection", "gmail"]);
   // Each comes with what the app draws it from, its logo among it, so the app lists one it has never heard of.
   const listed = (await call(ME, "GET", "/connections")).json as { connection: string; name: string; allows: string; logo: { path: string; color: string | null }; account: string | null }[];
   assert.deepEqual(
     listed.map(({ logo, ...rest }) => [rest, logo.color, /^M[\d\s.,a-zA-Z-]+$/.test(logo.path)]),
     [
-      [{ connection: "gmail", name: "Gmail", allows: "Your agents can search and read your mail, write drafts for you to send, and label and bin it.", account: null }, "#EA4335", true],
-      [{ connection: "calendar", name: "Google Calendar", allows: "Your agents can read your calendars, add, change and remove events, and answer invitations.", account: null }, "#4285F4", true],
+      [{ connection: "gmail", name: "Gmail", allows: "Your agents can search, read and send your mail.", account: null }, "#EA4335", true],
+      [{ connection: "calendar", name: "Google Calendar", allows: "Your agents can read your calendar, and add, change and remove its events.", account: null }, "#4285F4", true],
       [{ connection: "notion", name: "Notion", allows: "Your agents can search and read your Notion, and add to it and change it.", account: null }, null, true],
     ],
   );
 
-  // The phone opens Google's page, which is asked for what Gmail's server needs and comes back to the app.
+  // The phone opens Google's page, which is asked for what Gmail needs and comes back to the app.
   const signIn = (await call(ME, "POST", "/connections/gmail/sign-in")).json as { url: string; redirect: string };
   const page = new URL(signIn.url);
   assert.equal(signIn.redirect, "com.googleusercontent.apps.sidebots-test:/oauth2redirect");
   assert.equal(`${page.origin}${page.pathname}`, "https://accounts.google.com/o/oauth2/v2/auth");
   assert.deepEqual(
     ["client_id", "redirect_uri", "response_type", "scope", "access_type", "code_challenge_method"].map((name) => page.searchParams.get(name)),
-    [
-      "sidebots-test.apps.googleusercontent.com",
-      signIn.redirect,
-      "code",
-      "openid email https://www.googleapis.com/auth/gmail.readonly https://www.googleapis.com/auth/gmail.compose https://www.googleapis.com/auth/gmail.modify",
-      "offline",
-      "S256",
-    ],
+    ["sidebots-test.apps.googleusercontent.com", signIn.redirect, "code", "openid email https://www.googleapis.com/auth/gmail.readonly https://www.googleapis.com/auth/gmail.send", "offline", "S256"],
   );
   const back = `${signIn.redirect}?state=${page.searchParams.get("state")}&code=one-time`;
   // A sign-in is its own person's to finish, and Sidebots has no connection by another name.
@@ -1864,31 +1871,31 @@ test("an agent asks for a connection, the person makes it by signing in on their
   assert.deepEqual([swap.get("code"), swap.get("client_id"), swap.get("redirect_uri")], ["one-time", "sidebots-test.apps.googleusercontent.com", signIn.redirect]);
   assert.equal(createHash("sha256").update(swap.get("code_verifier")!).digest("base64url"), page.searchParams.get("code_challenge"));
   await turn;
-  const gmail = { gmail: { url: GMAIL_SERVER, token: "access-1" } };
-  assert.deepEqual(told, [
-    {},
-    "Gmail is connected, as alex@example.com. Its tools reach you and Alex's other agents by your next turn at the latest. If you don't have them yet, tell Alex it is connected and to ask again.",
-    gmail,
-  ]);
+  assert.deepEqual(told, [NOT_CONNECTED, "Gmail is connected, as alex@example.com. You and Alex's other agents can use it from now on. If you have no tools of its yet, they reach you on your next turn: tell Alex it is connected, and to ask again.", "id m1, unread\nFrom: Anna <anna@example.com>\nSubject: Friday\nSee you at 3"]);
   assert.equal(((await call(ME, "GET", `/agents/${theo.id}/messages`)).json as Message[]).find((message) => message.id === ask.id)!.ask, "allowed");
   // The code works once, and the token that lasts is in a file only this account can read.
   assert.equal((await call(ME, "PUT", "/connections/gmail", { url: back })).json.error, "That sign-in has run out. Start it again.");
   assert.equal(statSync(join(home, "connections.json")).mode & 0o777, 0o600);
 
-  // Another of the person's agents is handed the server too, with the token in hand. Another person's has none of it.
+  // Another of the person's agents has the connection too, on the token in hand. Another person's has none of it.
   await say(ME, ruby.id, "read it");
   await queue.kick(ruby.id);
-  assert.deepEqual(told.at(-1), gmail);
+  assert.equal(told.at(-1), "From: Anna <anna@example.com>\nSubject: Friday\n\nSee you at 3, at the shop.");
+  assert.deepEqual(asked.filter(([request]) => request.startsWith("GET")).map(([, sent]) => sent), ["Bearer access-1", "Bearer access-1", "Bearer access-1"]);
   await say(HER, hers.id, "read it");
   await queue.kick(hers.id);
-  assert.deepEqual(told.at(-1), {});
+  assert.equal(told.at(-1), NOT_CONNECTED);
   assert.equal((await call(HER, "GET", "/connections")).json[0].account, null);
 
-  // A connection the person removes is gone for all their agents.
+  // What Gmail refuses, the agent is told. A connection the person removes is gone for all their agents.
+  web.request = async () => Response.json({ error: { message: "Requested entity was not found." } }, { status: 404 });
+  await say(ME, ruby.id, "read it");
+  await queue.kick(ruby.id);
+  assert.equal(told.at(-1), "Gmail refused that: Requested entity was not found.");
   assert.equal((await call(ME, "DELETE", "/connections/gmail")).status, 200);
   await say(ME, ruby.id, "read it");
   await queue.kick(ruby.id);
-  assert.deepEqual(told.at(-1), {});
+  assert.equal(told.at(-1), NOT_CONNECTED);
 });
 
 test("an agent is told when the person doesn't make a connection, or allows less than it needs", async () => {
@@ -1920,12 +1927,12 @@ test("an agent is told when the person doesn't make a connection, or allows less
   assert.deepEqual(told, ["Alex said no to this. Don't do it, or the same thing another way. Finish the rest and say in your reply what you left out."]);
 });
 
-test("a connection gets a new token once the one in hand won't last a turn, and is forgotten once Google has ended it", async () => {
+test("a connection gets a new token once the one in hand has run out, and is forgotten once Google has ended it", async () => {
   let time = new Date(2026, 10, 20, 9, 0).getTime();
-  const told: unknown[] = [];
+  const told: string[] = [];
   const { queue, web, call, say } = setup(
     async (turn) => {
-      told.push((await turn.servers()).gmail?.token);
+      told.push(await turn.useConnection("gmail_read", { id: "m1" }));
       return reply("Done.");
     },
     () => time,
@@ -1934,21 +1941,21 @@ test("a connection gets a new token once the one in hand won't last a turn, and 
   const agent = (await call(ME, "POST", "/agents", { name: "Theo", avatarId: "mochi" })).json;
   const signIn = (await call(ME, "POST", "/connections/gmail/sign-in")).json as { url: string; redirect: string };
   await call(ME, "PUT", "/connections/gmail", { url: `${signIn.redirect}?state=${new URL(signIn.url).searchParams.get("state")}&code=one-time` });
-  const handed = async () => {
+  const read = async () => {
     await say(ME, agent.id, "read it");
     await queue.kick(agent.id);
-    return told.at(-1);
+    return asked.at(-1)!;
   };
 
-  // Google's token lasts an hour, and one with less than half an hour left is replaced, so it lasts the turn it goes to.
-  assert.equal(await handed(), "access-1");
-  time += 1800_000;
-  assert.equal(await handed(), "access-2");
-  assert.deepEqual(asked.at(-1), ["POST https://oauth2.googleapis.com/token", "client_id=sidebots-test.apps.googleusercontent.com&grant_type=refresh_token&refresh_token=lasting"]);
+  assert.equal((await read())[1], "Bearer access-1");
+  time += 3600_000;
+  assert.equal((await read())[1], "Bearer access-2");
+  assert.deepEqual(asked.at(-2), ["POST https://oauth2.googleapis.com/token", "client_id=sidebots-test.apps.googleusercontent.com&grant_type=refresh_token&refresh_token=lasting"]);
 
   // The person took the connection back at Google, which the next token asked for finds out.
   state.ended = true;
-  time += 1800_000;
-  assert.equal(await handed(), undefined);
+  time += 3600_000;
+  await read();
+  assert.equal(told.at(-1), "Gmail is no longer connected. Call `connect` with `gmail`, which asks the person to sign in to it.");
   assert.equal((await call(ME, "GET", "/connections")).json[0].account, null);
 });
