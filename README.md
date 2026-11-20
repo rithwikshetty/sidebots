@@ -15,7 +15,7 @@ The full design is in [docs/specs/2026-11-15-sidebots.md](docs/specs/2026-11-15-
 
 ## Sidebots for Mac
 
-Sidebots for Mac is the server as a menu bar app. It runs on a Mac with Apple silicon and macOS 14 or later, and carries everything the server needs but the providers: Node, the server itself, the starter avatars and `cloudflared`. Your agents run on the Claude Code or the Codex already on the Mac.
+Sidebots for Mac is the server as a menu bar app. It runs on a Mac with Apple silicon and macOS 26 or later, and carries everything the server needs but the providers: Node, the server itself, the starter avatars and `cloudflared`. Your agents run on the Claude Code or the Codex already on the Mac.
 
 1. Open `Sidebots.dmg`, drag Sidebots to Applications, and open it from there.
 2. Choose the provider your agents start on, Claude Code or Codex, and how they sign in to it: with the provider on this Mac when it is already signed in, with "Sign in to Claude" or "Sign in to ChatGPT", which opens that sign-in in your browser, or with an API key. If the provider isn't on the Mac yet, the window offers to run its maker's own installer, or waits while you install it yourself.
@@ -155,7 +155,7 @@ The Codex driver speaks a protocol parts of which Codex calls experimental, and 
 
 ## Build the Mac app
 
-On a Mac with Apple silicon, Xcode, pnpm and [uv](https://docs.astral.sh/uv/):
+On a Mac with Apple silicon, Xcode 26 or later, pnpm and [uv](https://docs.astral.sh/uv/):
 
 ```sh
 mac/build.sh
