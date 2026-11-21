@@ -6,7 +6,7 @@
 module.exports = (config) => ({
   type: "notification-service",
   bundleIdentifier: ".notifications",
-  deploymentTarget: "16.4",
+  deploymentTarget: config.ios.deploymentTarget,
   frameworks: ["CryptoKit"],
   entitlements: { "keychain-access-groups": config.ios.entitlements["keychain-access-groups"] },
 });

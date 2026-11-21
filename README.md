@@ -32,7 +32,7 @@ The Mac app uses the same data folder and port as a server you start yourself, s
 - The provider your agents run on, or both: [Claude Code](https://claude.com/claude-code) 2.1.325 or later, and [Codex](https://developers.openai.com/codex) 0.170.0 or later. The server finds them the way your terminal does, and `pnpm providers` says what it found.
 - [cloudflared](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/), which gives the machine its address. On a Mac, `brew install cloudflared`.
 - For each person, a Claude subscription or an Anthropic API key for Claude Code, or a ChatGPT plan or an OpenAI API key for Codex.
-- For the phone app, an iPhone or an iPad. The app builds for both, on a Mac with Xcode.
+- For the phone app, an iPhone or an iPad on iOS 18 or later. The app builds for both, on a Mac with Xcode.
 - For the phone app, a paid Apple Developer account. The app uses push notifications, which a free account can't sign.
 
 ## Set up the server

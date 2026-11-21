@@ -24,6 +24,8 @@ const config: ExpoConfig = {
     supportsTablet: true,
     bundleIdentifier: identifier,
     appleTeamId: process.env.SIDEBOTS_APPLE_TEAM_ID,
+    // The oldest iOS the app runs on, and its extensions in targets/ with it.
+    deploymentTarget: "18.0",
     // The app's build number, and its extensions'. testflight.sh sets it, since App Store Connect takes each number once.
     buildNumber: process.env.SIDEBOTS_BUILD_NUMBER,
     // A working agent shows as a Live Activity, which the widget in targets/activity draws.
