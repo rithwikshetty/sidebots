@@ -4,6 +4,8 @@ import { useRouter } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import Animated, { LayoutAnimationConfig, useAnimatedStyle, withTiming } from "react-native-reanimated";
 import { PROVIDERS, USAGE_DAYS, type Day, type Limit, type Usage } from "@server/contract";
+import { dayLabel, listTime, nextTime } from "@client/time";
+import { COST_NOTE, KINDS, MEASURES, TOKENS_NOTE, amount, dayTime, sum, usedBy, type Measure } from "@client/usage";
 import { AvatarView } from "@/components/AvatarView";
 import { Bar } from "@/components/Bar";
 import { Choices } from "@/components/Choices";
@@ -13,8 +15,6 @@ import { ApiError, UPDATE } from "@/lib/api";
 import { EASE, HIDE, MOVE, SHOW } from "@/lib/motion";
 import { loadUsage, useAgents, useUsage } from "@/lib/state";
 import { useTheme } from "@/lib/theme";
-import { dayLabel, listTime, nextTime } from "@/lib/time";
-import { COST_NOTE, KINDS, MEASURES, TOKENS_NOTE, amount, dayTime, sum, usedBy, type Measure } from "@/lib/usage";
 
 /**
  * Where the person's plan or API credit goes, opened from the side menu.

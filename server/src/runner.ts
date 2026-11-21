@@ -149,7 +149,7 @@ export function toolQuestion(from: string | undefined, name: string, input: Reco
  * `send_files`.
  */
 export const SHOW =
-  "The person reads you on their phone, so show them what is better seen than read. Answer numbers that compare or change with a chart, and things to choose between with a card for each, as a page you send with `send_files`. Asked what something looks like, send a picture of it. Your reply then keeps to the short of it. A plain answer stays plain words.";
+  "The person reads you in a chat, so show them what is better seen than read. Answer numbers that compare or change with a chart, and things to choose between with a card for each, as a page you send with `send_files`. Asked what something looks like, send a picture of it. Your reply then keeps to the short of it. A plain answer stays plain words.";
 
 /** The agent's tools for a turn, which a driver hands to its provider. `send_update` is there only for a turn the person is waiting on. */
 export function toolsFor(turn: Turn): Tool[] {
@@ -193,7 +193,7 @@ export function toolsFor(turn: Turn): Tool[] {
     define({
       name: "send_files",
       description:
-        "Send the person files: a photo, a chart, a PDF, anything you made or found for them. The files go with the next message you send, which is your reply unless you send an update first, and show above its text: a picture as a picture, a page as a page, any other file as a card that opens it. Use it whenever the person should have the file itself and not only your words about it. Up to 95 MB to a message. A file whose name ends in .html is a page: it is drawn in the chat and opens full screen, so use one for what words can't carry, such as a chart, a table or a layout. Write it as one file for a phone's width, with its styles and scripts inside it. A picture goes inside it too, or stays on the web as an https address. The chat shows the file's name above the page as its title, so name it as one, such as `Flats in Brunswick.html`, and give the page no title of its own and no space around its edges. The chat shows the top of a long page until the person opens it, so what matters most goes first. The page is given the chat's background and text colour, which change between light and dark, so set neither yourself. Colour the rest with the CSS variables it is also given: var(--ink) for text, var(--ink2) for quiet text, var(--line) for rules, var(--field) for a fill behind something, and var(--tint) for the one thing to pick out. Any colour of your own has to read on both white and black.",
+        "Send the person files: a photo, a chart, a PDF, anything you made or found for them. The files go with the next message you send, which is your reply unless you send an update first, and show above its text: a picture as a picture, a page as a page, any other file as a card that opens it. Use it whenever the person should have the file itself and not only your words about it. Up to 95 MB to a message. A file whose name ends in .html is a page: it is drawn in the chat and opens larger, so use one for what words can't carry, such as a chart, a table or a layout. Write it as one file that fits a phone's width and wider ones, with its styles and scripts inside it. A picture goes inside it too, or stays on the web as an https address. The chat shows the file's name above the page as its title, so name it as one, such as `Flats in Brunswick.html`, and give the page no title of its own and no space around its edges. The chat shows the top of a long page until the person opens it, so what matters most goes first. The page is given the chat's background and text colour, which change between light and dark, so set neither yourself. Colour the rest with the CSS variables it is also given: var(--ink) for text, var(--ink2) for quiet text, var(--line) for rules, var(--field) for a fill behind something, and var(--tint) for the one thing to pick out. Any colour of your own has to read on both white and black.",
       checked: "reads",
       input: { paths: z.array(z.string()).describe("Each file's path, in full or from your home folder") },
       run: ({ paths }) => turn.sendFiles(paths),
@@ -316,7 +316,7 @@ ${job.what}
 
 Do it now. This run is a session of its own. It remembers no earlier run and nothing from the chat, so keep what the next run needs in your memory, such as what you have already told ${person.name}.
 
-Your reply is sent to ${person.name} as a message and notifies their phone. If this run found nothing worth telling them, reply with only the word ${SILENT}.`;
+Your reply is sent to ${person.name} as a message and notifies them. If this run found nothing worth telling them, reply with only the word ${SILENT}.`;
 }
 
 /** Whether a job's run chose to send nothing. */
@@ -347,7 +347,7 @@ function fromAgent(message: Message, person: Person, { recent, quoted }: { recen
   const lines = recent.map((earlier) => `${earlier.sender === "person" ? person.name : "You"}: ${earlier.body.slice(0, RECENT_MESSAGE_CHARS)}`).join("\n\n");
   const chat = lines ? `This is a fresh session in a chat that was already going. The latest messages between you and ${person.name}:\n\n${lines}\n\n` : "";
   if (quoted) return `${chat}${from.name} answered what you asked it ("${quoted.body.slice(0, QUOTE_CHARS)}"):\n\n${message.body}`;
-  return `${chat}${from.name}, another of ${person.name}'s agents, sent you the message below. ${person.name} didn't write it. Your reply goes back to ${from.name} and not to ${person.name}'s phone, so say what ${from.name} needs.\n\n${message.body}`;
+  return `${chat}${from.name}, another of ${person.name}'s agents, sent you the message below. ${person.name} didn't write it. Your reply goes back to ${from.name} and not to ${person.name}, so say what ${from.name} needs.\n\n${message.body}`;
 }
 
 /**

@@ -6,6 +6,8 @@ import { useRouter } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Bell, BellOff, ChevronRight, Eye, EyeOff, Menu, Plus, Search, Trash2, X } from "lucide-react-native";
 import { avatarStateOf, type AgentWithLatest, type Found } from "@server/contract";
+import { foundLine, preview } from "@client/messages";
+import { listTime } from "@client/time";
 import { Glass } from "@/components/Glass";
 import { AvatarView } from "@/components/AvatarView";
 import { EdgeFade } from "@/components/EdgeFade";
@@ -14,13 +16,11 @@ import { useSideMenu } from "@/components/SideMenu";
 import { confirmDelete, problem } from "@/lib/alerts";
 import { UPDATE, type Behind } from "@/lib/api";
 import { useWorkingLine } from "@/lib/lines";
-import { preview } from "@/lib/messages";
 import { EASE, HIDE, MOVE, POP_IN, POP_OUT, SHOW } from "@/lib/motion";
 import { changeAgent, findMessages, useAgent, useAgents, useAvatars, useBehind, useOnline, type AgentChanges } from "@/lib/state";
 import { useSplit, useWindowControls } from "@/lib/layout";
 import { openChat, useChatOnScreen } from "@/lib/push";
 import { useTheme } from "@/lib/theme";
-import { listTime } from "@/lib/time";
 import { ScrollWaitsForMenuSwipe } from "../../modules/side-menu-swipe/src";
 
 // The height of the bar that floats at the top, which is the size of each round button in it.
@@ -29,8 +29,6 @@ const BAR = 44;
 const FIXED_MAX_SCALE = 1.3;
 // How long the person rests from typing before the server is asked.
 const SEARCH_DELAY_MS = 200;
-// How much of a found message shows before the words that matched.
-const SNIPPET_LEAD = 24;
 // The width of each action a swipe on a row shows.
 const ACTION = 76;
 
@@ -353,15 +351,6 @@ function AgentRow({ agent, found, search, online, selected = false, onPress }: {
       </View>
     </Pressable>
   );
-}
-
-/** A found message as one line of the list, starting a little before the words that matched, so they show. */
-function foundLine(found: Found, search: string): string {
-  const at = found.body.toLowerCase().indexOf(search.toLowerCase());
-  const start = at - SNIPPET_LEAD;
-  const space = found.body.indexOf(" ", Math.max(start, 0));
-  const body = start > 0 ? `…${found.body.slice(space < at ? space + 1 : start)}` : found.body;
-  return found.sender === "person" ? `You: ${body}` : body;
 }
 
 const styles = StyleSheet.create({

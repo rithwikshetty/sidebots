@@ -1,28 +1,28 @@
 # Sidebots
 
-Sidebots is a messaging app for your agents. Each chat is an agent. You send it a message, it does the work on a machine you own, and the finished reply arrives like a text from a person, with a notification, and with any files or pages the agent made for you. While it works, its avatar waits on your Lock Screen and in the Dynamic Island. Your agents can ask each other things, and what they said is there to read in both their chats.
+Sidebots is a messaging app for your agents. Each chat is an agent. You send it a message, it does the work on a machine you own, and the finished reply arrives like a text from a person, with a notification, and with any files or pages the agent made for you. You use it in a window on that machine, or from your phone, where an agent's avatar waits on your Lock Screen and in the Dynamic Island while it works. Your agents can ask each other things, and what they said is there to read in both their chats.
 
-You run Sidebots yourself. There is no hosted service: a small server runs on your machine, drives the program each agent runs on, and keeps every message in a folder on that machine. Sidebots calls those programs providers, and it has two, Claude Code and Codex. It carries neither: your agents run on the ones you installed, signed in as you are there. You pick one as you make an agent. [Providers](#providers) says how another is added. You build your own copy of the app and pair it with your server.
+You run Sidebots yourself. There is no hosted service: a small server runs on your machine, drives the program each agent runs on, and keeps every message in a folder on that machine. Sidebots calls those programs providers, and it has two, Claude Code and Codex. It carries neither: your agents run on the ones you installed, signed in as you are there. You pick one as you make an agent. [Providers](#providers) says how another is added. The desktop app runs on that machine and pairs itself with the server. You build your own copy of the phone app and pair it with your server.
 
-The full design is in [docs/specs/2026-11-15-sidebots.md](docs/specs/2026-11-15-sidebots.md).
+The full design is in [docs/specs/2026-11-15-sidebots.md](docs/specs/2026-11-15-sidebots.md), and the desktop app's in [docs/specs/2026-11-21-desktop-app.md](docs/specs/2026-11-21-desktop-app.md).
 
 ## Read this before you run it
 
-- **Agents act on their own.** Each runs under its provider's own safety check, which decides what is safe to run, and nobody is asked about those actions. On Claude Code that is auto mode. An action it can't decide on, the agent asks its person about on their phone. It leaves the action undone when they say no, or don't answer within half an hour. On Codex it is the sandbox, which lets an agent write in its own folder and read the rest of the machine, and Codex's reviewer, a model that allows or refuses whatever needs more, such as the network. An agent it refuses says so in its reply.
+- **Agents act on their own.** Each runs under its provider's own safety check, which decides what is safe to run, and nobody is asked about those actions. On Claude Code that is auto mode. An action it can't decide on, the agent asks its person about in its chat. It leaves the action undone when they say no, or don't answer within half an hour. On Codex it is the sandbox, which lets an agent write in its own folder and read the rest of the machine, and Codex's reviewer, a model that allows or refuses whatever needs more, such as the network. An agent it refuses says so in its reply.
 - **Agents can reach everything the server's user account can.** Every agent runs as the account that started the server, and can read and change that account's files, run commands as it, and use the skills and connections each person has in their providers.
-- **A connection is for all your agents.** An app you connect in Sidebots, such as Gmail, can be read and acted in as you by every one of your agents. An agent's mail and calendar changes go through its provider's safety check on Claude Code, and to your phone for a yes or no on Codex. What it does in Notion goes through its provider's safety check on both.
-- **Share a server only with people you would trust with that machine.** Each person sees only their own agents in the app, but all agents run as the same account.
-- **A pairing code lets a phone in.** The server has no passwords. It answers only phones that have paired with it, and a phone pairs by scanning a code you make for one person. Whoever scans the code reaches that person's agents, so show it only to them.
+- **A connection is for all your agents.** An app you connect in Sidebots, such as Gmail, can be read and acted in as you by every one of your agents. An agent's mail and calendar changes go through its provider's safety check on Claude Code, and to you for a yes or no on Codex. What it does in Notion goes through its provider's safety check on both.
+- **Share a server only with people you would trust with that machine.** Each person sees only their own agents in the apps, but all agents run as the same account.
+- **A pairing code lets a device in.** The server has no passwords. It answers only devices that have paired with it. A phone pairs by scanning a code you make for one person, and the desktop app pairs itself with a code it has the server make. Whoever scans a phone's code reaches that person's agents, so show it only to them.
 
 ## Sidebots for Mac
 
-Sidebots for Mac is the server as a menu bar app. It runs on a Mac with Apple silicon and macOS 26 or later, and carries everything the server needs but the providers: Node, the server itself, the starter avatars and `cloudflared`. Your agents run on the Claude Code or the Codex already on the Mac.
+Sidebots for Mac is the server as a menu bar app, with a window that shows your agents and their chats. It runs on a Mac with Apple silicon and macOS 26 or later, and carries everything the server needs but the providers: Node, the server itself, the starter avatars and `cloudflared`. Your agents run on the Claude Code or the Codex already on the Mac.
 
 1. Open `Sidebots.dmg`, drag Sidebots to Applications, and open it from there.
 2. Choose the provider your agents start on, Claude Code or Codex, and how they sign in to it: with the provider on this Mac when it is already signed in, with "Sign in to Claude" or "Sign in to ChatGPT", which opens that sign-in in your browser, or with an API key. If the provider isn't on the Mac yet, the window offers to run its maker's own installer, or waits while you install it yourself.
-3. Open Sidebots on your phone and scan the QR code the Mac app shows.
+3. The window opens on your agents. To reach them from your phone too, choose "Pair a phone" in the window's Settings, under Phones, or in the menu bar panel, then open Sidebots on your phone and scan the QR code it shows.
 
-The Mac app adds you as the one person on the server, named as the Mac knows you, with `~/.claude` as your Claude Code config folder or `~/.codex` as your Codex one, and opens at login from then on. A click on its menu bar icon opens a panel, like the system's own menu bar panels. It says whether phones can reach the Mac and lists the paired phones, each with when it paired and a button to remove it. It also has "Pair a phone…", how your agents sign in to each provider with a button to change it, a warning when a provider's program is missing or too old, a way to set up the provider you haven't yet, an "Open at login" switch, a "Share usage counts" switch and Quit. When the server can't start, the panel says so in place of the phones and providers, with a button that opens its log, and what you set up stays as it is. The QR code holds the address the relay gave the Mac, so the window waits until the Mac has one. The server's output goes to `~/Library/Logs/Sidebots/server.log`.
+The Mac app adds you as the one person on the server, named as the Mac knows you, with `~/.claude` as your Claude Code config folder or `~/.codex` as your Codex one, and opens at login from then on. Opened at login, it shows only its menu bar icon. Opening Sidebots yourself, whether it is running or not, opens the window, or setup when you haven't finished it. The window lists your agents at the left, with search and a way to add one, and opens the chat you pick beside them. A panel at the right opens beside the chat for a page or a picture an agent sent, what two agents said to each other, and an agent's settings, jobs, instructions and memory. Settings, at the foot of the agents, has Usage, Connections, Phones and About. Closing the window keeps its app running, so replies still notify you. Quitting it leaves Sidebots running in the menu bar, so your agents keep working and your phones keep reaching them. A click on its menu bar icon opens a panel, like the system's own menu bar panels. It says whether phones can reach the Mac, and its first row, "Open Sidebots", opens the window. It lists the paired phones, each with when it paired and a button to remove it. It also has "Pair a phone…", how your agents sign in to each provider with a button to change it, a warning when a provider's program is missing or too old, a way to set up the provider you haven't yet, an "Open at login" switch, a "Share usage counts" switch, "Check for updates…" and Quit, which quits the window too. When the server can't start, the panel says so in place of the phones and providers, with a button that opens its log, and what you set up stays as it is. The QR code holds the address the relay gave the Mac, so a phone can pair only once the Mac has one. The server's output goes to `~/Library/Logs/Sidebots/server.log`.
 
 The Mac app uses the same data folder and port as a server you start yourself, so run one or the other.
 
@@ -32,8 +32,8 @@ The Mac app uses the same data folder and port as a server you start yourself, s
 - The provider your agents run on, or both: [Claude Code](https://claude.com/claude-code) 2.1.325 or later, and [Codex](https://developers.openai.com/codex) 0.170.0 or later. The server finds them the way your terminal does, and `pnpm providers` says what it found.
 - [cloudflared](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/), which gives the machine its address. On a Mac, `brew install cloudflared`.
 - For each person, a Claude subscription or an Anthropic API key for Claude Code, or a ChatGPT plan or an OpenAI API key for Codex.
-- An iPhone or an iPad. The app builds for both, on a Mac with Xcode.
-- A paid Apple Developer account. The app uses push notifications, which a free account can't sign.
+- For the phone app, an iPhone or an iPad. The app builds for both, on a Mac with Xcode.
+- For the phone app, a paid Apple Developer account. The app uses push notifications, which a free account can't sign.
 
 ## Set up the server
 
@@ -95,7 +95,7 @@ The server uses the relay at `https://relay.sidebots.app`, which notifies the Si
 
 Agents can draw new avatars with the skill in `skills/make-avatar`. Copy that folder into the `skills` folder of each person's Claude Code config folder. The skill saves avatars in `~/.sidebots/avatars`, so it needs the data folder left where it is.
 
-## Build the app
+## Build the phone app
 
 ```sh
 cd mobile
@@ -125,7 +125,23 @@ The code carries the machine's address. To have the phone reach the server at an
 
 It prints a QR code, and the same code as a link. The person scans the code in the app, or taps the link button above the camera and pastes the link. The app and the server must speak the same version of their contract, `CONTRACT_VERSION` in `server/src/contract.ts`. When they don't, the app says which one to update. A code pairs one phone, once, within ten minutes. For a phone that pairs later than that, `--days <n>` makes a code that works for that many days. The phone gets a key of its own, which it keeps in the Keychain and sends with every request, and the server keeps only a hash of it. It also gets the key its notifications are encrypted with, so neither the relay nor Apple can read them. A phone that pairs again after its app was deleted and installed again takes the place of its earlier pairing, so the server lists it once.
 
-`pnpm devices` lists the paired phones with their ids, and `pnpm remove-device <id>` unpairs one at once. `pnpm status` says whether the server is running, whether phones reach it, how each person's agents sign in, and whether the server tells the relay how much it is used. `pnpm providers` says which providers' programs the server finds, and their versions. With `--json`, `status`, `devices`, `pair`, `providers` and `signed-in` print JSON, which is what the Mac app reads.
+`pnpm devices` lists the paired devices with their ids, each a `phone` or the `desktop` app, and `pnpm remove-device <id>` unpairs one at once. `pnpm status` says whether the server is running, whether phones reach it, how each person's agents sign in, and whether the server tells the relay how much it is used. `pnpm providers` says which providers' programs the server finds, and their versions. With `--json`, `status`, `devices`, `pair`, `providers` and `signed-in` print JSON, which is what the Mac app and the desktop app read.
+
+## Run the desktop app
+
+The desktop app in `desktop/` shows your agents and their chats in a window on the machine the server runs on. Sidebots for Mac carries it. Run it from the repository with Node and pnpm, once the server's packages are installed:
+
+```sh
+cd desktop
+pnpm install
+pnpm dev
+```
+
+It reaches the server at `127.0.0.1` on `PORT`, 4317 unless you set it, and runs the server's own commands with the `node` on your `PATH` in `server/`. It can neither start the server nor set a person up, so start the server and add a person yourself. Until the server answers, the window says Sidebots isn't running, and the app looks again every few seconds. The app then pairs itself as the first person added to the server: it has `pair` make a code for `127.0.0.1` and uses it at once, and `pnpm devices` lists it as a `desktop`. It keeps its key in `pairing.json` in its data folder, which only your account can read, and pairs again when the server forgets the key. That folder is `~/Library/Application Support/Sidebots`, or `desktop` inside `SIDEBOTS_HOME` when that is set, so a copy you try beside the real one shares nothing with it. Set `SIDEBOTS_HOME` and `PORT` for the app as you do for the server.
+
+A file an agent sent opens in the computer's own app for it when it is a document, such as a picture, a PDF or a spreadsheet. Any other file is shown in its folder, for you to open. Either is copied first into `opened` in the data folder, which empties when the app next starts. A page an agent sent shows in the chat, closed off from the window and the server, and a link in it opens in your browser. A reply, an ask or a failure notifies through the system while the app runs, unless you are looking at that chat or the agent is muted. A sign-in to a connection opens in your browser, and comes back only to a packaged app, since packaging is what registers the app for the addresses a sign-in ends on.
+
+`pnpm package` builds the app in `desktop/out`, signed for this Mac only. A packaged copy outside Sidebots for Mac needs `SIDEBOTS_SERVER` set to the server's folder, and runs the Node in `SIDEBOTS_NODE` when that is set.
 
 ## Who pays for the model
 
@@ -134,7 +150,7 @@ Each person pays for their own agents, in one of two ways:
 - **A subscription.** The agents run through the person's own sign-in to Claude Code or Codex and use the limits of their Claude or ChatGPT subscription. Sidebots never reads, stores or passes on a sign-in.
 - **An API key.** Anthropic or OpenAI bills the key's account for what the agents use. The key is from the [Claude Console](https://platform.claude.com) or the [OpenAI Platform](https://platform.openai.com/api-keys), and Sidebots keeps it in `~/.sidebots` on your machine.
 
-Usage, in the app's side menu, shows where either one goes: what is left of a subscription's limits and when they reset, as the provider says when Usage is opened, and what the agents used in the last seven days, by cost or by tokens: a bar for each day, then each agent, with its jobs apart from its replies. A cost there is an estimate at API prices: Claude Code's own, and for Codex, its count of tokens at OpenAI's prices. On an API key it is about what the key is billed. On a subscription it is no bill, and only measures where the limits go. Anthropic charges a subscription for use past its limits only where usage credits are turned on.
+Usage, in the phone app's side menu and the desktop app's Settings, shows where either one goes: what is left of a subscription's limits and when they reset, as the provider says when Usage is opened, and what the agents used in the last seven days, by cost or by tokens: a bar for each day, then each agent, with its jobs apart from its replies. A cost there is an estimate at API prices: Claude Code's own, and for Codex, its count of tokens at OpenAI's prices. On an API key it is about what the key is billed. On a subscription it is no bill, and only measures where the limits go. Anthropic charges a subscription for use past its limits only where usage credits are turned on.
 
 Anthropic's terms decide which you may use. A subscription is for the subscriber's own use. For a product built on the Agent SDK, as Sidebots is, Anthropic [asks for API keys](https://code.claude.com/docs/en/agent-sdk/overview) and doesn't allow Claude sign-ins to be offered to its users without its approval. OpenAI's terms decide the same for a ChatGPT sign-in. So read the terms before you set Sidebots up for anyone but yourself, and when in doubt give each person an API key.
 
@@ -142,13 +158,13 @@ Anthropic's terms decide which you may use. A subscription is for the subscriber
 
 A connection is an app outside Sidebots that your agents use as you. Sidebots has three: Gmail, Google Calendar and Notion. You connect one once and all your agents have it, on either provider, on a subscription or an API key.
 
-Connect one from Connections in the app's side menu, or tell an agent to: "connect my Gmail". Either way a Connect button opens the app's own sign-in on your phone. Once you have signed in and allowed what it asks for, the agents can search, read and send your mail, read and change your calendar, or read and change your Notion. Remove a connection from the same list.
+Connect one from Connections, in the phone app's side menu or the desktop app's Settings, or tell an agent to: "connect my Gmail". Either way a Connect button opens the app's own sign-in: on the phone in the sheet iOS has for signing in, and on the computer in your browser, which hands the address the sign-in ends on back to the desktop app. Once you have signed in and allowed what it asks for, the agents can search, read and send your mail, read and change your calendar, or read and change your Notion. Remove a connection from the same list.
 
-Sidebots never sees your password. The app's maker gives it a token for acting as you, which the server keeps in `~/.sidebots/connections.json`, readable only by your account. An agent's own commands can read that file, as they can any of your account's files, and on a server you share that is every person's agents. The token goes from the maker to your machine and nowhere else: the relay and the phone never hold it. What an agent reads from an app does go to the model it runs on, as everything an agent reads does.
+Sidebots never sees your password. The app's maker gives it a token for acting as you, which the server keeps in `~/.sidebots/connections.json`, readable only by your account. An agent's own commands can read that file, as they can any of your account's files, and on a server you share that is every person's agents. The token goes from the maker to your machine and nowhere else: the relay, the phone and the desktop app never hold it. What an agent reads from an app does go to the model it runs on, as everything an agent reads does.
 
 A sign-in to Google names a client id, which says to Google which app is asking. The server names the one of the Sidebots app on the App Store. Google hasn't reviewed that app yet, so it signs in only the Google accounts its project lists as test users, and Google ends each sign-in after seven days.
 
-Your own build signs in to Google with a client of your own. In a [Google Cloud project](https://console.cloud.google.com/auth/clients), make a client of the type iOS for your app's bundle identifier, turn on the Gmail API and the Google Calendar API, add the scopes `gmail.readonly`, `gmail.send` and `calendar.events` to the consent screen, and list yourself as a test user. Start the server with the client id in `SIDEBOTS_GOOGLE_CLIENT`. A project open to everyone needs Google's review, since it asks to read mail.
+Your own build signs in to Google with a client of your own. In a [Google Cloud project](https://console.cloud.google.com/auth/clients), make a client of the type iOS for your app's bundle identifier, turn on the Gmail API and the Google Calendar API, add the scopes `gmail.readonly`, `gmail.send` and `calendar.events` to the consent screen, and list yourself as a test user. Start the server with the client id in `SIDEBOTS_GOOGLE_CLIENT`. A Google sign-in ends on the client id turned about, as `com.googleusercontent.apps.<id>:/oauth2redirect`, and the desktop app is registered for that address, so set the same id as `GOOGLE_CLIENT` in `desktop/forge.config.ts` before you package it. A project open to everyone needs Google's review, since it asks to read mail.
 
 Notion's tools are Notion's own. Notion runs a server that gives them, as [MCP](https://modelcontextprotocol.io), and Sidebots hands that server to Claude Code or Codex with your sign-in, so your agents have whichever tools Notion offers that day. A sign-in to Notion names no client id that Notion handed out. It names the address of a file, [sidebots.app/oauth-client.json](https://sidebots.app/oauth-client.json), which says what Sidebots is and where a sign-in may come back to, and Notion reads the file. Your own build signs in with the same file.
 
@@ -158,13 +174,13 @@ Adding a connection takes:
 - An entry in `APPS` in `server/src/connections.ts`, with whose app it is, what its sign-in asks for, and the address of the MCP server its maker runs, as Notion's has. An app whose maker runs none has its tools there in its place, as Gmail's are. Each tool has a name, what the agent is told it does, what it takes, and what it does. A tool that changes something in the app, or speaks as the person, is marked `checked: "acts"`. An app of a maker that Sidebots doesn't sign in with yet also takes an entry in `MAKERS` there, with the maker's pages for OAuth, and its client id in `server/src/main.ts`.
 - For an app whose tools are written there, a table change in `server/src/store.ts` that gives Codex sessions a fresh start, as the one for Gmail and Google Calendar does, since a Codex chat keeps the tools it started with.
 
-The app lists whatever connections the server has, so it needs no change.
+The phone app and the desktop app list whatever connections the server has, so neither needs a change.
 
 ## Providers
 
 A provider is a program that runs agents: Claude Code or Codex. Each agent runs on one, and each person signs in to each provider their agents use with a config folder of their own. Sidebots carries no provider's program. The server looks for each on the PATH of your shell, then in the folders their installers use, and runs the one it finds when that is no older than its driver works with. Adding a provider takes three things:
 
-- An entry in `PROVIDERS` in `server/src/contract.ts`, with the name the apps show, its models and levels of effort, and the file its agents read their instructions from. The phone shows an agent's models from there.
+- An entry in `PROVIDERS` in `server/src/contract.ts`, with the name the apps show, its models and levels of effort, and the file its agents read their instructions from. The phone app and the desktop app show an agent's models from there.
 - An entry in `PROGRAMS` in `server/src/programs.ts`, with the command a terminal runs it by, the oldest version its driver works with, its maker's installer, its config folder, and its commands to sign in and to say whether it is signed in.
 - A driver, the module that runs a turn on the program: `server/src/claude.ts` is Claude Code's and `server/src/codex.ts` is Codex's. It hands the program the agent's tools from `toolsFor` in `server/src/runner.ts` and the tool servers of the person's connections, has a tool that acts as the person outside the machine judged by the program's safety check or allowed by the person first, says what the session has cost, says where the limits of the person's plan stand as a turn runs and when it is asked, ends a turn the person stops with its session kept, puts the program's failures in words for the person, and removes the program's sessions when an agent is deleted. `server/src/main.ts` passes each driver to the queue.
 
@@ -178,13 +194,13 @@ The Codex driver speaks a protocol parts of which Codex calls experimental, and 
 
 ## Build the Mac app
 
-On a Mac with Apple silicon, Xcode 26 or later, pnpm and [uv](https://docs.astral.sh/uv/):
+On a Mac with Apple silicon, Xcode 26 or later, Node, pnpm and [uv](https://docs.astral.sh/uv/):
 
 ```sh
 mac/build.sh
 ```
 
-The script downloads Node and `cloudflared` at the versions it names and checks them against the checksums it names. It builds the menu bar app in `mac/` with Sparkle, adds the server with its production dependencies and the starter avatars, with neither Claude Code nor Codex, and signs every program inside with `SIDEBOTS_IDENTITY`. That is a code signing identity in your keychain, `Apple Development` unless you set it, or `-` to sign for your own Mac only. It makes `mac/build/Sidebots.app` and `mac/build/Sidebots.zip`.
+The script downloads Node and `cloudflared` at the versions it names and checks them against the checksums it names. It builds the menu bar app in `mac/` with Sparkle, adds the server with its production dependencies and the starter avatars, with neither Claude Code nor Codex, packages the desktop app in `desktop/` at the versions its own lockfile pins and puts it in `Contents/Helpers`, and signs every program inside with `SIDEBOTS_IDENTITY`, the desktop app from the inside out with the entitlements in `mac/desktop.entitlements` and `mac/desktop-plugin.entitlements`. That is a code signing identity in your keychain, `Apple Development` unless you set it, or `-` to sign for your own Mac only. It makes `mac/build/Sidebots.app` and `mac/build/Sidebots.zip`.
 
 ```sh
 mac/build.sh release
@@ -201,16 +217,16 @@ A release needs, once per Mac:
   xcrun notarytool store-credentials sidebots --key AuthKey_<KEYID>.p8 --key-id <KEYID> --issuer <ISSUER-ID>
   ```
 
-The app updates itself with Sparkle from the feed at `sidebots.app/appcast.xml`, and installs an update once no agent is in the middle of a turn. A release signs the disk image with the update key in your keychain, whose public half is `SUPublicEDKey` in `mac/Info.plist`, and writes the feed for it in `site/public/appcast.xml`. Sparkle's `generate_keys -x <file>` in `mac/.build/artifacts/sparkle/Sparkle/bin` exports the key to keep it safe, and `-f <file>` imports it on another Mac. Without it, nobody's copy can be updated again.
+The app updates itself with Sparkle from the feed at `sidebots.app/appcast.xml`, and installs an update once no agent is in the middle of a turn. The window quits while the update installs, and opens again afterwards when it was running. A release signs the disk image with the update key in your keychain, whose public half is `SUPublicEDKey` in `mac/Info.plist`, and writes the feed for it in `site/public/appcast.xml`. Sparkle's `generate_keys -x <file>` in `mac/.build/artifacts/sparkle/Sparkle/bin` exports the key to keep it safe, and `-f <file>` imports it on another Mac. Without it, nobody's copy can be updated again.
 
-Each release has a higher `CFBundleShortVersionString` in `mac/Info.plist`. Publish it by putting the disk image on a GitHub release tagged with that version, then publishing the site with the new feed:
+Each release has a higher `CFBundleShortVersionString` in `mac/Info.plist`, and the desktop app inside takes the same version. Publish it by putting the disk image on a GitHub release tagged with that version, then publishing the site with the new feed:
 
 ```sh
 gh release create v1.0.0 mac/build/Sidebots.dmg --title "Sidebots 1.0.0"
 (cd site && npx wrangler deploy)
 ```
 
-To try a build beside the Sidebots you already run, start it from a terminal with a data folder and port of its own. The app passes `SIDEBOTS_HOME`, `PORT` and `SIDEBOTS_RELAY` on to the server, and sets a new person up with the Claude Code config folder in `CLAUDE_CONFIG_DIR`, or the Codex one in `CODEX_HOME`, when it is set:
+To try a build beside the Sidebots you already run, start it from a terminal with a data folder and port of its own. The app passes `SIDEBOTS_HOME`, `PORT` and `SIDEBOTS_RELAY` on to the server and the window, which passes them on in turn when it opens the app, and sets a new person up with the Claude Code config folder in `CLAUDE_CONFIG_DIR`, or the Codex one in `CODEX_HOME`, when it is set:
 
 ```sh
 SIDEBOTS_HOME=/tmp/sidebots-try PORT=4320 SIDEBOTS_RELAY=off CLAUDE_CONFIG_DIR=/tmp/claude-try \
@@ -224,10 +240,14 @@ Setting up turns on "Open at login" for the copy you ran, so turn it off in the 
 ```sh
 (cd server && pnpm test && pnpm typecheck)
 (cd relay && pnpm test && pnpm typecheck)
+(cd client && pnpm test)
 (cd mobile && pnpm typecheck)
+(cd desktop && pnpm test && pnpm typecheck)
 ```
 
-The server's tests run through its HTTP routes with the providers' turns swapped for a fake, and run the Codex driver against a stand-in for Codex, so they need no provider installed, no sign-in and no API key. The relay's tests run the server's relay module against the relay's own request handler, with Cloudflare's database and API and Apple's push service faked. The app imports the server's wire types from `server/src/contract.ts`.
+The server's tests run through its HTTP routes with the providers' turns swapped for a fake, and run the Codex driver against a stand-in for Codex, so they need no provider installed, no sign-in and no API key. The relay's tests run the server's relay module against the relay's own request handler, with Cloudflare's database and API and Apple's push service faked. `client/` holds what the phone app and the desktop app do the same way. It imports only the server's wire types from `server/src/contract.ts`, so it has no packages to install. Its tests run the store against a made-up computer, and the two apps' typechecks cover the code they share.
+
+The desktop app's unit tests run the modules of its main process: the proxy to the server, pairing, how it looks at the server, the host, what the window may ask and what a page may do. Its end-to-end tests in `desktop/e2e` drive the packaged app with Playwright against a real server whose providers' turns are scripted, so they need the server's packages and no provider. In `desktop/`, `E2E=1 pnpm package` builds the app they drive, which keeps the inspector Playwright drives it through, and `pnpm e2e` runs them. To work on the window without packaging it, `node e2e/preview/serve.ts --seed` serves it in a browser at `http://localhost:5199`, against that server with agents and chats already in it.
 
 ## Licence
 

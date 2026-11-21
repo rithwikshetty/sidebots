@@ -12,8 +12,10 @@ import type { About, Agent, AgentWithLatest, Ask, Avatar, Connection, Day, Found
 export type Person = { id: string; name: string };
 /** How a person's agents sign in to a provider: the provider's config folder of the person's own, which holds their login, rules, skills and sessions. */
 export type Account = { person_id: string; provider: Provider; config_dir: string };
-/** A phone that has paired with this server, and the person whose agents it reaches. */
-export type Device = { id: string; person_id: string; name: string; paired_at: number };
+/** What a paired device is: a phone, or the desktop app on the computer the server runs on. */
+export type DeviceKind = "phone" | "desktop";
+/** A device that has paired with this server, and the person whose agents it reaches. */
+export type Device = { id: string; person_id: string; name: string; kind: DeviceKind; paired_at: number };
 /** Where Apple delivers a phone's notifications, and the key, in base64, that only that phone can read them with. */
 export type PushTarget = PushToken & { notificationKey: string };
 /** What Sidebots keeps of a connection a person made: the account they signed in to the app with, and the token the app gave for acting as them from then on. */
@@ -24,7 +26,7 @@ export type Upload = { name: string; bytes: Uint8Array };
 export type Extras = { files?: Upload[]; replyTo?: string; jobId?: string; interim?: boolean; ask?: Ask; question?: Question; peerId?: string };
 /** What the person can change about an agent. */
 export type AgentChanges = Partial<Pick<Agent, "name" | "avatar_id" | "model" | "effort" | "muted" | "hidden" | "color">>;
-/** What the store tells its listeners about: a message that was added, changed status or had its ask closed, or an agent that was added or deleted. */
+/** What the store tells its listeners about: a message that was added, changed status or had its ask closed, or an agent that was added, changed or deleted. */
 export type Change = { message: Message } | { agent: Agent; deleted: boolean };
 /** How this server is known to the relay: its signing key, and the id, the address phones reach it at and the token its tunnel runs with, which the relay gives it once it has registered. */
 export type Machine = { privateKey: string; id?: string; address?: string; tunnelToken?: string };
@@ -62,6 +64,7 @@ const TABLE_CHANGES: (string | { table: string; change: string })[] = [
   { table: "usage", change: "alter table usage add column session_tokens integer" },
   // A Codex session keeps the tools it started with, so each one from before the connections' tools gets a fresh start.
   "insert into messages (id, agent_id, sender, body, status, created_at) select lower(hex(randomblob(16))), id, 'sidebots', 'Fresh start', 'queued', cast(unixepoch('subsec') * 1000 as integer) from agents where provider = 'codex' and session_id is not null",
+  "alter table devices add column kind text not null default 'phone' check (kind in ('phone', 'desktop'))",
 ];
 
 const SCHEMA = `
@@ -123,6 +126,7 @@ create table if not exists devices (
   push_token  text,
   environment text check (environment in ('sandbox', 'production')),
   app         text,
+  kind        text not null default 'phone' check (kind in ('phone', 'desktop')),
   paired_at   integer not null
 );
 create table if not exists pairings (
@@ -210,9 +214,9 @@ function toMemory(file: string, text: string): Memory {
 function instructions(agentName: string, personName: string): string {
   return `# ${agentName}
 
-You are ${agentName}, one of ${personName}'s agents in Sidebots. Sidebots is a messaging app on their phone, and each agent is one chat in it.
+You are ${agentName}, one of ${personName}'s agents in Sidebots. Sidebots is a messaging app on their phone and computer, and each agent is one chat in it.
 
-${personName} only sees your final reply, as a text message on their phone. They never see your tool calls or working steps. Write the way a capable person texts: short, plain sentences, no headings or tables unless they ask for them.
+${personName} only sees your final reply, as a text message. They never see your tool calls or working steps. Write the way a capable person texts: short, plain sentences, no headings or tables unless they ask for them.
 
 Your home folder is where you run. Files ${personName} sends you are in \`attachments/\`. To send ${personName} a file, use your \`send_files\` tool.
 
@@ -227,8 +231,9 @@ export function openStore(home: string) {
   db.exec("pragma journal_mode = wal; pragma foreign_keys = on;");
   const had = new Set((db.prepare("select name from sqlite_master where type = 'table'").all() as { name: string }[]).map((table) => table.name));
   db.exec(SCHEMA);
+  // The count is read under the lock the changes are made under, so when two open an older database at once, the second finds the first's changes counted.
+  db.exec("begin immediate");
   const version = had.has("people") ? (db.prepare("pragma user_version").get() as { user_version: number }).user_version : TABLE_CHANGES.length;
-  db.exec("begin");
   for (const change of TABLE_CHANGES.slice(version)) {
     if (typeof change === "string") db.exec(change);
     else if (had.has(change.table)) db.exec(change.change);
@@ -293,7 +298,7 @@ export function openStore(home: string) {
   return {
     agentHome,
 
-    /** Calls `listener` with every message that is added, changes status or has its ask closed, and every agent that is added or deleted. Returns a function that stops it. */
+    /** Calls `listener` with every message that is added, changes status or has its ask closed, and every agent that is added, changed or deleted. Returns a function that stops it. */
     onChange(listener: (change: Change) => void): () => void {
       listeners.add(listener);
       return () => listeners.delete(listener);
@@ -467,10 +472,12 @@ export function openStore(home: string) {
       if (columns.length === 0) return;
       const values = columns.map((column) => (typeof changes[column] === "boolean" ? Number(changes[column]) : changes[column]!));
       db.prepare(`update agents set ${columns.map((column) => `${column} = ?`).join(", ")} where id = ?`).run(...values, agent.id);
-      if (changes.name === undefined || changes.name === agent.name) return;
-      const path = join(agentHome(agent.id), PROVIDERS[agent.provider].instructions);
-      const text = readFileSync(path, "utf8");
-      writeFileSync(path, text.replace(`# ${agent.name}\n`, `# ${changes.name}\n`).replace(`You are ${agent.name},`, `You are ${changes.name},`));
+      if (changes.name !== undefined && changes.name !== agent.name) {
+        const path = join(agentHome(agent.id), PROVIDERS[agent.provider].instructions);
+        const text = readFileSync(path, "utf8");
+        writeFileSync(path, text.replace(`# ${agent.name}\n`, `# ${changes.name}\n`).replace(`You are ${agent.name},`, `You are ${changes.name},`));
+      }
+      changed({ agent: { ...agent, ...changes }, deleted: false });
     },
 
     /** Removes an agent and everything Sidebots kept for it: its messages, its jobs, what it used and its home folder. */
@@ -628,7 +635,7 @@ export function openStore(home: string) {
       const since = Math.max(new Date(today.getFullYear(), today.getMonth(), today.getDate() - USAGE_DAYS + 1).getTime(), Number(on?.value ?? 0));
       return {
         agents: (db.prepare("select count(*) as agents from agents").get() as { agents: number }).agents,
-        phones: (db.prepare("select count(*) as phones from devices").get() as { phones: number }).phones,
+        phones: (db.prepare("select count(*) as phones from devices where kind = 'phone'").get() as { phones: number }).phones,
         turns: db
           .prepare(
             `select date(usage.at / 1000, 'unixepoch', 'localtime') as day, agents.provider, usage.kind, count(*) as turns
@@ -832,7 +839,7 @@ export function openStore(home: string) {
       return rows.map((row) => row.agent_id);
     },
 
-    /** Makes a code that pairs one phone as the person, once, within `life` milliseconds, which is ten minutes unless one is given. Returns the code and when it expires. */
+    /** Makes a code that pairs one device as the person, once, within `life` milliseconds, which is ten minutes unless one is given. Returns the code and when it expires. */
     addPairing(personId: string, life = PAIRING_MS): { code: string; expiresAt: number } {
       const now = Date.now();
       db.prepare("delete from pairings where expires_at <= ?").run(now);
@@ -843,13 +850,13 @@ export function openStore(home: string) {
     },
 
     /**
-     * Pairs a phone that brings a pairing code, and uses the code up. A phone
+     * Pairs a device that brings a pairing code, and uses the code up. A device
      * that pairs again brings the hash of the key it had as `replaces`, and
-     * this pairing takes that one's place. Returns the key the phone sends
-     * with every request from then on and the key its notifications are
+     * this pairing takes that one's place. Returns the key the device sends
+     * with every request from then on and the key a phone's notifications are
      * encrypted with, or nothing when the code is unknown, used or too old.
      */
-    pair(code: string, name: string, replaces?: string): { key: string; notificationKey: string } | undefined {
+    pair(code: string, name: string, kind: DeviceKind, replaces?: string): { key: string; notificationKey: string } | undefined {
       const pairing = db.prepare("delete from pairings where code_hash = ? returning person_id, expires_at").get(hashOf(code)) as
         | { person_id: string; expires_at: number }
         | undefined;
@@ -858,10 +865,11 @@ export function openStore(home: string) {
       const key = secret();
       // The server encrypts with this one, so it keeps the key itself. The phone reads it in base64.
       const notificationKey = randomBytes(32).toString("base64");
-      db.prepare("insert into devices (id, person_id, name, key_hash, notification_key, paired_at) values (?, ?, ?, ?, ?, ?)").run(
+      db.prepare("insert into devices (id, person_id, name, kind, key_hash, notification_key, paired_at) values (?, ?, ?, ?, ?, ?, ?)").run(
         randomUUID(),
         pairing.person_id,
         name,
+        kind,
         hashOf(key),
         notificationKey,
         Date.now(),
@@ -869,19 +877,19 @@ export function openStore(home: string) {
       return { key, notificationKey };
     },
 
-    /** Every paired phone, the first to pair first. */
+    /** Every paired device, the first to pair first. */
     devices(): Device[] {
-      return db.prepare("select id, person_id, name, paired_at from devices order by rowid").all() as Device[];
+      return db.prepare("select id, person_id, name, kind, paired_at from devices order by rowid").all() as Device[];
     },
 
-    /** Unpairs a phone, which is refused from its next request. Returns the phone, or nothing when no phone has the id. */
+    /** Unpairs a device, which is refused from its next request. Returns the device, or nothing when no device has the id. */
     removeDevice(id: string): Device | undefined {
-      return db.prepare("delete from devices where id = ? returning id, person_id, name, paired_at").get(id) as Device | undefined;
+      return db.prepare("delete from devices where id = ? returning id, person_id, name, kind, paired_at").get(id) as Device | undefined;
     },
 
-    /** The paired phone that holds this key. */
+    /** The paired device that holds this key. */
     deviceByKey(key: string): Device | undefined {
-      return db.prepare("select id, person_id, name, paired_at from devices where key_hash = ?").get(hashOf(key)) as Device | undefined;
+      return db.prepare("select id, person_id, name, kind, paired_at from devices where key_hash = ?").get(hashOf(key)) as Device | undefined;
     },
 
     /** Remembers where Apple delivers a phone's notifications. A token another paired phone held becomes this one's. */

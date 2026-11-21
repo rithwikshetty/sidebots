@@ -1,21 +1,5 @@
 import { useEffect, useState } from "react";
-
-const LINES = [
-  "Consulting the augurs",
-  "Crossing the Rubicon",
-  "Sending a rider to Gaul",
-  "Asking the Senate nicely",
-  "Sharpening the stylus",
-  "Counting the legions",
-  "Paving a road there first",
-  "Reading the omens",
-];
-const CHANGE_MS = 2800;
-
-/** One of the playful lines, for where it can't change, as in a Live Activity. */
-export function workingLine(): string {
-  return LINES[Math.floor(Math.random() * LINES.length)];
-}
+import { CHANGE_MS, LINES } from "@client/lines";
 
 /** A playful line to show while an agent works. It changes every few seconds. */
 export function useWorkingLine(): string {

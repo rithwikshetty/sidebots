@@ -1,6 +1,7 @@
 #!/bin/bash
 # Builds Sidebots for Mac in mac/build: the menu bar app with Sparkle, Node, the
-# server and its production dependencies, the starter avatars and cloudflared inside it.
+# server and its production dependencies, the starter avatars and cloudflared inside it,
+# and in Contents/Helpers the desktop app from desktop/, which shows the chats in a window.
 # It carries neither Claude Code nor Codex. The server runs the ones the person installed.
 #
 #   mac/build.sh           Signs with SIDEBOTS_IDENTITY, for use on this Mac, and makes build/Sidebots.zip.
@@ -43,7 +44,7 @@ download() {
   echo "$file"
 }
 
-echo "Building the app"
+echo "Building the menu bar app"
 swift build -c release --arch arm64 --package-path "$mac"
 products=$(swift build -c release --arch arm64 --package-path "$mac" --show-bin-path)
 rm -rf "$app"
@@ -68,12 +69,17 @@ cp -R "$root/avatars" "$resources/avatars"
 (cd "$resources/server" && pnpm install --prod --frozen-lockfile --ignore-scripts --config.node-linker=hoisted --reporter=silent)
 rm -rf "$resources/server/node_modules/.bin"
 
+echo "Adding the desktop app"
+pnpm --dir "$root/desktop" install --frozen-lockfile --reporter=silent
+SIDEBOTS_VERSION=$(plutil -extract CFBundleShortVersionString raw "$app/Contents/Info.plist") \
+  SIDEBOTS_BUILD=$(plutil -extract CFBundleVersion raw "$app/Contents/Info.plist") \
+  pnpm --dir "$root/desktop" package
+ditto "$root/desktop/out/Sidebots-darwin-arm64/Sidebots.app" "$app/Contents/Helpers/Sidebots.app"
+
 echo "Signing with $identity"
 # Every program in the bundle, then the app around them. Node compiles
 # JavaScript as it runs, which the runtime entitlements allow.
-timestamp=--timestamp
-[ "$identity" = "-" ] && timestamp=--timestamp=none
-sign() { codesign --force --options runtime "$timestamp" --sign "$identity" "$@"; }
+source "$mac/sign.sh"
 sign --entitlements "$mac/runtime.entitlements" "$resources/bin/node"
 find "$resources" -type f ! -path "$resources/bin/node" -print0 |
   while IFS= read -r -d '' file; do
@@ -85,6 +91,7 @@ sign "$sparkle/XPCServices/Installer.xpc"
 sign --preserve-metadata=entitlements "$sparkle/XPCServices/Downloader.xpc"
 sign "$sparkle/Autoupdate" "$sparkle/Updater.app"
 sign "$app/Contents/Frameworks/Sparkle.framework"
+sign_desktop "$app/Contents/Helpers/Sidebots.app"
 sign "$app"
 codesign --verify --strict --deep "$app"
 

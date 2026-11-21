@@ -7,8 +7,11 @@ import { CryptoDigestAlgorithm, digestStringAsync } from "expo-crypto";
 import { deviceName } from "expo-device";
 import * as SecureStore from "expo-secure-store";
 import Storage from "expo-sqlite/kv-store";
-import { CONTRACT_HEADER, CONTRACT_VERSION, type Paired } from "@server/contract";
+import type { Paired } from "@server/contract";
+import { ApiError, call, type Behind } from "@client/api";
 import { DEMO_HOST, demoFetch, demoFile, demoSheet, isDemo } from "./demo";
+
+export { ApiError, readPairingLink, type Behind } from "@client/api";
 
 const HOST_KEY = "host";
 const MACHINE_KEY = "machine";
@@ -19,37 +22,15 @@ const DEVICE_KEY = "device-key";
 const NOTIFICATION_KEY = "notification-key";
 // Readable while the phone is locked, once it has been unlocked since it started, as a notification needs.
 const KEYCHAIN = { keychainAccessible: SecureStore.AFTER_FIRST_UNLOCK };
-const TIMEOUT_MS = 10_000;
-// A message carrying photos, over a phone's connection.
-const UPLOAD_TIMEOUT_MS = 120_000;
-// What Cloudflare or `tailscale serve` answers in Sidebots' place when the computer or its server can't be reached. 530 is Cloudflare's answer when the computer's tunnel is down.
-const NOT_RUNNING = new Set([502, 503, 504, 530]);
 
-/** A failed call. `status` is the server's answer, or 0 when Sidebots couldn't be reached. */
-export class ApiError extends Error {
-  status: number;
-  constructor(message: string, status: number) {
-    super(message);
-    this.status = status;
-  }
-}
-
-/** Which of the two to update when the computer and this app speak different versions of the contract. */
-export type Behind = "computer" | "app";
+/** What to update when the computer and this app speak different versions of the contract. */
 export const UPDATE: Record<Behind, string> = { computer: "Update Sidebots on your computer", app: "Update Sidebots on this phone" };
-
-/**
- * Which side to update, from the contract version the computer sent with its
- * answer, or null when the two match. A computer too old to send a version is
- * behind. What Cloudflare or `tailscale serve` answers in Sidebots' place
- * carries no version and says nothing about it.
- */
-export function behind(response: Pick<Response, "status" | "headers">): Behind | null {
-  if (NOT_RUNNING.has(response.status)) return null;
-  const version = Number(response.headers.get(CONTRACT_HEADER)) || 0;
-  if (version === CONTRACT_VERSION) return null;
-  return version < CONTRACT_VERSION ? "computer" : "app";
-}
+// The phone's words for a call that never reached Sidebots.
+const WORDS = {
+  unreachable: "Can't reach Sidebots. Check that the phone is online.",
+  notRunning: "Can't reach Sidebots. The computer is asleep or off, or Sidebots isn't running on it.",
+  update: UPDATE,
+};
 
 /** A computer that has paired this phone: its address, the key that proves this phone to it, the key that opens its notifications, and its name. */
 export type Pairing = { host: string; key: string; notificationKey: string; machine: string };
@@ -89,15 +70,6 @@ export function useMachine(): string | null {
 /** Whether the phone lost its pairing because the computer no longer knows it. It stays so, through relaunches, until the phone pairs again. */
 export function wasRemoved(): boolean {
   return removed;
-}
-
-/** The host and code in a pairing link, which is what the computer's QR code holds. */
-export function readPairingLink(link: string): { host: string; code: string } | null {
-  const [, query] = /^sidebots:\/\/pair\/?\?(.+)$/.exec(link.trim()) ?? [];
-  const params = new URLSearchParams(query ?? "");
-  const host = params.get("host");
-  const code = params.get("code");
-  return host && code ? { host, code } : null;
 }
 
 /**
@@ -193,31 +165,7 @@ export async function request<T>(path: string, init: { method?: string; body?: u
   }
 }
 
-async function send<T>(url: string, authorization: string, init: { method?: string; body?: unknown }): Promise<T> {
-  const form = init.body instanceof FormData ? init.body : null;
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), form ? UPLOAD_TIMEOUT_MS : TIMEOUT_MS);
-  // The app says which version of the contract it speaks, which the computer checks before it pairs the phone.
-  const headers = { Authorization: authorization, [CONTRACT_HEADER]: String(CONTRACT_VERSION) };
-  let response: Response;
-  try {
-    response = await (isDemo(url) ? demoFetch : fetch)(url, {
-      method: init.method ?? "GET",
-      // A form names its own content type, with the boundary between its parts.
-      headers: form ? headers : { ...headers, "Content-Type": "application/json" },
-      body: form ?? (init.body === undefined ? undefined : JSON.stringify(init.body)),
-      signal: controller.signal,
-    });
-  } catch {
-    throw new ApiError("Can't reach Sidebots. Check that the phone is online.", 0);
-  } finally {
-    clearTimeout(timer);
-  }
-  if (NOT_RUNNING.has(response.status)) throw new ApiError("Can't reach Sidebots. The computer is asleep or off, or Sidebots isn't running on it.", 0);
-  // Nothing a computer on another version says is used, so it can't be read wrongly. Until one side is updated it is as good as out of reach.
-  const side = behind(response);
-  if (side) throw new ApiError(`${UPDATE[side]}.`, 0);
-  const data = await response.json().catch(() => null);
-  if (!response.ok) throw new ApiError(data?.error ?? `The server answered ${response.status}.`, response.status);
-  return data as T;
+/** Calls a computer at `url`, or the demo computer when the address is its own. */
+function send<T>(url: string, authorization: string, init: { method?: string; body?: unknown }): Promise<T> {
+  return call<T>({ ...WORDS, fetch: isDemo(url) ? demoFetch : fetch }, url, { ...init, headers: { Authorization: authorization } });
 }

@@ -14,7 +14,7 @@ import SwiftUI
   }
 }
 
-/// Starts the server with the app, stops it as the app quits, and opens the app's windows.
+/// Starts the server with the app, stops it and quits the window's app as the app quits, and opens the app's windows.
 @MainActor @Observable final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
   let server = Server()
   @ObservationIgnored private(set) lazy var updater = Updater(server: server)
@@ -22,7 +22,17 @@ import SwiftUI
   @ObservationIgnored private var windows: [String: NSWindow] = [:]
   @ObservationIgnored private var terminating: DispatchSourceSignal?
 
+  /// Whether the system opened the app at login, as the event that opened it says. The event is at hand only while the app finishes launching.
+  private var openedAtLogin: Bool {
+    guard let event = NSAppleEventManager.shared().currentAppleEvent, event.eventID == kAEOpenApplication else { return false }
+    return event.paramDescriptor(forKeyword: keyAEPropData)?.enumCodeValue == keyAELaunchedAsLogInItem
+  }
+
   func applicationDidFinishLaunching(_ notification: Notification) {
+    // The window opens once the server answers when the person opened Sidebots, or when an update
+    // quit the window's app to install. Sidebots opened at login, or by an update while the window's
+    // app wasn't running, stays in the menu bar.
+    let opensWindow = Updater.windowRanBeforeUpdate() ?? !openedAtLogin
     // Quits as usual when asked to stop, as `kill` does, so the server stops with it.
     // The run loop makes the call: quitting waits for the server to stop, and that
     // news comes on the main queue, which stands still while one of its own handlers runs.
@@ -36,11 +46,19 @@ import SwiftUI
     _ = updater
     Task {
       await server.refresh()
-      // A server that can't say who is set up is no sign that nobody is.
-      if !server.failed, server.person == nil { showSetup() }
+      var opensWindow = opensWindow
+      // A server that can't say who is set up is no sign that nobody is. Setup opens the window once it ends.
+      if !server.failed, server.person == nil {
+        showSetup()
+        opensWindow = false
+      }
       // Every two seconds until the server answers, then every fifteen. Each provider's program and sign-in are looked at once a minute.
       var lookedAtSignIn = ContinuousClock.now - .seconds(60)
       while true {
+        if opensWindow, server.status?.running == true, server.person != nil {
+          opensWindow = false
+          DesktopApp.open()
+        }
         if ContinuousClock.now - lookedAtSignIn >= .seconds(60) {
           await server.checkSignIn()
           lookedAtSignIn = .now
@@ -52,13 +70,26 @@ import SwiftUI
     }
   }
 
-  /// Quits once the server has stopped, so that it doesn't outlive the app.
+  /// Quits once the window's app has quit and the server has stopped, so that neither outlives the app.
   func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
-    server.stop { sender.reply(toApplicationShouldTerminate: true) }
+    Task {
+      await DesktopApp.quit()
+      server.stop { sender.reply(toApplicationShouldTerminate: true) }
+    }
     return .terminateLater
   }
 
-  /// Opens the window that sets the person up on a provider, or changes how their agents sign in to it. On first run the person picks the provider there, and the window goes on to the QR code.
+  /// Opening Sidebots while it runs opens the window, or setup for someone not set up yet.
+  func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+    if server.person != nil {
+      DesktopApp.open()
+    } else if !server.failed {
+      showSetup()
+    }
+    return false
+  }
+
+  /// Opens the window that sets the person up on a provider, or changes how their agents sign in to it. On first run the person picks the provider there, and once they are set up Sidebots opens at login and the window opens.
   func showSetup(_ provider: Provider? = nil) {
     let firstRun = server.person == nil
     show("setup", title: "Sidebots") {
@@ -67,7 +98,7 @@ import SwiftUI
         self.close("setup")
         if firstRun {
           self.setOpenAtLogin(true)
-          self.showPairing()
+          DesktopApp.open()
         }
       }
     }
@@ -117,7 +148,7 @@ import SwiftUI
 
 /**
  * The panel under the menu bar icon, laid out as the system's own menu bar
- * panels are: whether phones can reach this computer at the top, then the paired
+ * panels are: whether phones can reach this computer at the top, then Open Sidebots, which opens the window with the chats, then the paired
  * phones with a way to pair another, then how the agents sign in to each provider
  * the person has set up, or that its program is missing from this Mac, with a way to set up one they haven't, and Open at login,
  * Share usage counts, Check for updates and Quit at the foot. When the server can't start, the panel says so in place of the phones and
@@ -137,6 +168,10 @@ struct MenuContent: View {
       header
       if server.person != nil {
         Divider().padding(.vertical, 6)
+        if DesktopApp.bundled {
+          PanelRow(symbol: "macwindow", title: "Open Sidebots", action: DesktopApp.open)
+          Divider().padding(.vertical, 6)
+        }
         heading("Phones")
         if server.phones.isEmpty {
           Text("No phones yet").font(.callout).foregroundStyle(.secondary).padding(.horizontal, 10).padding(.vertical, 4)

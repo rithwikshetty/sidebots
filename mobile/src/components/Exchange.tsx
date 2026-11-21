@@ -3,6 +3,7 @@ import { Pressable, StyleSheet, Text, View } from "react-native";
 import Animated, { Easing, ReduceMotion, interpolate, useAnimatedStyle, useSharedValue, withDelay, withSequence, withTiming } from "react-native-reanimated";
 import { ChevronRight } from "lucide-react-native";
 import type { Message } from "@server/contract";
+import type { Standing } from "@client/exchanges";
 import { AvatarView } from "@/components/AvatarView";
 import { FadingText } from "@/components/FadingText";
 import { FlowDot } from "@/components/FlowDot";
@@ -20,23 +21,6 @@ const CROSS = { duration: 700, easing: Easing.inOut(Easing.quad), reduceMotion: 
 const CROSS_AFTER_MS = 260;
 const NOD = { duration: 180, easing: Easing.out(Easing.cubic), reduceMotion: ReduceMotion.System } as const;
 const NOD_AFTER_MS = CROSS_AFTER_MS + CROSS.duration - 60;
-
-/** Where an exchange stands, in the words its line says it with. */
-export type Standing = "Answered" | "No answer" | "Needs your OK" | "Waiting";
-
-/**
- * The newest thing asked in an exchange, and where it stands, which is where
- * the exchange does. `messages` are those of a chat the exchange is in. It
- * needs the person's OK while the agent that was asked is at work on it and
- * waits on their answer to an ask of its own.
- */
-export function standingOf(exchange: Message[], messages: Message[]): { asked: Message; state: Standing } {
-  const asked = exchange.findLast((message) => !message.reply_to) ?? exchange[0];
-  if (exchange.some((message) => message.reply_to === asked.id)) return { asked, state: "Answered" };
-  if (asked.status === "failed") return { asked, state: "No answer" };
-  const needsPerson = asked.status === "running" && messages.some((message) => message.ask === "waiting" && message.agent_id === asked.peer_id && message.peer_id === asked.agent_id);
-  return { asked, state: needsPerson ? "Needs your OK" : "Waiting" };
-}
 
 /**
  * An exchange between two of the person's agents, as one line in both their

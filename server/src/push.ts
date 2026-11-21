@@ -4,7 +4,7 @@
 // working agent, with a push that names the avatar's state and nothing else.
 
 import { createCipheriv, randomBytes } from "node:crypto";
-import { avatarStateOf, betweenAgents, oneLine } from "./contract.ts";
+import { avatarStateOf, notifies, oneLine } from "./contract.ts";
 import type { AvatarState, PushToken } from "./contract.ts";
 import type { Store } from "./store.ts";
 
@@ -45,9 +45,7 @@ export function startPush(store: Store, send: SendPush): () => void {
     const shown = store.agentWithLatest(message.agent_id);
     const ended = shown && avatarStateOf(shown);
     if (ended && ended !== "working") for (const to of store.endActivities(message.agent_id)) void send(to, { ended });
-    const answered = message.ask !== null && message.ask !== "waiting";
-    const finished = (message.sender === "agent" && !message.interim && !answered && !betweenAgents(message)) || (message.sender === "sidebots" && message.status === "failed");
-    const agent = finished ? store.agent(message.agent_id) : undefined;
+    const agent = notifies(message) ? store.agent(message.agent_id) : undefined;
     if (!agent || agent.muted) return;
     // A muted agent's unread replies show on its own row, and never on the app's icon.
     const badge = store.agentsFor(agent.person_id).reduce((total, each) => total + (each.muted ? 0 : each.unread), 0);

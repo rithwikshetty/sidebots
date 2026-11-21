@@ -15,8 +15,8 @@ const NUMBER_MAX_SCALE = 1.3;
 
 /**
  * What a phone that hasn't paired with a computer opens on: what Sidebots is, and
- * the two steps to pair, getting Sidebots for the computer and scanning the code it
- * shows. Its one button opens the scanner, which is when the phone asks for
+ * the two steps to pair, getting Sidebots for the computer and scanning the code its
+ * Pair a phone shows. Its one button opens the scanner, which is when the phone asks for
  * the camera. A phone the computer removed says so here.
  */
 export default function Welcome() {
@@ -35,7 +35,9 @@ export default function Welcome() {
               Get Sidebots for your computer from <Text style={[styles.strong, { color: theme.ink }]}>sidebots.app</Text>, and open it.
             </Step>
             <View style={[styles.rule, { backgroundColor: theme.line }]} />
-            <Step number={2}>Scan the code it shows.</Step>
+            <Step number={2}>
+              Choose <Text style={[styles.strong, { color: theme.ink }]}>Pair a phone</Text> in its Settings, and scan the code.
+            </Step>
           </View>
           {wasRemoved() ? <Text style={[styles.removed, { color: theme.danger }]}>Your computer removed this phone. Scan a new code to pair again.</Text> : null}
         </ScrollView>

@@ -1,0 +1,320 @@
+/*
+ * The window's look: every colour it uses, in light and in dark as the
+ * system is, with its type, corners, shadows and motion. Nothing outside this
+ * file names a colour; each part of the window takes one of these by its role.
+ */
+@import "tailwindcss";
+
+:root {
+  color-scheme: light;
+  /* The chat's side of the window, and the column of agents beside it. */
+  --canvas: #fcfcfd;
+  --sidebar: #f4f4f6;
+  /* What floats over the window: menus, dialogs, toasts. */
+  --raised: #ffffff;
+  /* Where the person types or picks, as a field or a segmented control. */
+  --field: #ededf0;
+  /* Laid over a surface as the pointer rests on something, and as it presses. */
+  --hover: rgb(0 0 0 / 4.5%);
+  --press: rgb(0 0 0 / 8%);
+  --line: rgb(0 0 0 / 8%);
+  --line-strong: rgb(0 0 0 / 14%);
+  --ink: #1d1d1f;
+  --ink2: #6e6e73;
+  --ink3: #a1a1a6;
+  /* What reads second on an agent's colour wash, as on the open chat's row, a little darker in light so it reads on the darkest colours. */
+  --ink2-wash: #5c5c61;
+  /* The app's blue: what it fills, and what it writes and outlines with, as links and the focus ring. */
+  --tint: #1f5fd6;
+  --tint-ink: #1f5fd6;
+  --on-tint: #ffffff;
+  /* Something that went wrong, or that can't be undone. */
+  --danger: #d0342c;
+  /* Something that is working, as a computer within reach. */
+  --ok: #2e9e4f;
+  --scrim: rgb(0 0 0 / 14%);
+  /* What marks something muted, as a muted agent's count. */
+  --muted: #6e6e73;
+  --tooltip: #1d1d1f;
+  --on-tooltip: #ffffff;
+  --scrollbar: rgb(0 0 0 / 16%);
+  --scrollbar-hover: rgb(0 0 0 / 30%);
+  /* How much of an agent's colour shows in a wash of it, as on its row while its chat is open. */
+  --chat-wash: 13%;
+  /* What an agent says in its chat sits on, as a message bubble. */
+  --bubble: #e9e9eb;
+  /* The line as a solid colour on the canvas, for a page an agent sent, which takes only solid colours. */
+  --line-solid: #e8e8e9;
+  /* A QR code's squares and what they are printed on, dark on white in light and dark alike, so a camera reads it. */
+  --code-ink: #000000;
+  --code-paper: #ffffff;
+  --shadow-color: rgb(0 0 0 / 18%);
+  --ring-color: rgb(0 0 0 / 6%);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    color-scheme: dark;
+    --canvas: #000000;
+    --sidebar: #0c0c0e;
+    --raised: #1a1a1d;
+    --field: #1f1f22;
+    --hover: rgb(255 255 255 / 6%);
+    --press: rgb(255 255 255 / 10%);
+    --line: rgb(255 255 255 / 8%);
+    --line-strong: rgb(255 255 255 / 14%);
+    --ink: #f5f5f7;
+    --ink2: #98989f;
+    --ink3: #636366;
+    --ink2-wash: #98989f;
+    --tint: #2a62d4;
+    --tint-ink: #7eaaff;
+    --on-tint: #ffffff;
+    --danger: #ff5a4f;
+    --ok: #34c759;
+    --scrim: rgb(0 0 0 / 55%);
+    --muted: #5a5a5f;
+    --tooltip: #2c2c2f;
+    --on-tooltip: #f5f5f7;
+    --scrollbar: rgb(255 255 255 / 18%);
+    --scrollbar-hover: rgb(255 255 255 / 32%);
+    --chat-wash: 22%;
+    --bubble: #262629;
+    --line-solid: #141414;
+    --shadow-color: rgb(0 0 0 / 70%);
+    --ring-color: rgb(255 255 255 / 9%);
+  }
+}
+
+@theme {
+  /* Only the window's own colours, so nothing reaches for one of Tailwind's. */
+  --color-*: initial;
+  --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+  --font-mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+
+  /* The interface reads at 13px. Each step has the line height it sets with. */
+  --text-2xs: 11px;
+  --text-2xs--line-height: 14px;
+  --text-xs: 12px;
+  --text-xs--line-height: 16px;
+  --text-sm: 13px;
+  --text-sm--line-height: 18px;
+  --text-base: 14px;
+  --text-base--line-height: 20px;
+  --text-lg: 16px;
+  --text-lg--line-height: 22px;
+  --text-xl: 20px;
+  --text-xl--line-height: 26px;
+  /* What is said in a chat reads a little larger than the interface. */
+  --text-message: 15px;
+  --text-message--line-height: 22px;
+  /* A figure that stands for a whole, as what a week of turns cost. */
+  --text-figure: 28px;
+  --text-figure--line-height: 34px;
+
+  /* Corners grow with what they hold: a key, a control, a row, a menu, a dialog. */
+  --radius-xs: 4px;
+  --radius-sm: 6px;
+  --radius-md: 8px;
+  --radius-lg: 10px;
+  --radius-xl: 14px;
+  /* A message bubble's corners, and the smaller one its tail is. */
+  --radius-bubble: 18px;
+
+  --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
+  --default-transition-duration: 150ms;
+  --default-transition-timing-function: cubic-bezier(0.22, 1, 0.36, 1);
+
+  --animate-spin: spin 0.8s linear infinite;
+  --animate-sheet-in: sheet-in 200ms var(--ease-out);
+  --animate-fade-in: fade-in 150ms var(--ease-out);
+  /* A message that comes in while its chat is open rises into place, and one the chat was opened at flashes. */
+  --animate-rise-in: rise-in 260ms var(--ease-out);
+  --animate-flash: flash 1600ms var(--ease-out);
+  /* The person's own message settles from the faded copy that showed while it was sent. */
+  --animate-settle: settle 200ms var(--ease-out);
+  /* A row of dots that light in turn while something is under way, each started a little after the one before. */
+  --animate-flow: flow 1400ms ease-in-out infinite;
+  /* A newly picked avatar pops into the place of the last one. */
+  --animate-pop-in: pop-in 220ms var(--ease-out);
+
+  @keyframes sheet-in {
+    from {
+      transform: translateX(24px);
+      opacity: 0;
+    }
+  }
+  @keyframes fade-in {
+    from {
+      opacity: 0;
+    }
+  }
+  @keyframes pop-in {
+    from {
+      transform: scale(0.8);
+      opacity: 0;
+    }
+  }
+  @keyframes rise-in {
+    from {
+      transform: translateY(8px);
+      opacity: 0;
+    }
+  }
+  @keyframes settle {
+    from {
+      opacity: 0.7;
+    }
+  }
+  @keyframes flow {
+    0%,
+    30%,
+    100% {
+      opacity: 0.25;
+    }
+    13% {
+      opacity: 0.9;
+    }
+  }
+  @keyframes flash {
+    from,
+    35% {
+      background-color: color-mix(in srgb, var(--chat, var(--tint)) var(--chat-wash), transparent);
+    }
+  }
+}
+
+@theme inline {
+  --color-transparent: transparent;
+  --color-current: currentColor;
+  --color-canvas: var(--canvas);
+  --color-sidebar: var(--sidebar);
+  --color-raised: var(--raised);
+  --color-field: var(--field);
+  --color-hover: var(--hover);
+  --color-press: var(--press);
+  --color-line: var(--line);
+  --color-line-strong: var(--line-strong);
+  --color-ink: var(--ink);
+  --color-ink2: var(--ink2);
+  --color-ink3: var(--ink3);
+  --color-tint: var(--tint);
+  --color-tint-ink: var(--tint-ink);
+  --color-on-tint: var(--on-tint);
+  --color-danger: var(--danger);
+  --color-ok: var(--ok);
+  --color-scrim: var(--scrim);
+  --color-muted: var(--muted);
+  --color-tooltip: var(--tooltip);
+  --color-bubble: var(--bubble);
+  --color-line-solid: var(--line-solid);
+  --color-on-tooltip: var(--on-tooltip);
+  --color-code-ink: var(--code-ink);
+  --color-code-paper: var(--code-paper);
+  /* The colour of the chat it sits in, which `--chat` sets on the chat's column and on each agent's row. The app's blue elsewhere. */
+  --color-chat: var(--chat, var(--tint));
+  --color-chat-wash: color-mix(in srgb, var(--chat, var(--tint)) var(--chat-wash), transparent);
+
+  --shadow-menu: 0 0 0 0.5px var(--ring-color), 0 1px 2px var(--ring-color), 0 10px 28px -8px var(--shadow-color);
+  --shadow-dialog: 0 0 0 0.5px var(--ring-color), 0 24px 64px -16px var(--shadow-color);
+  --shadow-sheet: 0 0 0 0.5px var(--ring-color), -16px 0 40px -20px var(--shadow-color);
+  --shadow-control: 0 0 0 0.5px var(--ring-color), 0 1px 2px var(--ring-color);
+}
+
+@layer base {
+  html,
+  body,
+  #root {
+    height: 100%;
+    overflow: hidden;
+  }
+
+  body {
+    background: var(--canvas);
+    color: var(--ink);
+    font-family: var(--font-sans);
+    font-size: var(--text-sm);
+    line-height: var(--text-sm--line-height);
+    -webkit-font-smoothing: antialiased;
+    cursor: default;
+    user-select: none;
+  }
+
+  /* What the person reads or types can be selected; the window's own words can't. */
+  input,
+  textarea,
+  [data-selectable] {
+    user-select: text;
+  }
+
+  /* Whatever can be pressed shows the hand: a button, and the menu rows, choices, switches and search results that Base UI draws as other elements. */
+  :where(button, [role="menuitem"], [role="radio"], [role="switch"], [role="option"]):not(:disabled, [data-disabled]) {
+    cursor: pointer;
+  }
+
+  /* A ring for focus that came from the keyboard, and none for a click. */
+  :focus-visible {
+    outline: 2px solid var(--tint-ink);
+    outline-offset: 2px;
+  }
+  :focus:not(:focus-visible) {
+    outline: none;
+  }
+
+  ::selection {
+    background: color-mix(in srgb, var(--tint-ink) 30%, transparent);
+  }
+
+  /* Thin scrollbars that sit over what scrolls. */
+  ::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+  ::-webkit-scrollbar-track,
+  ::-webkit-scrollbar-corner {
+    background: transparent;
+  }
+  ::-webkit-scrollbar-thumb {
+    background: var(--scrollbar);
+    border-radius: 3px;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: var(--scrollbar-hover);
+  }
+}
+
+/* The strip at the top of each column, which moves the window when dragged. What can be pressed or typed in it still can. */
+[data-drag] {
+  -webkit-app-region: drag;
+}
+[data-drag] :is(button, input, a, [role="button"], [role="combobox"], [data-no-drag]) {
+  -webkit-app-region: no-drag;
+}
+/* What floats over the window takes the pointer, even over a strip that drags. */
+[data-floating] {
+  -webkit-app-region: no-drag;
+}
+
+/* While an edge is dragged, the whole window shows the cursor for it, and the columns follow the pointer without easing. */
+[data-resizing],
+[data-resizing] * {
+  cursor: col-resize !important;
+}
+[data-resizing] [data-column] {
+  transition: none !important;
+}
+
+/* An avatar is pixel art, drawn with its pixels square. */
+.pixelated {
+  image-rendering: pixelated;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  ::before,
+  ::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
