@@ -19,12 +19,14 @@ type Answer = TurnResult & { reply?: string };
 /**
  * A Sidebots whose turns `answer` runs instead of Claude Code and Codex,
  * which still word the failures. Claude Code forgets the sessions too. The
- * fake reads the turn's first message, then replies to it. Asked where a
- * plan's limits stand, either answers as `plan.limits` does. What Sidebots
- * asks Google, `web.request` answers.
+ * fake reads the turn's first message, then replies to it. With `starts`,
+ * the turn waits for it before it reads the message, as a provider's turn
+ * takes a moment to start. Asked where a plan's limits stand, either answers
+ * as `plan.limits` does. What Sidebots asks Google, `web.request` answers.
  */
-function setup(answer: (turn: Turn) => Promise<Answer>, now: () => number = Date.now) {
+function setup(answer: (turn: Turn) => Promise<Answer>, now: () => number = Date.now, starts?: (turn: Turn) => Promise<void>) {
   const runTurn = async (turn: Turn): Promise<TurnResult> => {
+    if (starts) await starts(turn);
     turn.seen([turn.prompt.id]);
     const { reply: text, ...result } = await answer(turn);
     if (text !== undefined) turn.replied(text, [turn.prompt.id]);
@@ -1706,9 +1708,10 @@ test("stopping a turn that waits on an ask closes the ask, and the turn is count
 });
 
 /** Two of Alex's agents, and a fake provider that is handed each turn with whether it is Cog's. */
-async function twoAgents(answer: (turn: Turn, cogs: boolean) => Promise<Answer>) {
+async function twoAgents(answer: (turn: Turn, cogs: boolean) => Promise<Answer>, starts?: (turn: Turn, cogs: boolean) => Promise<void>) {
   let cogId = "";
-  const sidebots = setup((turn) => answer(turn, turn.cwd.endsWith(cogId)));
+  const cogs = (turn: Turn) => turn.cwd.endsWith(cogId);
+  const sidebots = setup((turn) => answer(turn, cogs(turn)), Date.now, starts && ((turn) => starts(turn, cogs(turn))));
   const mochi = (await sidebots.call(ME, "POST", "/agents", { name: "Mochi", avatarId: "mochi" })).json as { id: string };
   const cog = (await sidebots.call(ME, "POST", "/agents", { name: "Cog", avatarId: "cog" })).json as { id: string };
   cogId = cog.id;
@@ -1808,6 +1811,43 @@ test("an ask raised while working for another agent is in that agent's chat too,
   const stopped = await rows();
   assert.deepEqual([stopped.Mochi.waiting_on, stopped.Mochi.working, stopped.Cog.working], [null, false, false]);
   assert.equal(prompts.length, 2);
+});
+
+test("stopping an agent calls off what it asked another that hasn't read it yet, though that agent's turn for it had begun", async () => {
+  // Cog's turn for what Mochi asked is stopped while it starts. A provider's turn then ends with nothing read, and one too far along to end answers all the same.
+  for (const answersAnyway of [false, true]) {
+    let starting = true;
+    const { queue, call, say, mochi, cog, chat, rows } = await twoAgents(
+      async (turn, cogs) => {
+        if (cogs) return reply("Booked.", "session-cog");
+        if (turn.prompt.text === "book my bike in") turn.askAgent("Cog", "Book the repair.");
+        return reply(turn.prompt.text === "book my bike in" ? "I've asked Cog." : "It's booked.");
+      },
+      async (turn, cogs) => {
+        if (!cogs || !starting) return;
+        starting = false;
+        await new Promise<void>((resolve) => turn.stop.signal.addEventListener("abort", () => resolve()));
+        if (!answersAnyway) throw new Error("The turn was stopped before it started");
+      },
+    );
+    await say(ME, mochi.id, "book my bike in");
+    await queue.kick(mochi.id);
+    const waiting = await rows();
+    assert.deepEqual([waiting.Mochi.waiting_on, waiting.Cog.working], [cog.id, true]);
+
+    assert.equal((await call(ME, "POST", `/agents/${mochi.id}/stop`)).status, 200);
+    await queue.kick(cog.id);
+    await queue.kick(mochi.id);
+    // Cog gives no answer, to Mochi or to Alex, and Mochi waits on nothing.
+    assert.deepEqual((await chat(cog.id)).map((message) => [message.body, message.status]), [["Book the repair.", "failed"]]);
+    assert.deepEqual((await chat(mochi.id)).map((message) => [message.body, message.status]), [
+      ["book my bike in", "done"],
+      ["Book the repair.", "failed"],
+      ["I've asked Cog.", "done"],
+    ]);
+    const stopped = await rows();
+    assert.deepEqual([stopped.Mochi.waiting_on, stopped.Mochi.working, stopped.Cog.working, stopped.Cog.latest], [null, false, false, null]);
+  }
 });
 
 test("an agent that can't finish what another asked tells it why, and a deleted agent's side of an exchange goes with it", async () => {

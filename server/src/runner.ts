@@ -393,7 +393,7 @@ export function createQueue(store: Store, drivers: Drivers, connections: Connect
         if (removed.has(agentId)) return;
         const read = [...(ids ?? [])].filter((id) => store.message(agent.id, id)?.status === "running");
         const unread = ((stop.signal.reason as string[] | undefined) ?? []).filter((id) => store.message(agent.id, id)?.status === "queued");
-        // The chat says so, unless the stop came as the turn's last reply landed and changed nothing.
+        // The chat says so, unless the stop changed nothing in it: it came as the turn's last reply landed, or it called off what another agent asked before the turn had read it.
         if (!ids || read.length || unread.length) store.addMessage(agent.id, "sidebots", STOPPED, "done");
         for (const id of read) store.setStatus(id, asksMe(store.message(agent.id, id)) ? "failed" : "done");
         for (const id of unread) store.setStatus(id, "failed");
@@ -614,6 +614,8 @@ export function createQueue(store: Store, drivers: Drivers, connections: Connect
             ...(from ? {} : { followUps, sendUpdate }),
             seen: (ids) => store.markSeen(ids),
             replied: (reply, ids) => {
+              // What another agent asked and has called off gets no answer, though the turn was too far along to end without one.
+              if (store.message(agent.id, message.id)?.status === "failed") return;
               store.markSeen(ids);
               deliver(reply);
               // What another agent asked is done with once its answer goes, which `deliver` sees to.
@@ -683,10 +685,10 @@ export function createQueue(store: Store, drivers: Drivers, connections: Connect
       const stop = stops.get(agentId);
       // The stop carries the messages that were unread as it was asked for, so one sent after it gets its turn.
       if (stop && !stop.signal.aborted) stop.abort(store.waitingFromPerson(agentId).map((unread) => unread.id));
-      // What the agent asked other agents is called off with it. An agent at work on it is stopped, and one that hasn't started never reads it.
+      // What the agent asked other agents is called off with it. An agent at work on it is stopped, and one that hasn't read it never does.
       for (const asked of store.asked(agentId)) {
         this.stop(asked.peer_id!, stopping);
-        if (!busy.has(asked.peer_id!)) store.setStatus(asked.id, "failed");
+        if (asked.status === "queued" || !busy.has(asked.peer_id!)) store.setStatus(asked.id, "failed");
       }
     },
 
