@@ -5,6 +5,8 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import Animated, { LayoutAnimationConfig } from "react-native-reanimated";
 import { ChevronRight, Trash2 } from "lucide-react-native";
 import { PROVIDERS, USAGE_DAYS, scheduleWords, type AgentWithLatest, type Job, type Offered } from "@server/contract";
+import { nextTime } from "@client/time";
+import { COST_NOTE, KINDS, dollars, usedBy } from "@client/usage";
 import { AvatarPicker } from "@/components/AvatarPicker";
 import { AvatarView } from "@/components/AvatarView";
 import { Choices } from "@/components/Choices";
@@ -16,8 +18,6 @@ import { confirmDelete, problem } from "@/lib/alerts";
 import { HIDE, MOVE, POP_IN, SHOW } from "@/lib/motion";
 import { changeAgent, loadAbout, loadUsage, removeJob, useAbout, useAgent, useChatColor, useUsage, type AgentChanges } from "@/lib/state";
 import { useTheme } from "@/lib/theme";
-import { nextTime } from "@/lib/time";
-import { COST_NOTE, KINDS, dollars, usedBy } from "@/lib/usage";
 
 const TABS = { settings: "Settings", work: "Jobs & memory" } as const;
 type Tab = keyof typeof TABS;

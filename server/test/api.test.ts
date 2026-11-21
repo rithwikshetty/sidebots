@@ -43,7 +43,7 @@ function setup(answer: (turn: Turn) => Promise<Answer>, now: () => number = Date
   const notificationKeys = new Map<string, string>();
   /** Pairs another phone as the person, and returns what it sends with each request. */
   const pair = (name: string) => {
-    const keys = store.pair(store.addPairing(store.personByName(name)!.id).code, `${name}'s phone`)!;
+    const keys = store.pair(store.addPairing(store.personByName(name)!.id).code, `${name}'s phone`, "phone")!;
     notificationKeys.set(keys.key, keys.notificationKey);
     return { Authorization: `Bearer ${keys.key}` };
   };
@@ -151,6 +151,38 @@ test("a phone that pairs again with the key it had takes the place of its earlie
   // A key without a code that works replaces nothing.
   assert.equal((await pairWith("made-up", again.key)).status, 401);
   assert.equal((await call({ Authorization: `Bearer ${again.key}` }, "GET", "/agents")).status, 200);
+});
+
+test("the desktop app pairs as a desktop, a device that names no kind is a phone, and a kind the server doesn't know is refused before the code is used", async () => {
+  const { store, call, app } = setup(async () => reply("ok"));
+  const alex = store.personByName(ME)!;
+  const pairAs = async (code: string, body: { name: string; kind?: string }) => {
+    const response = await app.request("/pair", {
+      method: "POST",
+      headers: { Authorization: `Pairing ${code}`, "Content-Type": "application/json", "Sidebots-Contract": String(CONTRACT_VERSION) },
+      body: JSON.stringify(body),
+    });
+    return { status: response.status, json: (await response.json()) as { key?: string; error?: string } };
+  };
+
+  const desktop = await pairAs(store.addPairing(alex.id).code, { name: "Alex's Mac", kind: "desktop" });
+  assert.equal(desktop.status, 201);
+  assert.equal((await call({ Authorization: `Bearer ${desktop.json.key}` }, "GET", "/agents")).status, 200);
+  assert.equal((await pairAs(store.addPairing(alex.id).code, { name: "iPhone" })).status, 201);
+  assert.equal((await pairAs(store.addPairing(alex.id).code, { name: "iPad", kind: "phone" })).status, 201);
+
+  const { code } = store.addPairing(alex.id);
+  const refused = await pairAs(code, { name: "Watch", kind: "watch" });
+  assert.equal(refused.status, 400);
+  assert.equal(refused.json.error, "A device is a phone or a desktop.");
+  assert.equal((await pairAs(code, { name: "iPhone 2" })).status, 201);
+
+  assert.deepEqual(store.devices().map((device) => [device.name, device.kind]), [
+    ["Alex's Mac", "desktop"],
+    ["iPhone", "phone"],
+    ["iPad", "phone"],
+    ["iPhone 2", "phone"],
+  ]);
 });
 
 test("a phone removed on the computer is refused from its next request, and the person's other phones stay paired", async () => {
@@ -429,13 +461,18 @@ test("the event stream carries the person's own messages and their status change
   );
 });
 
-test("the event stream carries the agents the person adds and deletes on another phone, and nobody else's", async () => {
+test("the event stream carries the agents the person adds, changes and deletes on another phone, and nobody else's", async () => {
   const { call, app, phoneOf, pair } = setup(async () => reply("ok"));
   const otherPhone = pair(ME);
   const response = await app.request("/events", { headers: phoneOf(ME) });
   const reader = response.body!.pipeThrough(new TextDecoderStream()).getReader();
-  await call(HER, "POST", "/agents", { name: "Garden", avatarId: "moss" });
+  const hers = (await call(HER, "POST", "/agents", { name: "Garden", avatarId: "moss" })).json;
+  await call(HER, "PATCH", `/agents/${hers.id}`, { muted: true });
   const added = (await call(otherPhone, "POST", "/agents", { name: "Theo", avatarId: "mochi" })).json;
+  const changed = (await call(otherPhone, "PATCH", `/agents/${added.id}`, { name: "Theodore", muted: true, hidden: true })).json;
+  // A change that names nothing to change, or reads a chat, tells nobody.
+  await call(otherPhone, "PATCH", `/agents/${added.id}`, {});
+  await call(otherPhone, "POST", `/agents/${added.id}/read`);
   await call(otherPhone, "DELETE", `/agents/${added.id}`);
 
   let text = "";
@@ -445,10 +482,22 @@ test("the event stream carries the agents the person adds and deletes on another
     .split("\n")
     .filter((line) => line.startsWith("data: {"))
     .map((line) => JSON.parse(line.slice(6)));
+  assert.deepEqual([changed.name, changed.muted, changed.hidden], ["Theodore", true, true]);
   assert.deepEqual(events, [
     { message: null, agent: { ...added, latest: null, working: false, unread: 0, waiting_on: null } },
+    { message: null, agent: changed },
     { deleted: added.id },
   ]);
+});
+
+test("a message's line breaks are kept as plain newlines, however the app that sent it wrote them", async () => {
+  const { call, say } = setup(async () => reply("ok"));
+  const agent = (await call(ME, "POST", "/agents", { name: "Theo", avatarId: "mochi" })).json;
+  // A form made as a browser makes one writes each line break as CRLF.
+  assert.equal((await say(ME, agent.id, "one\ntwo\n\nthree\n")).json.body, "one\ntwo\n\nthree");
+  assert.equal((await call(ME, "POST", `/agents/${agent.id}/messages`, { body: "four\r\nfive" })).json.body, "four\nfive");
+  const kept = (await call(ME, "GET", `/agents/${agent.id}/messages`)).json.filter((message: { sender: string }) => message.sender === "person");
+  assert.deepEqual(kept.map((message: { body: string }) => message.body), ["one\ntwo\n\nthree", "four\nfive"]);
 });
 
 test("after a known message returns only what came later", async () => {
@@ -461,7 +510,7 @@ test("after a known message returns only what came later", async () => {
   assert.deepEqual(later.map((m: { body: string }) => m.body), ["re: first"]);
 });
 
-test("files sent with a message go into the agent's folder, the agent is told where, and only their owner can open them", async () => {
+test("files sent with a message go into the agent's folder, the agent is told where, only their owner can open them, and HEAD says how big each is", async () => {
   const prompts: string[] = [];
   const { store, queue, call, say, app, phoneOf } = setup(async (turn) => {
     prompts.push(turn.prompt.text);
@@ -480,6 +529,10 @@ test("files sent with a message go into the agent's folder, the agent is told wh
   const mine = await app.request(`/agents/${agent.id}/${path}`, { headers: phoneOf(ME) });
   assert.equal(mine.headers.get("Content-Type"), "image/jpeg");
   assert.equal(await mine.text(), "jpeg bytes");
+  const sized = await app.request(`/agents/${agent.id}/${path}`, { method: "HEAD", headers: phoneOf(ME) });
+  assert.equal(sized.status, 200);
+  assert.equal(sized.headers.get("Content-Length"), "10");
+  assert.equal(await sized.text(), "");
   assert.equal((await app.request(`/agents/${agent.id}/${path}`, { headers: phoneOf(HER) })).status, 404);
   assert.equal((await app.request(`/agents/${agent.id}/attachments/..`, { headers: phoneOf(ME) })).status, 404);
   assert.equal((await say(ME, agent.id, "  ")).status, 400);
@@ -1704,7 +1757,7 @@ test("an agent asks another, which answers in a turn of its own, and the first t
   );
   // What Mochi asked is in Cog's chat too.
   assert.deepEqual((await chat(cog.id)).map((message) => message.id), [asked.id]);
-  assert.equal(prompts[1], "Mochi, another of Alex's agents, sent you the message below. Alex didn't write it. Your reply goes back to Mochi and not to Alex's phone, so say what Mochi needs.\n\nWhat did the shop quote?");
+  assert.equal(prompts[1], "Mochi, another of Alex's agents, sent you the message below. Alex didn't write it. Your reply goes back to Mochi and not to Alex, so say what Mochi needs.\n\nWhat did the shop quote?");
 
   release();
   await queue.kick(cog.id);

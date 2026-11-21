@@ -8,7 +8,7 @@ description: "Release Sidebots from main to everywhere it runs: the relay, the M
 A deploy releases `main` to five places, in this order:
 
 1. **The relay**, at `relay.sidebots.app`. Servers and phones depend on it, so it goes first.
-2. **The Mac app**, as a disk image on a GitHub release. It carries the server.
+2. **The Mac app**, as a disk image on a GitHub release. It carries the server and the desktop app.
 3. **The site**, at `sidebots.app`, with the update feed that tells installed Mac apps about the release.
 4. **The phone app**, on TestFlight. It goes after the Mac app, because a newer phone app on an older server asks for routes the server doesn't have.
 5. **This Mac's own server**, which runs from the main checkout, so no release reaches it.

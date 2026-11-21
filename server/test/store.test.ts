@@ -1,9 +1,12 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { spawn } from "node:child_process";
+import { once } from "node:events";
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
+import { setTimeout as wait } from "node:timers/promises";
 import { openStore } from "../src/store.ts";
 
 test("a database made before the table changes gets them and keeps what it holds", () => {
@@ -41,6 +44,7 @@ test("a database made before the table changes gets them and keeps what it holds
   assert.deepEqual(store.accounts("me").map((account) => ({ ...account })), [{ person_id: "me", provider: "claude", config_dir: "/tmp/claude" }]);
   assert.equal(store.apiKey("me", "claude"), "sk-ant-key");
   assert.deepEqual(store.pushTargetsFor("me"), [{ token: "a".repeat(64), environment: "production", notificationKey: "key" }]);
+  assert.deepEqual(store.devices().map((device) => [device.id, device.kind]), [["phone", "phone"]]);
   store.setPushToken("phone", { token: "b".repeat(64), environment: "sandbox", app: "app.sidebots.dev" });
   assert.deepEqual(store.pushTargetsFor("me"), [{ token: "b".repeat(64), environment: "sandbox", app: "app.sidebots.dev", notificationKey: "key" }]);
 
@@ -48,6 +52,17 @@ test("a database made before the table changes gets them and keeps what it holds
   const again = openStore(home);
   assert.deepEqual(again.pushTargetsFor("me"), store.pushTargetsFor("me"));
   assert.deepEqual(again.accounts("me"), store.accounts("me"));
+});
+
+test("the count of paired phones the relay hears leaves the desktop app out", () => {
+  const store = openStore(mkdtempSync(join(tmpdir(), "sidebots-store-test-")));
+  const person = store.addPerson({ name: "Alex", provider: "claude", configDir: "/config/alex" });
+  store.pair(store.addPairing(person.id).code, "Alex's Mac", "desktop");
+  assert.equal(store.counts().phones, 0);
+  store.pair(store.addPairing(person.id).code, "iPhone", "phone");
+  store.pair(store.addPairing(person.id).code, "iPad", "phone");
+  assert.equal(store.counts().phones, 2);
+  assert.equal(store.devices().length, 3);
 });
 
 test("a database a newer Sidebots has changed keeps its count of changes when an older one opens it", () => {
@@ -69,17 +84,38 @@ test("a database a newer Sidebots has changed keeps its count of changes when an
   assert.equal(count(), newer);
 });
 
+test("two that open an older database at once make its changes once", async () => {
+  const home = mkdtempSync(join(tmpdir(), "sidebots-store-test-"));
+  openStore(home).close();
+  // The database as it was before its last change, in the hands of one that has begun to make the change.
+  const first = new DatabaseSync(join(home, "sidebots.sqlite"));
+  first.exec("alter table devices drop column kind; pragma user_version = 11; begin immediate");
+  // Another process opens the database meanwhile, as the Mac app's `status` command does beside the server.
+  const opens = `import { openStore } from ${JSON.stringify(new URL("../src/store.ts", import.meta.url).href)}; console.log("opening"); openStore(${JSON.stringify(home)}).close();`;
+  const second = spawn(process.execPath, ["--input-type=module", "--eval", opens], { stdio: ["ignore", "pipe", "pipe"] });
+  let failure = "";
+  second.stderr.on("data", (chunk) => (failure += chunk));
+  const ended = once(second, "exit");
+  await once(second.stdout, "data");
+  // It has had the time to see how the database stands before the first is done.
+  await wait(500);
+  first.exec("alter table devices add column kind text not null default 'phone' check (kind in ('phone', 'desktop')); pragma user_version = 12; commit");
+  first.close();
+  assert.deepEqual(await ended, [0, null], failure);
+});
+
 test("a database that counted turns without their tokens keeps the turns, and counts tokens from the next turn of a session", () => {
   const home = mkdtempSync(join(tmpdir(), "sidebots-store-test-"));
   const fresh = openStore(home);
   const person = fresh.addPerson({ name: "Rithwik", provider: "claude", configDir: "/tmp/claude" });
   const agent = fresh.createAgent(person, "Maya", "mochi", "claude");
   fresh.close();
-  // The usage table as it was before it counted tokens, with a turn of a session that cost $2.
+  // The database as it was before the usage table counted tokens, with a turn of a session that cost $2.
   const old = new DatabaseSync(join(home, "sidebots.sqlite"));
   old.exec(`
     alter table usage drop column tokens;
     alter table usage drop column session_tokens;
+    alter table devices drop column kind;
     insert into usage values ('${agent.id}', 'reply', 2, 'chat', 2, ${Date.now()});
     pragma user_version = 8;
   `);
@@ -102,8 +138,9 @@ test("a Codex session from before the connections' tools gets a fresh start, sin
   fresh.setSession(maya.id, "thread-1");
   fresh.setSession(ruby.id, "session-1");
   fresh.close();
+  // The database as it was before the fresh starts: without them, and without the change made after them.
   const old = new DatabaseSync(join(home, "sidebots.sqlite"));
-  old.exec("pragma user_version = 10");
+  old.exec("alter table devices drop column kind; pragma user_version = 10");
   old.close();
 
   const store = openStore(home);

@@ -1,5 +1,6 @@
 import { Alert } from "react-native";
 import type { Agent, Connected } from "@server/contract";
+import { deleteConfirmation, removeConnectionConfirmation } from "@client/confirmations";
 import { disconnect } from "./api";
 import { deleteAgent, removeConnection } from "./state";
 
@@ -10,24 +11,26 @@ export function problem(title: string, failure: unknown): void {
 
 /** Asks before deleting an agent, since nothing of it can be brought back. Its chat closes once it is gone. */
 export function confirmDelete(agent: Agent): void {
-  Alert.alert(`Delete ${agent.name}?`, "Its chat, its memory, its jobs and its files are removed for good.", [
+  const { title, message, action, failed } = deleteConfirmation(agent);
+  Alert.alert(title, message, [
     { text: "Cancel", style: "cancel" },
     {
-      text: "Delete",
+      text: action,
       style: "destructive",
-      onPress: () => void deleteAgent(agent.id).catch((failure) => problem("Couldn't delete it", failure)),
+      onPress: () => void deleteAgent(agent.id).catch((failure) => problem(failed, failure)),
     },
   ]);
 }
 
 /** Asks before removing a connection, since every agent loses it until the person signs in to it again. */
 export function confirmRemoveConnection(connected: Connected): void {
-  Alert.alert(`Remove ${connected.name}?`, "None of your agents can use it until you connect it again.", [
+  const { title, message, action, failed } = removeConnectionConfirmation(connected);
+  Alert.alert(title, message, [
     { text: "Cancel", style: "cancel" },
     {
-      text: "Remove",
+      text: action,
       style: "destructive",
-      onPress: () => void removeConnection(connected).catch((failure) => problem("Couldn't remove it", failure)),
+      onPress: () => void removeConnection(connected).catch((failure) => problem(failed, failure)),
     },
   ]);
 }

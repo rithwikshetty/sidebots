@@ -49,13 +49,15 @@ struct Program: Decodable {
   var ready: Bool { path != nil && supported }
 }
 
-/// A paired phone, as the server's `devices --json` command lists it.
+/// A paired device, as the server's `devices --json` command lists it.
 struct Phone: Decodable, Identifiable {
   let id: String
   let name: String
   let person: String
   /// When it paired, in milliseconds since 1970.
   let pairedAt: Double
+  /// `phone`, or `desktop` for the desktop app.
+  let kind: String
 }
 
 /// A pairing code, as the server's `pair --json` command makes it.
@@ -173,14 +175,14 @@ enum SignIn {
     process.terminate()
   }
 
-  /// Reads the server's state and the paired phones.
+  /// Reads the server's state and the paired phones, which leave out the desktop app.
   func refresh() async {
     let saves = countingSaves
     status = try? Self.decode(await command(["status", "--json"]))
     failed = status == nil
     // What the server said while it was saving the switch, or since before it last did, may be from before it saved.
     if let status, !savingCounting, saves == countingSaves { counting = status.counting }
-    if let phones: [Phone] = try? Self.decode(await command(["devices", "--json"])) { self.phones = phones }
+    if let devices: [Phone] = try? Self.decode(await command(["devices", "--json"])) { phones = devices.filter { $0.kind == "phone" } }
   }
 
   /// Opens the server's log, which says why it stopped.

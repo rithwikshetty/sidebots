@@ -6,11 +6,15 @@ import { KeyboardChatScrollView, KeyboardController, KeyboardEvents, KeyboardSti
 import Animated, { useSharedValue } from "react-native-reanimated";
 import { Reply, X } from "lucide-react-native";
 import { avatarStateOf, betweenAgents, exchanges, type AgentWithLatest, type Ask, type Message, type Question } from "@server/contract";
+import { standingOf } from "@client/exchanges";
+import { fileName, fitsInMessage, isImage, isPage, MAX_FILES, SIZE_LIMIT_NOTICE } from "@client/files";
+import { preview } from "@client/messages";
+import { dayLabel, listTime, sameDay } from "@client/time";
 import { AskCard } from "@/components/AskCard";
 import { ChatBubble } from "@/components/ChatBubble";
 import { BAR_HEIGHT, ChatHeader, HEADER_CLEARANCE, HEADER_OVERHANG } from "@/components/ChatHeader";
 import { Composer } from "@/components/Composer";
-import { Exchange, standingOf } from "@/components/Exchange";
+import { Exchange } from "@/components/Exchange";
 import { FadingText } from "@/components/FadingText";
 import { Glass } from "@/components/Glass";
 import { IconButton } from "@/components/IconButton";
@@ -20,16 +24,14 @@ import { SwipeToReply } from "@/components/SwipeToReply";
 import { WorkingLine } from "@/components/WorkingLine";
 import { problem } from "@/lib/alerts";
 import { attachment } from "@/lib/api";
-import { fitsInMessage, isImage, isPage, MAX_FILES, pick, SIZE_LIMIT_NOTICE, type Picked, type PickSource } from "@/lib/files";
+import { pick, type Picked, type PickSource } from "@/lib/files";
 import { haptics } from "@/lib/haptics";
 import { useReadingMargin, useSplit } from "@/lib/layout";
 import { useWorkingLine } from "@/lib/lines";
-import { preview } from "@/lib/messages";
 import { HIDE, MOVE, SHOW, arrive } from "@/lib/motion";
 import { askForPush, showChatOnScreen } from "@/lib/push";
 import { answerAsk, connect, freshStart, loadMessages, loadOlder, markRead, resend, send, stop, useAgent, useChatColor, useMessages, useOnline } from "@/lib/state";
 import { ChatColor, type Theme, useTheme } from "@/lib/theme";
-import { dayLabel, listTime, sameDay } from "@/lib/time";
 
 export default function Chat() {
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -484,12 +486,6 @@ function Sent({ body, quote, photos, pages = [], files, mine, theme, asked, from
   );
 }
 
-
-/** A sent file's own name, without the folder and the code the server puts before it. */
-function fileName(path: string): string {
-  const name = path.split("/").pop() ?? path;
-  return name.slice(name.indexOf("-") + 1);
-}
 
 /**
  * A message the person sent that the server hasn't answered for yet, with

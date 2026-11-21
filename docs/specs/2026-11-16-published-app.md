@@ -6,14 +6,14 @@
 
 Sidebots works today for a household with a developer in it. Someone has to build the phone app in Xcode, start the server from a terminal, set up Tailscale on every device and create a push key. Nobody else can use it.
 
-This change lets anyone use Sidebots with two installs and one scan. They get the phone app from the App Store and the Mac app from `sidebots.app`. The Mac app runs the agents on their own computer, with their own Claude Code or Codex. It shows a QR code, the phone scans it, and the two are connected from anywhere. No terminal, no Tailscale and no account.
+This change lets anyone use Sidebots with one install, and from their phone with a second and one scan. They get the Mac app from `sidebots.app` and the phone app from the App Store. The Mac app runs the agents on their own computer, with their own Claude Code or Codex, and shows them in a window. It shows a QR code, the phone scans it, and the two are connected from anywhere. No terminal, no Tailscale and no account.
 
 The agents, the messages and the Claude sign-in stay on the person's computer, as they do today. What is new on our side is one small service, the relay, which gives each computer an address the phone can reach and passes notifications to Apple.
 
 ## Decisions
 
 - **One phone app for everyone, on the App Store.** It is published under one Apple Developer account, with the identifier `app.sidebots`. Every copy of the app can pair with any Sidebots server.
-- **The Mac app is the server.** A menu bar app holds the server, Node and everything else the server needs, but not the providers' programs. It starts with the computer and restarts the server if it stops. It is a download from `sidebots.app`, signed and notarised with a Developer ID. It is not on the Mac App Store, whose sandbox would stop agents reaching the person's files.
+- **The Mac app is the server.** A menu bar app holds the server, Node and everything else the server needs, but not the providers' programs. It starts with the computer and restarts the server if it stops. It carries the desktop app, which shows the agents and their chats in a window, as `docs/specs/2026-11-21-desktop-app.md` describes. It is a download from `sidebots.app`, signed and notarised with a Developer ID. It is not on the Mac App Store, whose sandbox would stop agents reaching the person's files.
 - **Pairing is how a phone proves who it is.** The server makes a one-time code for a person, the phone scans it and gets a device key, and the server refuses every request without a known key. Sidebots has no accounts, no passwords and no sign-in screen. Pairing replaces the Tailscale login the server trusts today, which is only safe while nothing outside the tailnet can reach the server.
 - **Each computer gets its own address under `sidebots.app`, through a Cloudflare Tunnel.** A tunnel is a connection the computer opens outward to Cloudflare, so the computer is reachable without changing the home router and without Tailscale. T3 Code reaches machines the same way. The server listens on the local machine only, as today.
 - **The relay does two jobs: it gives a machine its tunnel, and it passes notifications to Apple.** Only the holder of the app's push key can notify the app, so the key lives in the relay and nowhere else. The relay is a Cloudflare Worker at `relay.sidebots.app`. It is not on the path between phone and computer: chat traffic goes from the phone through the tunnel to the computer.
@@ -31,11 +31,11 @@ The agents, the messages and the Claude sign-in stay on the person's computer, a
 
 ## Behavior
 
-**Setting up the computer.** The person downloads Sidebots from `sidebots.app` and opens it. A window asks which provider the agents start on, Claude Code or Codex, and says for each whether it is on the Mac. A provider that isn't gets a step of its own: "Install", which runs its maker's installer and shows the command it runs, or "I've installed it myself", which looks again. The window then asks how the agents should sign in. If the provider is already signed in on the computer, that is the first choice and needs one click. Otherwise the person picks "Sign in to Claude" or "Sign in to ChatGPT", which opens that sign-in in their browser, or pastes an API key. The window then shows a QR code. Sidebots stays in the menu bar and starts whenever the computer does.
+**Setting up the computer.** The person downloads Sidebots from `sidebots.app` and opens it. A window asks which provider the agents start on, Claude Code or Codex, and says for each whether it is on the Mac. A provider that isn't gets a step of its own: "Install", which runs its maker's installer and shows the command it runs, or "I've installed it myself", which looks again. The window then asks how the agents should sign in. If the provider is already signed in on the computer, that is the first choice and needs one click. Otherwise the person picks "Sign in to Claude" or "Sign in to ChatGPT", which opens that sign-in in their browser, or pastes an API key. Setup then ends in the desktop app's window, on the agents. Sidebots stays in the menu bar and starts whenever the computer does.
 
-**Pairing a phone.** The person opens the phone app, which opens on a welcome screen that says what Sidebots is and how to pair. Its button opens the camera, laid out as the chat's camera, with one line of instruction, and the phone asks for the camera then. The person points it at the QR code. The app says "Paired with Rithwik's MacBook Pro" and opens on the agents. A QR code works once and for ten minutes. A link button above the camera takes the same code as text.
+**Pairing a phone.** The person opens the phone app, which opens on a welcome screen that says what Sidebots is and how to pair. Its button opens the camera, laid out as the chat's camera, with one line of instruction, and the phone asks for the camera then. The person points it at the QR code that Pair a phone shows, in the window's Settings or in the menu bar panel. The app says "Paired with Rithwik's MacBook Pro" and opens on the agents. A QR code works once and for ten minutes. A link button above the camera takes the same code as text.
 
-**The panel.** The menu bar icon shows whether Sidebots is running and reachable. A click opens a panel laid out like the system's own menu bar panels. A header says whether phones can reach the computer, with a green, orange or red dot. Then come the paired phones, each with when it paired and a button to remove it. That button turns into Remove in the phone's own row, so the panel asks without opening a window. Then "Pair a phone…", how Claude is signed in with Change (or Sign in when signed out), an "Open at login" switch, a "Share usage counts" switch, and Quit.
+**The panel.** The menu bar icon shows whether Sidebots is running and reachable. A click opens a panel laid out like the system's own menu bar panels. A header says whether phones can reach the computer, with a green, orange or red dot. Then "Open Sidebots", which opens the window. Then come the paired phones, each with when it paired and a button to remove it. That button turns into Remove in the phone's own row, so the panel asks without opening a window. Then "Pair a phone…", how the agents sign in to each provider with Change (or Sign in when signed out), an "Open at login" switch, a "Share usage counts" switch, "Check for updates…", and Quit, which quits the window's app too.
 
 **Removing a phone.** Remove takes effect at once. The phone's next request is refused, and the app goes back to the welcome screen with a line saying the computer removed it. Its saved chats are cleared. A person can also leave from the phone, with Disconnect in the app's side menu, which is how a phone moves to a different computer.
 
@@ -61,7 +61,7 @@ The repository gains two folders beside `server/` and `mobile/`: `relay/`, the C
 
 ### Pairing
 
-`node src/main.ts pair <person>` makes a pairing code and prints it as a QR code and as a link. The Mac app runs the same command and draws the QR code in its window. The code is 32 random bytes. The store keeps only its hash, with the person it is for and when it expires: ten minutes later, or as many days later as `--days <n>` says.
+`node src/main.ts pair <person>` makes a pairing code and prints it as a QR code and as a link. The Mac app and the desktop app run the same command and draw the QR code in their windows. The code is 32 random bytes. The store keeps only its hash, with the person it is for and when it expires: ten minutes later, or as many days later as `--days <n>` says.
 
 The QR code holds one link:
 
@@ -83,7 +83,7 @@ The api's first step, which today matches the `Tailscale-User-Login` header to a
 
 ### Database
 
-`people` loses `tailscale_login`. `devices` changes from a list of push tokens to the list of paired phones, and `pairings` is new. `accounts` holds each person's config folder for each provider.
+`people` loses `tailscale_login`. `devices` changes from a list of push tokens to the list of paired devices, and `pairings` is new. `accounts` holds each person's config folder for each provider.
 
 ```sql
 create table people (
@@ -101,7 +101,8 @@ create table accounts (
 create table devices (
   id               text primary key,
   person_id        text not null references people(id),
-  name             text not null,     -- "Rithwik's phone", as the phone gave it
+  name             text not null,     -- "Rithwik's phone", as the device gave it
+  kind             text not null default 'phone',  -- 'phone', or 'desktop' for the desktop app
   key_hash         text not null unique,
   notification_key text not null,     -- encrypts this phone's notifications
   push_token       text,              -- the phone's Apple device token, once it allows notifications
@@ -209,18 +210,19 @@ A Swift app in `mac/`, drawn with SwiftUI's `MenuBarExtra`, with the identifier 
 - the `server/` folder with its production dependencies, without the Claude Code program the Agent SDK can bring
 - the starter avatars
 - `cloudflared`
+- the desktop app, at `Contents/Helpers/Sidebots.app`
 
-It starts the server as a child process with `SIDEBOTS_CLOUDFLARED` pointing into the bundle and its own version in `SIDEBOTS_VERSION`, restarts it if it exits, and registers itself to open at login with `SMAppService` once the person has set it up. The server's output goes to `~/Library/Logs/Sidebots/server.log`. The app passes its own environment on, so `SIDEBOTS_HOME`, `PORT` and `SIDEBOTS_RELAY` reach the server when they are set.
+It starts the server as a child process with `SIDEBOTS_CLOUDFLARED` pointing into the bundle and its own version in `SIDEBOTS_VERSION`, restarts it if it exits, and registers itself to open at login with `SMAppService` once the person has set it up. The server's output goes to `~/Library/Logs/Sidebots/server.log`. The app passes its own environment on, so `SIDEBOTS_HOME`, `PORT` and `SIDEBOTS_RELAY` reach the server when they are set, and it passes those three on to the desktop app.
 
-It reads the server's state from the server's own commands, with `--json` where it reads what they print: `status` (whether the server answers on its port and at the machine's address, the people and how each one's agents sign in, and whether the server tells the relay how much it is used), `devices` (the paired phones), `remove-device`, `counts`, `pair`, `add-person`, `add-account`, which sets the person up on their second provider, `api-key`, which with `--remove` puts a person back on their login, and `providers`, `install`, `sign-in` and `signed-in` for the providers' programs. It names the one person after the computer user's full name. Their config folder is the one `providers` names: `~/.claude` for Claude Code, or the folder in `CLAUDE_CONFIG_DIR` when that is set, and `~/.codex` for Codex, or the folder in `CODEX_HOME`.
+It reads the server's state from the server's own commands, with `--json` where it reads what they print: `status` (whether the server answers on its port and at the machine's address, the people and how each one's agents sign in, and whether the server tells the relay how much it is used), `devices` (the paired devices, of which it lists the phones), `remove-device`, `counts`, `pair`, `add-person`, `add-account`, which sets the person up on their second provider, `api-key`, which with `--remove` puts a person back on their login, and `providers`, `install`, `sign-in` and `signed-in` for the providers' programs. It names the one person after the computer user's full name. Their config folder is the one `providers` names: `~/.claude` for Claude Code, or the folder in `CLAUDE_CONFIG_DIR` when that is set, and `~/.codex` for Codex, or the folder in `CODEX_HOME`.
 
 It never runs a provider's program itself. To learn which are on the Mac it runs `providers`, once a minute and whenever the setup window looks. To learn whether one is signed in, and whether with an API key saved as its login, it runs `signed-in` with the person's folder. It calls that login an API key, as it does a key the person gave Sidebots. For "Sign in to Claude" or "Sign in to ChatGPT" it runs `sign-in` the same way and reads what the provider prints. The provider opens its sign-in page in the browser and ends once the person has signed in there. When Claude's page shows a code instead, the window takes it and passes it to the command's input. The menu warns when a provider the person has set up is missing from the Mac or too old, in place of how its agents sign in.
 
 The windows for signing in and for the QR code show the app in the Dock while they are open. The QR window makes a new code when the last one runs out, and says "Paired with" and the phone's name when a new phone appears in `devices`.
 
-It updates itself with Sparkle, from an update feed at `sidebots.app`, and waits for running turns to end before it restarts the server.
+It updates itself with Sparkle, from an update feed at `sidebots.app`, and waits for running turns to end before it restarts the server. It quits the desktop app as the update installs, and opens it again afterwards when it was running.
 
-`mac/build.sh` signs every program in the bundle with a local identity. A release follows Apple's "Packaging Mac software for distribution": it signs with the team's Developer ID certificate, makes the disk image with dmgbuild, which lays out its window with the app, an arrow and a link to Applications, signs the disk image, has Apple notarise it with `notarytool`, and staples the ticket to it.
+`mac/build.sh` packages the desktop app into the bundle and signs every program in it with a local identity, the desktop app from the inside out. A release follows Apple's "Packaging Mac software for distribution": it signs with the team's Developer ID certificate, makes the disk image with dmgbuild, which lays out its window with the app, an arrow and a link to Applications, signs the disk image, has Apple notarise it with `notarytool`, and staples the ticket to it.
 
 ### The site
 

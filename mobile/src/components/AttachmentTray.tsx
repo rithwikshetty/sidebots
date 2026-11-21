@@ -2,7 +2,8 @@ import { useRef } from "react";
 import { Image, Pressable, ScrollView, StyleSheet, Text, View, type ScrollViewInstance } from "react-native";
 import Animated, { FadeIn, FadeOut, LinearTransition, useReducedMotion } from "react-native-reanimated";
 import { X } from "lucide-react-native";
-import { FILE_ICONS, fileKind, fileKindWord, formatFileSize, type Picked } from "@/lib/files";
+import { fileKind, fileMeta } from "@client/files";
+import { FILE_ICONS, type Picked } from "@/lib/files";
 import { useTheme } from "@/lib/theme";
 
 const TILE = 56;
@@ -39,7 +40,7 @@ function RemoveButton({ file, onRemove }: { file: Picked; onRemove: (file: Picke
 function Tile({ file, onRemove }: { file: Picked; onRemove: (file: Picked) => void }) {
   const theme = useTheme();
   const Icon = FILE_ICONS[fileKind(file.name)];
-  const meta = [fileKindWord(file.name), formatFileSize(file.size)].filter(Boolean).join(" · ");
+  const meta = fileMeta(file.name, file.size);
   return (
     <View style={styles.tileFrame}>
       <View

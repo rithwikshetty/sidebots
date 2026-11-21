@@ -209,6 +209,16 @@ export type AgentWithLatest = Agent & { latest: Message | null; working: boolean
 export const betweenAgents = (message: Pick<Message, "peer_id" | "ask">): boolean => message.peer_id !== null && message.ask === null;
 
 /**
+ * Whether the person is told of a message as it comes: an agent's reply or
+ * an ask still waiting, or a notice that a turn failed. An update while the
+ * agent works, an ask's answer and what one agent says to another tell nobody.
+ */
+export function notifies(message: Pick<Message, "sender" | "interim" | "ask" | "peer_id" | "status">): boolean {
+  const answered = message.ask !== null && message.ask !== "waiting";
+  return (message.sender === "agent" && !message.interim && !answered && !betweenAgents(message)) || (message.sender === "sidebots" && message.status === "failed");
+}
+
+/**
  * The exchanges in a chat's messages, each oldest first: what two of the
  * person's agents asked and answered each other, one thing after another.
  * An exchange ends when the person sends a message or the chat's agent gives
@@ -331,14 +341,15 @@ export function oneLine(message: Pick<Message, "body" | "question">): string {
 
 /**
  * What the event stream sends. A message that was added, changed status or
- * had its ask closed comes with its agent as the home screen shows it. A new
- * agent comes the same way, with no message. A deleted agent comes as its id.
+ * had its ask closed comes with its agent as the home screen shows it. An
+ * agent that was added or changed comes the same way, with no message. A
+ * deleted agent comes as its id.
  */
 export type StreamEvent = { message: Message | null; agent: AgentWithLatest } | { deleted: string };
 /**
- * What a phone gets when it pairs: the key it sends with every request from
- * then on, the key its notifications are encrypted with, in base64, and the
- * name of the machine it paired with.
+ * What a device gets when it pairs: the key it sends with every request from
+ * then on, the key a phone's notifications are encrypted with, in base64, and
+ * the name of the machine it paired with.
  */
 export type Paired = { key: string; notificationKey: string; machine: string };
 /**

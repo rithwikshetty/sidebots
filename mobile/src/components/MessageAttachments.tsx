@@ -19,9 +19,10 @@ import { useReducedMotion } from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { WebView } from "react-native-webview";
 import { Maximize2, Share as ShareIcon, X } from "lucide-react-native";
+import { fileKind, fileMeta, pageStyle, pageTitle } from "@client/files";
 import { EdgeFade } from "@/components/EdgeFade";
 import { IconButton } from "@/components/IconButton";
-import { FILE_ICONS, fileKind, fileKindWord, formatFileSize } from "@/lib/files";
+import { FILE_ICONS } from "@/lib/files";
 import { haptics } from "@/lib/haptics";
 import { useWindowControls } from "@/lib/layout";
 import { openLink } from "@/lib/links";
@@ -214,7 +215,7 @@ export function FileCard({ file }: { file: Shown }) {
   const theme = useTheme();
   const [busy, setBusy] = useState(false);
   const Icon = FILE_ICONS[fileKind(file.name)];
-  const meta = [fileKindWord(file.name), formatFileSize(file.size ?? null)].filter(Boolean).join(" · ");
+  const meta = fileMeta(file.name, file.size ?? null);
   return (
     <Pressable
       onPress={() => {
@@ -248,9 +249,7 @@ export function FileCard({ file }: { file: Shown }) {
  * own styles. Run again, it gives the page the colours of the other mode.
  */
 function dress(theme: Theme): string {
-  const css =
-    `:root{color-scheme:${theme.dark ? "dark" : "light"};--bg:${theme.bg};--ink:${theme.ink};--ink2:${theme.ink2};--line:${theme.line};--field:${theme.field};--tint:${theme.tint}}` +
-    `html{background:var(--bg);color:var(--ink);font:17px/1.3 -apple-system,system-ui,sans-serif;-webkit-text-size-adjust:100%}body{margin:0}a{color:${theme.tintInk}}`;
+  const css = pageStyle({ scheme: theme.dark ? "dark" : "light", bg: theme.bg, ink: theme.ink, ink2: theme.ink2, line: theme.line, field: theme.field, tint: theme.tint, link: theme.tintInk });
   return `(function(){var d=document,r=d.documentElement,s=d.getElementById("sidebots");if(!s){var m=d.createElement("meta");m.name="viewport";m.content="width=device-width,initial-scale=1";r.appendChild(m);s=d.createElement("style");s.id="sidebots";r.appendChild(s);}s.textContent=${JSON.stringify(css)};})();true;`;
 }
 
@@ -365,8 +364,7 @@ export function MessagePage({ page }: { page: Shown }) {
     // The page is the same one for as long as its address is.
   }, [page.uri]);
   if (failed) return <FileCard file={page} />;
-  // The computer writes a dash for each space in a sent file's name, so the title reads them as spaces.
-  const title = page.name.replace(/\.html$/i, "").replace(/[-_]+/g, " ");
+  const title = pageTitle(page.name);
   const height = measured === undefined ? PAGE_UNMEASURED : Math.min(PAGE_TALLEST, Math.max(PAGE_SHORTEST, measured));
   const cut = measured !== undefined && measured > PAGE_TALLEST;
   return (

@@ -1,12 +1,12 @@
 // Starts the Sidebots server. `add-person` adds a person, `add-account` sets a person up on another
 // provider, `api-key` has a person's agents on a provider run on an API key, `pair` makes the code a
-// phone pairs with, `devices` lists the paired phones, `remove-device` unpairs one, and `status` says
+// device pairs with, `devices` lists the paired devices, `remove-device` unpairs one, and `status` says
 // whether the server is running and how each person's agents sign in to their providers. `counts`
 // turns on or off what the server tells the relay of how much it is used.
 // `providers` says which providers' programs are on this computer, `install` runs a provider's own
 // installer, `sign-in` runs a provider's own sign-in in a config folder, and `signed-in` says whether
 // that folder is signed in, and whether with an API key. With `--json`, `pair`, `devices`, `status`, `providers` and `signed-in`
-// print what the Mac app reads.
+// print what the Mac app and the desktop app read.
 
 import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
@@ -138,8 +138,8 @@ if (process.argv[2] === "pair") {
 if (process.argv[2] === "devices") {
   const devices = store.devices().map((device) => ({ ...device, person: store.person(device.person_id)!.name }));
   if (options.json) console.log(JSON.stringify(devices));
-  else if (devices.length === 0) console.log("No phones are paired with this server.");
-  else for (const device of devices) console.log(`${device.id}  ${device.name}, ${device.person}'s, paired ${new Date(device.paired_at).toLocaleString()}`);
+  else if (devices.length === 0) console.log("No devices are paired with this server.");
+  else for (const device of devices) console.log(`${device.id}  ${device.name}, ${device.person}'s ${device.kind}, paired ${new Date(device.paired_at).toLocaleString()}`);
   process.exit(0);
 }
 
@@ -150,7 +150,7 @@ if (process.argv[2] === "remove-device") {
   }
   const device = store.removeDevice(positionals[0]);
   if (!device) {
-    console.error(`No phone paired with this server has the id ${positionals[0]}.`);
+    console.error(`No device paired with this server has the id ${positionals[0]}.`);
     process.exit(1);
   }
   console.log(`Removed ${device.name}. It needs a new code to pair again.`);

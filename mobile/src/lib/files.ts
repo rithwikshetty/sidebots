@@ -6,51 +6,12 @@ import { router } from "expo-router";
 import { Camera } from "expo-camera";
 import { KeyboardController } from "react-native-keyboard-controller";
 import { File as FileIcon, FileImage, FileSpreadsheet, FileText, Presentation, type LucideIcon } from "lucide-react-native";
+import { isImage, type FileKind } from "@client/files";
 
 /** A photo or file on the phone, ready to send. `size` is in bytes, when the picker could tell. */
 export type Picked = { uri: string; name: string; type: string; size: number | null; photo: boolean };
 /** Where the composer's + menu picks from. */
 export type PickSource = "photos" | "camera" | "files";
-
-/** The most one message carries. */
-export const MAX_FILES = 10;
-export const FILE_LIMIT_NOTICE = `A message can carry up to ${MAX_FILES} files.`;
-/** The most one message carries in bytes, as the server takes it. */
-export const MAX_BYTES = 95 * 1024 * 1024;
-export const SIZE_LIMIT_NOTICE = "A message can carry up to 95 MB of photos and files.";
-
-/** Whether the files fit in one message. A file whose size the picker couldn't tell counts as nothing. */
-export function fitsInMessage(files: Picked[]): boolean {
-  return files.reduce((total, file) => total + (file.size ?? 0), 0) <= MAX_BYTES;
-}
-
-const IMAGE = /\.(jpe?g|png|gif|webp|heic|heif)$/i;
-
-/** Whether a file is a picture the app can show, going by its name. */
-export function isImage(name: string): boolean {
-  return IMAGE.test(name);
-}
-
-/** Whether a file is a page the app can draw, going by its name. */
-export function isPage(name: string): boolean {
-  return /\.html$/i.test(name);
-}
-
-/** What kind of file it is, for its icon and the word under its name. */
-export type FileKind = "image" | "pdf" | "sheet" | "document" | "slides" | "text" | "file";
-
-const KINDS: [RegExp, FileKind][] = [
-  [IMAGE, "image"],
-  [/\.pdf$/i, "pdf"],
-  [/\.(xlsx?|csv|numbers)$/i, "sheet"],
-  [/\.(docx?|pages|rtf)$/i, "document"],
-  [/\.(pptx?|key)$/i, "slides"],
-  [/\.(txt|md|json)$/i, "text"],
-];
-
-export function fileKind(name: string): FileKind {
-  return KINDS.find(([pattern]) => pattern.test(name))?.[1] ?? "file";
-}
 
 export const FILE_ICONS: Record<FileKind, LucideIcon> = {
   image: FileImage,
@@ -61,30 +22,6 @@ export const FILE_ICONS: Record<FileKind, LucideIcon> = {
   text: FileText,
   file: FileIcon,
 };
-
-const KIND_WORDS: Record<FileKind, string> = {
-  image: "Image",
-  pdf: "PDF",
-  sheet: "Spreadsheet",
-  document: "Document",
-  slides: "Presentation",
-  text: "Text",
-  file: "File",
-};
-
-/** A file's kind, or its extension when it is none of the named ones. */
-export function fileKindWord(name: string): string {
-  const kind = fileKind(name);
-  if (kind !== "file") return KIND_WORDS[kind];
-  return name.split(".").pop()?.toUpperCase() || KIND_WORDS.file;
-}
-
-export function formatFileSize(bytes: number | null): string | null {
-  if (bytes === null) return null;
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`;
-  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-}
 
 /**
  * A photo from the library or the camera as a picked file. A photo with no

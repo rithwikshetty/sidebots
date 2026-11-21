@@ -1,7 +1,8 @@
 import { Pressable, StyleSheet, View } from "react-native";
 import Animated, { useAnimatedStyle, withTiming } from "react-native-reanimated";
+import { CHAT_COLORS } from "@client/colors";
 import { EASE } from "@/lib/motion";
-import { CHAT_COLORS, useTheme } from "@/lib/theme";
+import { useTheme } from "@/lib/theme";
 
 /**
  * The colours an agent's chat can have, as round swatches, with the chosen one

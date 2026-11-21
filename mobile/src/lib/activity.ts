@@ -12,9 +12,9 @@ import { AppState } from "react-native";
 import { Image } from "expo-image";
 import * as Linking from "expo-linking";
 import { AVATAR_SHEET, AVATAR_STATES, avatarFrame, type AgentWithLatest, type AvatarState } from "@server/contract";
+import { workingLine } from "@client/lines";
 import { AgentActivity } from "../../modules/agent-activity/src";
 import { avatarSheet, isPaired, onPairing, request } from "./api";
-import { workingLine } from "./lines";
 import { pushTokenOf } from "./push";
 import { onAgents } from "./state";
 

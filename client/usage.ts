@@ -1,4 +1,4 @@
-import type { TurnKind, Usage, Used } from "@server/contract";
+import type { TurnKind, Usage, Used } from "../server/src/contract.ts";
 
 /** What the app calls each kind of turn, in the order it lists them. */
 export const KINDS: Record<TurnKind, string> = { reply: "Replies", job: "Jobs", memory: "Fresh starts" };
@@ -34,7 +34,7 @@ export function sum(used: Record<Measure, number>[]): Record<Measure, number> {
   return { cost: used.reduce((all, each) => all + each.cost, 0), tokens: used.reduce((all, each) => all + each.tokens, 0) };
 }
 
-/** The midnight on this phone that starts a day of `Usage`. */
+/** The midnight on this device that starts a day of `Usage`. */
 export function dayTime(day: string): number {
   const [year, month, date] = day.split("-").map(Number);
   return new Date(year, month - 1, date).getTime();

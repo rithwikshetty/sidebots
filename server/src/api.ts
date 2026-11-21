@@ -1,6 +1,6 @@
-// The api owns the HTTP routes and works out which paired phone is asking, and whose it is.
+// The api owns the HTTP routes and works out which paired device is asking, and whose it is.
 
-import { readFileSync } from "node:fs";
+import { readFileSync, statSync } from "node:fs";
 import { extname } from "node:path";
 import { Hono } from "hono";
 import { bodyLimit } from "hono/body-limit";
@@ -53,20 +53,22 @@ export function createApi(store: Store, queue: Queue, connections: Connections, 
   });
 
   /**
-   * Pairs a phone that brings a code made by `pair`. It is the one route a
-   * phone can call without a key. An app on another version of the contract
+   * Pairs a device that brings a code made by `pair`. It is the one route a
+   * device can call without a key. An app on another version of the contract
    * is refused before the code is used, so the code still works once one side
-   * is updated. An app that sends no version counts as older. `replaces` is
-   * the hash of the key of a pairing the phone had and lost, which this one
-   * takes the place of.
+   * is updated. An app that sends no version counts as older. `kind` says
+   * whether the device is a phone or the desktop app, and one that names none
+   * is a phone. `replaces` is the hash of the key of a pairing the device had
+   * and lost, which this one takes the place of.
    */
   app.post("/pair", async (c) => {
     if (Number(c.req.header(CONTRACT_HEADER)) !== CONTRACT_VERSION) {
       return c.json({ error: "This app and Sidebots on this computer speak different versions. Update the older one." }, 409);
     }
     const code = credential(c.req.header("Authorization"), "Pairing");
-    const { name, replaces } = await c.req.json<{ name?: string; replaces?: string }>();
-    const keys = code && store.pair(code, name?.trim() || "Phone", replaces);
+    const { name, kind = "phone", replaces } = await c.req.json<{ name?: string; kind?: string; replaces?: string }>();
+    if (kind !== "phone" && kind !== "desktop") return c.json({ error: "A device is a phone or a desktop." }, 400);
+    const keys = code && store.pair(code, name?.trim() || (kind === "phone" ? "Phone" : "Desktop"), kind, replaces);
     if (!keys) return c.json({ error: "That code has been used or has run out. Make a new one on the computer." }, 401);
     const paired: Paired = { ...keys, machine };
     return c.json(paired, 201);
@@ -75,7 +77,7 @@ export function createApi(store: Store, queue: Queue, connections: Connections, 
   app.use(async (c, next) => {
     const key = credential(c.req.header("Authorization"), "Bearer");
     const device = key ? store.deviceByKey(key) : undefined;
-    if (!device) return c.json({ error: "This phone isn't paired with this computer." }, 401);
+    if (!device) return c.json({ error: "This device isn't paired with this computer." }, 401);
     c.set("device", device);
     c.set("person", store.person(device.person_id)!);
     await next();
@@ -168,13 +170,15 @@ export function createApi(store: Store, queue: Queue, connections: Connections, 
   /**
    * A message arrives as a form, with `body` for the text, `files` for anything
    * sent with it, and `replyTo` for the message it answers. Text alone can come as JSON.
+   * A browser writes each line break in a form's text as CRLF, and the text
+   * is kept with plain newlines whichever app sent it.
    */
   app.post("/agents/:id/messages", bodyLimit({ maxSize: MESSAGE_BYTES }), async (c) => {
     const agent = ownAgent(c.var.person, c.req.param("id"));
     if (!agent) return c.json({ error: "No such agent." }, 404);
     const json = c.req.header("Content-Type")?.startsWith("application/json");
     const form = json ? await c.req.json<Record<string, unknown>>() : await c.req.parseBody({ all: true });
-    const body = typeof form.body === "string" ? form.body.trim() : "";
+    const body = typeof form.body === "string" ? form.body.replaceAll("\r\n", "\n").trim() : "";
     const files = [form.files].flat().filter((file) => file instanceof File);
     if (!body && files.length === 0) return c.json({ error: "A message needs some text or a file." }, 400);
     const uploads = await Promise.all(files.map(async (file) => ({ name: file.name, bytes: new Uint8Array(await file.arrayBuffer()) })));
@@ -198,12 +202,13 @@ export function createApi(store: Store, queue: Queue, connections: Connections, 
     return c.json({});
   });
 
+  /** A file in an agent's `attachments/` folder. Asked with HEAD, it answers only with the file's type and size, so an app can say how big a file is without fetching it. */
   app.get("/agents/:id/attachments/:name", (c) => {
     const agent = ownAgent(c.var.person, c.req.param("id"));
     const path = agent && store.attachment(agent.id, c.req.param("name"));
     if (!path) return c.json({ error: "No such file." }, 404);
-    const type = CONTENT_TYPES[extname(path).toLowerCase()] ?? "application/octet-stream";
-    return c.body(readFileSync(path), 200, { "Content-Type": type, "Cache-Control": "private, max-age=31536000, immutable" });
+    const headers = { "Content-Type": CONTENT_TYPES[extname(path).toLowerCase()] ?? "application/octet-stream", "Content-Length": String(statSync(path).size), "Cache-Control": "private, max-age=31536000, immutable" };
+    return c.req.method === "HEAD" ? c.body(null, 200, headers) : c.body(readFileSync(path), 200, headers);
   });
 
   app.post("/agents/:id/read", (c) => {
@@ -319,7 +324,7 @@ export function createApi(store: Store, queue: Queue, connections: Connections, 
     return c.json(push);
   });
 
-  /** The phone unpairs itself. The computer forgets it, with its keys and where its notifications go, and refuses it from its next request. */
+  /** The device unpairs itself. The computer forgets it, with its keys and where its notifications go, and refuses it from its next request. */
   app.delete("/device", (c) => {
     store.removeDevice(c.var.device.id);
     return c.json({});
@@ -335,8 +340,8 @@ export function createApi(store: Store, queue: Queue, connections: Connections, 
 
   /**
    * New messages and status changes for the person's agents, each with its
-   * agent as the home screen shows it, and the agents the person adds and
-   * deletes, so every phone of theirs keeps up.
+   * agent as the home screen shows it, and the agents the person adds, changes
+   * and deletes, so every device of theirs keeps up.
    */
   app.get("/events", (c) => {
     const person = c.var.person;
