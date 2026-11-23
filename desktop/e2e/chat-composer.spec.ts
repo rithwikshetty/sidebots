@@ -3,6 +3,7 @@
 // from Tester with no agents and adds the agents it talks to, so nothing else
 // in the chat moves while it looks.
 
+import type { Locator } from "@playwright/test";
 import { LINES } from "../../client/lines.ts";
 import { expect, test } from "./fixtures.ts";
 import { addAgent, agentOf, field, idle, messagesOf, mine, notices, openChat, payload, said, sendFromApp, serverPid, theirs, toast, until } from "./chat-helpers.ts";
@@ -306,6 +307,77 @@ test.describe("sending and replies", () => {
 
     await openChat(page, server, "Bravo");
     await expect(field(page)).toHaveValue("draft for Bravo");
+  });
+});
+
+/** Where a part of the composer is drawn in the window, with the middle of its height. */
+const drawn = (part: Locator) =>
+  part.evaluate((element) => {
+    const { top, bottom, left, right, height } = element.getBoundingClientRect();
+    return { top, bottom, left, right, height, middle: (top + bottom) / 2 };
+  });
+
+test.describe("the card's shape", () => {
+  test("empty, the card is one round line with the text between + and Send, and it opens with the text above them while it holds text", async ({ page, server }) => {
+    await chatWith(page, server);
+    const card = page.getByTestId("composer-card");
+    const parts = async () => {
+      const [whole, text, add, send] = await Promise.all([drawn(card), drawn(field(page)), drawn(page.getByTestId("add-files")), drawn(page.getByTestId("send"))]);
+      return { whole, text, add, send };
+    };
+
+    // One line: the card is as tall as its corners are round, and the text and the buttons share its middle.
+    await expect.poll(async () => (await drawn(card)).height).toBe(44);
+    expect(await card.evaluate((element) => getComputedStyle(element).borderRadius)).toBe("22px");
+    const resting = await parts();
+    expect(resting.add.middle).toBe(resting.whole.middle);
+    expect(resting.send.middle).toBe(resting.whole.middle);
+    expect(resting.text.middle).toBe(resting.whole.middle);
+    expect(resting.text.left).toBeGreaterThanOrEqual(resting.add.right);
+    expect(resting.text.right).toBeLessThanOrEqual(resting.send.left);
+
+    // Open: the text runs across the card above the buttons, which keep to its bottom corners.
+    await field(page).pressSequentially("Hi");
+    await expect.poll(async () => (await drawn(card)).height).toBe(76);
+    const open = await parts();
+    expect(open.text.bottom).toBeLessThanOrEqual(open.add.top);
+    expect(open.text.left).toBeLessThan(open.add.right);
+    expect(open.text.right).toBeGreaterThan(open.send.left);
+    for (const { whole, add, send } of [resting, open]) {
+      expect(add.left - whole.left).toBe(6);
+      expect(whole.right - send.right).toBe(6);
+      expect(whole.bottom - add.bottom).toBe(6);
+      expect(whole.bottom - send.bottom).toBe(6);
+    }
+    await expect(field(page)).toBeFocused();
+    await expect(field(page)).toHaveValue("Hi");
+
+    await field(page).fill("");
+    await expect.poll(async () => (await drawn(card)).height).toBe(44);
+  });
+
+  test("a name too long for the field is cut short, and the empty card stays one line", async ({ page, server, setWindowSize }) => {
+    await setWindowSize(760, 520);
+    await chatWith(page, server, "🏡 Home renovation & garden project coordinator 🌱");
+    await expect(field(page)).toHaveAttribute("placeholder", "Message 🏡 Home renovation & garden project coordinator 🌱");
+    expect((await drawn(page.getByTestId("composer-card"))).height).toBe(44);
+  });
+
+  test("text past eight lines scrolls above the buttons, and files alone open the card", async ({ page, server }) => {
+    await chatWith(page, server);
+    const add = page.getByTestId("add-files");
+    await field(page).fill(Array.from({ length: 12 }, (_, line) => `line ${line + 1}`).join("\n"));
+    await expect.poll(async () => (await drawn(field(page))).height).toBe(176);
+    expect(await field(page).evaluate((element) => element.scrollHeight > element.clientHeight)).toBe(true);
+    await expect.poll(async () => (await drawn(add)).top - (await drawn(field(page))).bottom).toBe(4);
+
+    await field(page).fill("");
+    await page.getByTestId("file-input").setInputFiles([payload("a.txt", Buffer.from("a"), "text/plain")]);
+    await expect(page.getByTestId("tray-item")).toBeVisible();
+    await expect.poll(async () => (await drawn(add)).top - (await drawn(field(page))).bottom).toBe(4);
+    expect((await drawn(page.getByTestId("tray"))).bottom).toBeLessThanOrEqual((await drawn(field(page))).top);
+    await page.getByTestId("remove-file").click();
+    await expect.poll(async () => (await drawn(page.getByTestId("composer-card"))).height).toBe(44);
   });
 });
 

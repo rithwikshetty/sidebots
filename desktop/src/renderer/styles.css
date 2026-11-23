@@ -120,6 +120,8 @@
   --radius-xl: 14px;
   /* A message bubble's corners, and the smaller one its tail is. */
   --radius-bubble: 18px;
+  /* The message field's corners, which follow the round buttons at its edge. */
+  --radius-composer: 22px;
 
   /* How wide a chat's column grows: 46rem of messages and composer, and the 1rem padding each side. */
   --container-chat: 48rem;

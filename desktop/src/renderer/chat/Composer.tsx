@@ -10,16 +10,19 @@ import { FileTile } from "./Attachments.tsx";
 import { FILE_ICONS, usePreviews } from "./files.ts";
 
 /**
- * The message field at the foot of the chat: a card with the text, which
- * grows from one line to about eight and then scrolls, + at its start, which
- * opens the system's file picker, and the round Send at its end in the chat's
- * colour. Enter sends and Shift+Enter starts a new line; Enter while an input
- * method is still composing a character does neither. Picked files sit in a
- * tray above the text, each with a button that removes it, and a message can
- * go with only files. While the agent works and there is nothing to send,
- * Send is Stop. While Sidebots is out of reach nothing can be sent, and a
- * line above the card says so. A reply shows what it answers above the card,
- * which Cancel or Esc lets go of.
+ * The message field at the foot of the chat: a round card with + at its
+ * start, which opens the system's file picker, and the round Send at its end
+ * in the chat's colour. Empty, it is one line, the text between the two
+ * buttons, with a name too long for it cut short. With text or files in it,
+ * it opens: the text across its top, which grows from one line to about
+ * eight and then scrolls, and the buttons in a row beneath. Enter sends and
+ * Shift+Enter starts a new line; Enter while an input method is still
+ * composing a character does neither. Picked files sit in a tray above the
+ * text, each with a button that removes it, and a message can go with only
+ * files. While the agent works and there is nothing to send, Send is Stop.
+ * While Sidebots is out of reach nothing can be sent, and a line above the
+ * card says so. A reply shows what it answers above the card, which Cancel
+ * or Esc lets go of.
  */
 export function Composer({
   field,
@@ -51,6 +54,8 @@ export function Composer({
   online: boolean;
 }) {
   const picker = useRef<HTMLInputElement>(null);
+  // With something in it, the card is open: the text across its top and the buttons in a row beneath.
+  const open = value.length > 0 || files.length > 0;
   const canSend = online && (value.trim().length > 0 || files.length > 0);
   // With nothing to send, the button stops the agent's work instead.
   const stops = !canSend && online && onStop !== undefined && value.trim().length === 0 && files.length === 0;
@@ -86,31 +91,35 @@ export function Composer({
         </div>
       ) : null}
       <div
-        onClick={(event) => event.target === event.currentTarget && field.current?.focus()}
-        className="rounded-bubble bg-raised shadow-control transition-shadow duration-150 focus-within:shadow-[0_0_0_1px_var(--line-strong),0_1px_2px_var(--ring-color)]"
+        className="relative rounded-composer bg-raised shadow-control transition-shadow duration-150 focus-within:shadow-[0_0_0_1px_var(--line-strong),0_1px_2px_var(--ring-color)]"
+        data-testid="composer-card"
       >
         {files.length ? <Tray files={files} onRemove={onRemove} /> : null}
-        <div className="flex items-end gap-1 p-1.5">
-          <IconButton
-            icon={Plus}
-            label="Add files"
-            onClick={() => picker.current?.click()}
-            disabled={files.length >= MAX_FILES}
-            tooltipSide="top"
-            className="size-8 rounded-full"
-            data-testid="add-files"
-          />
-          <input
-            ref={picker}
-            type="file"
-            multiple
-            hidden
-            onChange={(event) => {
-              onAdd([...(event.currentTarget.files ?? [])]);
-              event.currentTarget.value = "";
-            }}
-            data-testid="file-input"
-          />
+        <IconButton
+          icon={Plus}
+          label="Add files"
+          onClick={() => picker.current?.click()}
+          disabled={files.length >= MAX_FILES}
+          tooltipSide="top"
+          className="absolute bottom-1.5 left-1.5 size-8 rounded-full"
+          data-testid="add-files"
+        />
+        <input
+          ref={picker}
+          type="file"
+          multiple
+          hidden
+          onChange={(event) => {
+            onAdd([...(event.currentTarget.files ?? [])]);
+            event.currentTarget.value = "";
+          }}
+          data-testid="file-input"
+        />
+        {/* The room around the text is the buttons': beside it while the card is one line, beneath it once it opens. */}
+        <div
+          onClick={(event) => event.target === event.currentTarget && field.current?.focus()}
+          className={cn("flex cursor-text transition-[padding] duration-200 ease-out", open ? "px-2.5 pt-3 pb-10.5" : "px-10.5 py-2.75")}
+        >
           <textarea
             ref={field}
             value={value}
@@ -120,26 +129,26 @@ export function Composer({
             rows={1}
             placeholder={`Message ${name}`}
             aria-label={`Message ${name}`}
-            className="field-sizing-content max-h-[calc(8lh+12px)] min-h-8 min-w-0 flex-1 resize-none bg-transparent px-1 py-1.5 text-message text-ink outline-none placeholder:text-ink3"
+            className="field-sizing-content max-h-[8lh] min-w-0 flex-1 resize-none bg-transparent px-1 text-message text-ink outline-none placeholder:truncate placeholder:text-ink3"
             data-testid="message-field"
           />
-          <Tooltip label={stops ? "Stop" : "Send"} shortcut={stops ? undefined : ["↩"]} side="top">
-            <button
-              type="button"
-              onClick={() => (stops ? onStop?.() : canSend && onSend())}
-              disabled={!canSend && !stops}
-              aria-label={stops ? "Stop" : "Send message"}
-              className="grid size-8 shrink-0 place-items-center rounded-full bg-chat text-on-tint transition-[opacity,filter,scale] duration-150 ease-out hover:brightness-110 active:scale-95 disabled:opacity-40"
-              data-testid={stops ? "stop" : "send"}
-            >
-              {stops ? (
-                <Square key="stop" aria-hidden className="size-3 animate-fade-in fill-current" strokeWidth={2.5} />
-              ) : (
-                <ArrowUp key="send" aria-hidden className="size-[18px] animate-fade-in" strokeWidth={2.5} />
-              )}
-            </button>
-          </Tooltip>
         </div>
+        <Tooltip label={stops ? "Stop" : "Send"} shortcut={stops ? undefined : ["↩"]} side="top">
+          <button
+            type="button"
+            onClick={() => (stops ? onStop?.() : canSend && onSend())}
+            disabled={!canSend && !stops}
+            aria-label={stops ? "Stop" : "Send message"}
+            className="absolute right-1.5 bottom-1.5 grid size-8 place-items-center rounded-full bg-chat text-on-tint transition-[opacity,filter,scale] duration-150 ease-out hover:brightness-110 active:scale-95 disabled:opacity-40"
+            data-testid={stops ? "stop" : "send"}
+          >
+            {stops ? (
+              <Square key="stop" aria-hidden className="size-3 animate-fade-in fill-current" strokeWidth={2.5} />
+            ) : (
+              <ArrowUp key="send" aria-hidden className="size-[18px] animate-fade-in" strokeWidth={2.5} />
+            )}
+          </button>
+        </Tooltip>
       </div>
     </div>
   );
