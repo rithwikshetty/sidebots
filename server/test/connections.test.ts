@@ -81,7 +81,7 @@ test("a token asked for under a sign-in the person has since replaced is not use
 });
 
 test("a mail with no plain text is read as the words of its page", async () => {
-  const page = "<html><head><style>p { color: red }</style></head><body><p>Your order &amp; receipt</p><table><tr><td>Total:</td><td>&lt;£20&gt;</td></tr></table><div>Thanks<br><a class='button' href='https://shop.example/track?order=7&amp;key=k'>Track it</a></div></body></html>";
+  const page = "<html><head><style>p { color: red }</style></head><body><p>Your order &amp; receipt</p><table><tr><td>Total:</td><td>&lt;£20&gt;</td></tr></table><div>Thanks<br><a class='button' data-href='https://shop.example/not-this' href='https://shop.example/track?order=7&amp;key=k'>Track it</a> <a href=\"https://shop.example/o'brien\">Yours</a></div></body></html>";
   const { use } = setup(() => ({
     id: "m2",
     threadId: "t2",
@@ -97,21 +97,26 @@ test("a mail with no plain text is read as the words of its page", async () => {
     },
   }));
   // The cells of a row stay apart, a link keeps where it goes, and the mail says where an answer to it goes.
-  assert.equal(await use("gmail_read", { id: "m2" }), "From: Shop <shop@example.com>\nReply-To: orders@shop.example\nFiles: receipt.pdf\n\nYour order & receipt\nTotal: <£20>\nThanks\nTrack it (https://shop.example/track?order=7&key=k)");
+  assert.equal(await use("gmail_read", { id: "m2" }), "From: Shop <shop@example.com>\nReply-To: orders@shop.example\nFiles: receipt.pdf\n\nYour order & receipt\nTotal: <£20>\nThanks\nTrack it (https://shop.example/track?order=7&key=k) Yours (https://shop.example/o'brien)");
+
+  // A mail that says what it says in parts, around a picture, is read as all of them.
+  const part = (text: string) => ({ mimeType: "text/plain", body: { data: Buffer.from(text).toString("base64url") } });
+  const around = setup(() => ({ id: "m3", payload: { mimeType: "multipart/mixed", parts: [part("Here is the photo."), { mimeType: "image/jpeg", filename: "photo.jpg", body: {} }, part("See you Friday.")] } }));
+  assert.equal(await around.use("gmail_read", { id: "m3" }), "Files: photo.jpg\n\nHere is the photo.\n\nSee you Friday.");
 });
 
 test("a search reads a day by this machine's clock, and says when more mail matches than it answers", async () => {
   const { sent, use } = setup((request) => (request.includes("/messages?") ? { messages: [{ id: "m1" }], ...(request.includes("maxResults=1&") || request.endsWith("maxResults=1") ? { nextPageToken: "more" } : {}) } : { id: "m1", snippet: "See you at 3" }));
-  assert.equal(await use("gmail_search", { query: "from:anna after:2026/11/20 before:2026-11-21", most: 1 }), "id m1\nSee you at 3\n\nMore mail matches than this. Search for less at once for the rest.");
+  assert.equal(await use("gmail_search", { query: "from:anna after:2026/11/20 before:2026-11-21 OLDER:2026/11/21", most: 1 }), "id m1\nSee you at 3\n\nMore mail matches than this. Search for less at once for the rest.");
   // Gmail takes a day alone as one in California, and an instant as it is.
   const seconds = (day: Date) => Math.floor(day.getTime() / 1000);
-  assert.equal(new URL(sent[0][0].slice("GET ".length)).searchParams.get("q"), `from:anna after:${seconds(new Date(2026, 10, 20))} before:${seconds(new Date(2026, 10, 21))}`);
+  assert.equal(new URL(sent[0][0].slice("GET ".length)).searchParams.get("q"), `from:anna after:${seconds(new Date(2026, 10, 20))} before:${seconds(new Date(2026, 10, 21))} OLDER:${seconds(new Date(2026, 10, 21))}`);
   assert.equal(await use("gmail_search", { query: "newer_than:2d" }), "id m1\nSee you at 3");
   assert.equal(new URL(sent.at(-2)![0].slice("GET ".length)).searchParams.get("q"), "newer_than:2d");
 });
 
 test("the events of every calendar the person has ticked are looked at as one, and an event is added, changed and removed on the calendar named, with times read by this machine's clock", async () => {
-  const event = { id: "e1", summary: "Bike repair", htmlLink: "https://calendar.example/e1", start: { dateTime: "2026-11-20T15:00:00+11:00" }, end: { dateTime: "2026-11-20T16:00:00+11:00" }, location: "The shop", attendees: [{ email: "anna@example.com", responseStatus: "accepted" }] };
+  const event = { id: "e1", summary: "Bike repair", htmlLink: "https://calendar.example/e1", start: { dateTime: "2026-11-20T15:00:00+11:00" }, end: { dateTime: "2026-11-20T16:00:00+11:00" }, location: "The shop", attendees: [{ email: "anna@example.com", responseStatus: "accepted" }, { email: "alex@example.com", self: true, responseStatus: "tentative" }] };
   // The person's own calendar, one from work that they follow and gave a name, one they have unticked, and one whose owner has taken it back.
   const WORK = "work@import.calendar.google.com";
   const calendars = [
@@ -121,8 +126,10 @@ test("the events of every calendar the person has ticked are looked at as one, a
     { id: "gone@group.calendar.google.com", summary: "Club", selected: true },
   ];
   const notes = `Agenda: the week ahead. ${"_".repeat(300)} Join the call: https://calls.example/standup`;
-  const standup = { id: "w2", summary: "Standup", recurringEventId: "w", hangoutLink: "https://meet.example/abc", description: notes, start: { dateTime: "2026-11-20T09:30:00+11:00" }, end: { dateTime: "2026-11-20T10:00:00+11:00" }, attendees: [{ email: "alex@example.com", self: true, responseStatus: "declined" }] };
-  const atWork = [{ id: "w1", summary: "Offsite", start: { date: "2026-11-19" }, end: { date: "2026-11-20" } }, standup];
+  // Google marks as `self` the guest whose calendar an event is on, which on the calendar from work is the one at work who shared it.
+  const standup = { id: "w2", summary: "Standup", recurringEventId: "w", conferenceData: { entryPoints: [{ entryPointType: "phone", uri: "tel:+61-2-5550-0100" }, { entryPointType: "video", uri: "https://calls.example/abc" }] }, description: notes, start: { dateTime: "2026-11-20T09:30:00+11:00" }, end: { dateTime: "2026-11-20T10:00:00+11:00" }, attendees: [{ email: "sam@work.example", self: true, responseStatus: "declined" }] };
+  // The calendar from work has the bike repair too, since someone there is its guest.
+  const atWork = [{ id: "w1", summary: "Offsite", start: { date: "2026-11-19" }, end: { date: "2026-11-20" } }, standup, { ...event, attendees: [] }];
   const { sent, use } = setup((request) => {
     if (request.startsWith("GET https://www.googleapis.com/calendar/v3/users/me/calendarList")) return { items: calendars };
     if (request.includes("gone%40group")) return Response.json({ error: { message: "Not Found" } }, { status: 404 });
@@ -130,21 +137,21 @@ test("the events of every calendar the person has ticked are looked at as one, a
     if (!request.startsWith("GET")) return event;
     return request.includes(encodeURIComponent(WORK)) ? { items: atWork, ...(request.includes("q=busy") && { nextPageToken: "more" }) } : { items: [event] };
   });
-  const [from, to] = ["2026-11-19T00:00", "2026-11-21T00:00"];
+  const [from, to] = ["2026-11-19", "2026-11-21T00:00"];
   // A time with more events than one look answers says so, so the agent doesn't take the rest of it for free.
   assert.match(await use("calendar_events", { from, to, text: "busy" }), /\n\nThe calendars have more then than this\. Look in a shorter time for the rest\.\n\n/);
   sent.length = 0;
 
-  // The events come earliest first whichever calendar each is on, and one on a calendar that isn't the person's own names it. A calendar Google won't show is left out and said.
+  // The events come earliest first whichever calendar each is on, and one on a calendar that isn't the person's own names it. One that two calendars have is told once, as the person's. A calendar Google won't show is left out and said.
   const work = `Calendar: Work, id ${WORK}`;
   const repeats = "One time of an event that repeats. Changing or removing it leaves the other times as they are.";
-  const standupLines = `id w2\n${work}\nStandup\n2026-11-20T09:30:00+11:00 to 2026-11-20T10:00:00+11:00\n${repeats}\nJoin at https://meet.example/abc\nWith alex@example.com (the person, declined)`;
+  const standupLines = `id w2\n${work}\nStandup\n2026-11-20T09:30:00+11:00 to 2026-11-20T10:00:00+11:00\n${repeats}\nJoin at https://calls.example/abc\nWith sam@work.example (declined)`;
   assert.equal(
     await use("calendar_events", { from, to, text: "bike" }),
     [
       `id w1\n${work}\nOffsite\n2026-11-19 to 2026-11-20`,
       `${standupLines}\n${notes.slice(0, 299)}…`,
-      "id e1\nBike repair\n2026-11-20T15:00:00+11:00 to 2026-11-20T16:00:00+11:00\nAt The shop\nWith anna@example.com (accepted)",
+      "id e1\nBike repair\n2026-11-20T15:00:00+11:00 to 2026-11-20T16:00:00+11:00\nAt The shop\nWith anna@example.com (accepted), alex@example.com (the person, tentative)",
       "The calendar Club is left out. Google Calendar refused that: Not Found",
     ].join("\n\n"),
   );
@@ -156,10 +163,16 @@ test("the events of every calendar the person has ticked are looked at as one, a
   const zone = Intl.DateTimeFormat().resolvedOptions().timeZone;
   assert.deepEqual(
     ["timeMin", "timeMax", "timeZone", "singleEvents", "orderBy", "q"].map((name) => looked[2].searchParams.get(name)),
-    [new Date(from).toISOString(), new Date(to).toISOString(), zone, "true", "startTime", "bike"],
+    // A day alone is the start of it by this machine's clock.
+    [new Date(`${from}T00:00`).toISOString(), new Date(to).toISOString(), zone, "true", "startTime", "bike"],
   );
+  // One calendar is looked at alone when it is named, ticked or not, and its refusal is then the look's.
+  sent.length = 0;
+  assert.match(await use("calendar_events", { from: "2026-11-19", to, calendar: "races" }), /^id e1\nCalendar: Races, id races@import\.calendar\.google\.com\nBike repair\n/);
+  assert.deepEqual(sent.map(([request]) => decodeURIComponent(new URL(request.slice("GET ".length)).pathname)), ["/calendar/v3/users/me/calendarList", "/calendar/v3/calendars/races@import.calendar.google.com/events"]);
+  assert.equal(await use("calendar_events", { from, to, calendar: "Club" }), "Google Calendar refused that: Not Found");
   // One event is read with all its notes, on the calendar named by the name the person gave it.
-  assert.equal(await use("calendar_event", { id: "w2", calendar: "work" }), `${standupLines.replace(`${work}\n`, "")}\n${notes}`);
+  assert.equal(await use("calendar_event", { id: "w2", calendar: "work" }), `${standupLines}\n${notes}`);
   assert.equal(sent.at(-1)![0], `GET https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(WORK)}/events/w2?timeZone=${encodeURIComponent(zone)}`);
   assert.equal(
     await use("calendar_add_event", { title: "Dinner", start: "2026-11-20T19:00", end: "2026-11-20T21:00", calendar: "Wedding" }),
@@ -183,8 +196,10 @@ test("the events of every calendar the person has ticked are looked at as one, a
     `PATCH https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(WORK)}/events/w2?sendUpdates=all`,
     { start: { date: "2026-11-21", dateTime: null }, end: { date: "2026-11-22", dateTime: null } },
   ]);
-  assert.equal(await use("calendar_remove_event", { id: "e1" }), "Removed.");
-  assert.equal(sent.at(-1)![0], "DELETE https://www.googleapis.com/calendar/v3/calendars/primary/events/e1?sendUpdates=all");
+  // The person's own calendar goes by Google's name for it too, and is found without a look at the list.
+  sent.length = 0;
+  assert.equal(await use("calendar_remove_event", { id: "e1", calendar: "primary" }), "Removed.");
+  assert.deepEqual(sent.map(([request]) => request), ["DELETE https://www.googleapis.com/calendar/v3/calendars/primary/events/e1?sendUpdates=all"]);
 });
 
 test("a connection whose sign-in allows less than it needs is forgotten, so that the agent asks the person to sign in again", async () => {

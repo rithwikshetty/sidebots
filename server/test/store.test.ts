@@ -162,7 +162,15 @@ test("a Codex session from before the connections' tools, or before those tools 
   const store = openStore(home);
   assert.deepEqual([maya, theo, ruby].map((agent) => store.nextQueued(agent.id)?.body), ["Fresh start", undefined, undefined]);
   assert.deepEqual(store.requeueInterrupted(), [maya.id]);
-  // The session gets one for the tools and one for their change, and a database that has had the changes doesn't get them again.
+  // One fresh start is enough for the tools and for their change, and a database that has had the changes doesn't get them again.
   store.close();
+  const again = openStore(home);
+  assert.equal(again.messages(maya.id).length, 1);
+  again.close();
+
+  // The database as it was once the session had its fresh start and went on, before the tools changed.
+  const later = new DatabaseSync(join(home, "sidebots.sqlite"));
+  later.exec("update messages set status = 'done'; pragma user_version = 12");
+  later.close();
   assert.equal(openStore(home).messages(maya.id).length, 2);
 });

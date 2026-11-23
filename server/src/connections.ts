@@ -114,7 +114,7 @@ const wordsOn = (html: string) =>
     html
       .replace(/<(style|script|head)[\s\S]*?<\/\1>/gi, "")
       // A link keeps the address it goes to, and the cells of a row stay apart.
-      .replace(/<a\s[^>]*?href=["'](https?:[^"']+)["'][^>]*>([\s\S]*?)<\/a>/gi, "$2 ($1)")
+      .replace(/<a(?=\s)[^>]*?\shref=(?:"(https?:[^"]+)"|'(https?:[^']+)')[^>]*>([\s\S]*?)<\/a>/gi, (_, double: string | undefined, single: string | undefined, text: string) => `${text} (${double ?? single})`)
       .replace(/<\/t[dh]>/gi, " ")
       .replace(/<br\s*\/?>|<\/(p|div|tr|li|h\d)>/gi, "\n")
       .replace(/<[^>]+>/g, ""),
@@ -125,14 +125,15 @@ const wordsOn = (html: string) =>
 /** What a mail says: its plain text when it has some, and otherwise its HTML as words. */
 function mailWords(mail: Mail): string {
   const parts = everyPart(mail.payload ?? {}).filter((part) => !part.filename && part.body?.data);
-  const read = (type: string) => parts.filter((part) => part.mimeType === type).map((part) => Buffer.from(part.body!.data!, "base64url").toString().trim()).find(Boolean);
+  // A mail can say what it says in several parts, as one does with a picture set between its paragraphs.
+  const read = (type: string) => parts.filter((part) => part.mimeType === type).map((part) => Buffer.from(part.body!.data!, "base64url").toString().trim()).filter(Boolean).join("\n\n") || undefined;
   const page = read("text/html");
   const words = read("text/plain") ?? (page ? wordsOn(page) : "");
   return words.length > MAIL_CHARS ? `${words.slice(0, MAIL_CHARS)}\n\nThe mail goes on past here.` : words;
 }
-/** A search with each day it names after `after:` or `before:` as the instant that day starts by this machine's clock. Gmail reads a day alone as one that starts at midnight in California. */
+/** A search with each day it looks before or after as the instant that day starts by this machine's clock. Gmail reads a day alone as one that starts at midnight in California. */
 const byThisClock = (query: string) =>
-  query.replace(/\b(after|before):(\d{4})[/-](\d{1,2})[/-](\d{1,2})\b/g, (_, word: string, year: string, month: string, day: string) => `${word}:${Math.floor(new Date(Number(year), Number(month) - 1, Number(day)).getTime() / 1000)}`);
+  query.replace(/\b(after|before|newer|older):(\d{4})[/-](\d{1,2})[/-](\d{1,2})\b/gi, (_, word: string, year: string, month: string, day: string) => `${word}:${Math.floor(new Date(Number(year), Number(month) - 1, Number(day)).getTime() / 1000)}`);
 /** A value as one line of a mail's header. */
 const oneLine = (value: string) => value.replace(/[\r\n]+/g, " ").trim();
 /** A subject as a mail's header carries it: as it is in ASCII, and encoded otherwise. */
@@ -145,19 +146,22 @@ const NOTES_CHARS = 300;
 /** A calendar in the person's list in Google Calendar: their own, which is `primary`, and each one they made, follow or were shared. `selected` is whether they have it ticked there, and `summaryOverride` is the name they gave it. */
 type Calendar = { id: string; summary?: string; summaryOverride?: string; primary?: boolean; selected?: boolean };
 const nameOf = (calendar: Calendar) => calendar.summaryOverride ?? calendar.summary ?? "(No name)";
+/** The person's own calendar, by the name Google has for it whoever asks. */
+const OWN: Calendar = { id: "primary", summary: "primary", primary: true };
 /** The person's calendars in Google Calendar, ticked or not. */
 const calendarsOf = async (call: Call) => (await call<{ items?: Calendar[] }>(`${CALENDAR}/users/me/calendarList?maxResults=250`)).items ?? [];
-/** Where Google keeps a calendar's events. */
-const eventsOf = (id: string) => `${CALENDAR}/calendars/${encodeURIComponent(id)}/events`;
-/** Where Google keeps the events of the calendar an agent named, by its id or by its name when one calendar has it. With none named it is the person's own, which goes by `primary`. */
-async function eventsOn(call: Call, named?: string): Promise<string> {
-  if (named === undefined) return eventsOf("primary");
+/** The calendar an agent named, by its id or by its name when one calendar has it. With none named it is the person's own. */
+async function calendarNamed(call: Call, named?: string): Promise<Calendar> {
+  const wanted = named?.trim();
+  if (!wanted || wanted === OWN.id) return OWN;
   const calendars = await calendarsOf(call);
-  const called = calendars.filter((calendar) => nameOf(calendar).toLowerCase() === named.trim().toLowerCase());
-  const found = calendars.find((calendar) => calendar.id === named) ?? (called.length === 1 ? called[0] : undefined);
-  if (!found) throw new Told(`The person has no one calendar called ${named}. Their calendars: ${calendars.map((calendar) => `${nameOf(calendar)} (id ${calendar.id})`).join(", ")}.`);
-  return eventsOf(found.id);
+  const called = calendars.filter((calendar) => nameOf(calendar).toLowerCase() === wanted.toLowerCase());
+  const found = calendars.find((calendar) => calendar.id === wanted) ?? (called.length === 1 ? called[0] : undefined);
+  if (!found) throw new Told(`The person has no one calendar called ${wanted}. Their calendars: ${calendars.map((calendar) => `${nameOf(calendar)} (id ${calendar.id})`).join(", ")}.`);
+  return found;
 }
+/** Where Google keeps a calendar's events. */
+const eventsOf = (calendar: Calendar) => `${CALENDAR}/calendars/${encodeURIComponent(calendar.id)}/events`;
 /** The zone of this machine's clock, which Google is asked to answer an event's times in. */
 const zone = () => Intl.DateTimeFormat().resolvedOptions().timeZone;
 type Moment = { date?: string; dateTime?: string };
@@ -168,6 +172,7 @@ type Event = {
   description?: string;
   htmlLink?: string;
   hangoutLink?: string;
+  conferenceData?: { entryPoints?: { entryPointType?: string; uri?: string }[] };
   recurringEventId?: string;
   start?: Moment;
   end?: Moment;
@@ -175,9 +180,9 @@ type Event = {
 };
 
 const DAY = /^\d{4}-\d{2}-\d{2}$/;
-/** A time as an agent writes one, as an instant. A time with no zone is this machine's own. */
+/** A time as an agent writes one, as an instant. A time with no zone is this machine's own, and a day alone is the start of it. */
 function instant(time: string, name: string): string {
-  const at = new Date(time);
+  const at = new Date(DAY.test(time) ? `${time}T00:00` : time);
   if (Number.isNaN(at.getTime())) throw new Told(`${name} must be a time such as 2026-11-16T17:00.`);
   return at.toISOString();
 }
@@ -194,21 +199,23 @@ const eventOf = ({ title, start, end, place, notes, guests }: { title?: string; 
 });
 /** When an event starts, as a number to sort by. One that takes whole days starts with its first day, by this machine's clock. */
 const starts = (event: Event) => Date.parse(event.start?.dateTime ?? `${event.start?.date}T00:00`);
-/** An event as an agent reads it, with its notes cut to `notes` characters. One on a calendar that isn't the person's own names the calendar. */
-const eventLines = (event: Event, calendar?: Calendar, notes = NOTES_CHARS) =>
-  [
+/** An event as an agent reads it, on the calendar it is on, with its notes cut to `notes` characters. One on a calendar that isn't the person's own names the calendar. Google marks as `self` the guest whose calendar an event is on, who is the person only on their own. */
+const eventLines = (event: Event, calendar = OWN, notes = NOTES_CHARS) => {
+  const join = event.hangoutLink ?? event.conferenceData?.entryPoints?.find((entry) => entry.entryPointType === "video")?.uri;
+  return [
     `id ${event.id}`,
-    calendar && !calendar.primary && `Calendar: ${nameOf(calendar)}, id ${calendar.id}`,
+    !calendar.primary && `Calendar: ${nameOf(calendar)}, id ${calendar.id}`,
     event.summary ?? "(No title)",
     `${event.start?.dateTime ?? event.start?.date} to ${event.end?.dateTime ?? event.end?.date}`,
     event.recurringEventId && "One time of an event that repeats. Changing or removing it leaves the other times as they are.",
     event.location && `At ${event.location}`,
-    event.hangoutLink && `Join at ${event.hangoutLink}`,
-    event.attendees?.length && `With ${event.attendees.map((guest) => `${guest.email} (${guest.self ? "the person, " : ""}${guest.responseStatus ?? "needsAction"})`).join(", ")}`,
+    join && `Join at ${join}`,
+    event.attendees?.length && `With ${event.attendees.map((guest) => `${guest.email} (${guest.self && calendar.primary ? "the person, " : ""}${guest.responseStatus ?? "needsAction"})`).join(", ")}`,
     event.description && (event.description.length > notes ? `${event.description.slice(0, notes - 1)}…` : event.description),
   ]
     .filter(Boolean)
     .join("\n");
+};
 
 const EVENT_PARTS = {
   place: z.string().optional().describe("Where it is"),
@@ -297,37 +304,43 @@ const APPS: Record<Connection, { maker: Maker; scopes: string[]; tools: AppTool[
       define({
         name: "calendar_events",
         description:
-          "Look at the person's Google Calendar: the events between two times on every calendar they have ticked there, earliest first, each with its id, its title, when it starts and ends by this machine's clock, where it is, who is invited and how its notes start. An event that takes whole days ends on the day after its last. An event on a calendar that isn't their own, such as one they follow or were shared, names that calendar and its id. Read one in full with calendar_event.",
+          "Look at the person's Google Calendar: the events between two times on every calendar they have ticked there, earliest first, each with its id, its title, when it starts and ends by this machine's clock, where it is, who is invited and how its notes start. An event that takes whole days ends on the day after its last. An event on a calendar that isn't their own, such as one they follow or were shared, names that calendar and its id. A calendar Google copies in from elsewhere, whose id ends in @import.calendar.google.com, can be hours behind where it comes from. Read one event in full with calendar_event.",
         input: {
           from: z.string().describe("The start of the time to look in, as YYYY-MM-DDTHH:MM by this machine's clock"),
           to: z.string().describe("The end of the time to look in, written the same way"),
           text: z.string().optional().describe("Words the events have in them"),
+          calendar: z.string().optional().describe("The one calendar to look at, ticked or not: its id or its name. Leave it out for every calendar the person has ticked."),
         },
-        run: async ({ from, to, text }, call) => {
+        run: async ({ from, to, text, calendar }, call) => {
           const asked = new URLSearchParams({ timeMin: instant(from, "from"), timeMax: instant(to, "to"), timeZone: zone(), singleEvents: "true", orderBy: "startTime", maxResults: String(EVENTS_MOST), ...(text && { q: text }) });
-          const ticked = (await calendarsOf(call)).filter((calendar) => calendar.selected);
-          // A calendar Google won't show, as one whose owner took it back, is left out and said, and the rest are still looked at.
+          const looked = calendar === undefined ? (await calendarsOf(call)).filter((each) => each.selected) : [await calendarNamed(call, calendar)];
+          // A calendar that can't be looked at, as one whose owner took it back, is left out and said, and the rest are still looked at.
           const looks = await Promise.all(
-            ticked.map(async (calendar) => {
-              const look = await call<{ items?: Event[]; nextPageToken?: string }>(`${eventsOf(calendar.id)}?${asked}`).catch((error: unknown) => {
-                if (error instanceof Told) return { refused: error.message };
-                throw error;
-              });
-              return { calendar, items: [], ...look };
-            }),
+            looked.map(async (on) => ({ on, items: [] as Event[], ...(await call<{ items?: Event[]; nextPageToken?: string }>(`${eventsOf(on)}?${asked}`).catch((failure: unknown) => ({ failure }))) })),
           );
-          const events = looks.flatMap(({ calendar, items }) => items.map((event) => ({ event, calendar }))).sort((one, other) => starts(one.event) - starts(other.event));
+          const failed = looks.flatMap((look) => ("failure" in look ? [look] : []));
+          // When none can be looked at, the look itself is what failed.
+          if (failed.length && failed.length === looks.length) throw failed[0].failure;
+          // An event the person is a guest of is on their own calendar as well as its host's, so one that two calendars have is told once, as theirs.
+          const told = new Set<string>();
+          const events = [...looks]
+            .sort((one, other) => Number(other.on.primary ?? false) - Number(one.on.primary ?? false))
+            .flatMap(({ on, items }) => items.filter((event) => !told.has(event.id) && told.add(event.id)).map((event) => ({ event, on })))
+            .sort((one, other) => starts(one.event) - starts(other.event));
           // Google can answer part of what a calendar has, and even none of it, with more to come.
           const more = events.length > EVENTS_MOST || looks.some((look) => "nextPageToken" in look && look.nextPageToken) ? ["The calendars have more then than this. Look in a shorter time for the rest."] : [];
-          const left = looks.flatMap((look) => ("refused" in look ? [`The calendar ${nameOf(look.calendar)} is left out. ${look.refused}`] : []));
-          return [...events.slice(0, EVENTS_MOST).map(({ event, calendar }) => eventLines(event, calendar)), ...more, ...left].join("\n\n") || "The calendars have nothing then.";
+          const left = failed.map(({ on, failure }) => `The calendar ${nameOf(on)} is left out. ${failure instanceof Error ? failure.message : String(failure)}`);
+          return [...events.slice(0, EVENTS_MOST).map(({ event, on }) => eventLines(event, on)), ...more, ...left].join("\n\n") || "The calendars have nothing then.";
         },
       }),
       define({
         name: "calendar_event",
         description: "Read one event in the person's Google Calendar in full, with all its notes, which is where the link to join a call often is.",
         input: { id: z.string().describe("The event's id, as calendar_events gives it"), ...ON },
-        run: async ({ id, calendar }, call) => eventLines(await call<Event>(`${await eventsOn(call, calendar)}/${encodeURIComponent(id)}?${new URLSearchParams({ timeZone: zone() })}`), undefined, Infinity),
+        run: async ({ id, calendar }, call) => {
+          const on = await calendarNamed(call, calendar);
+          return eventLines(await call<Event>(`${eventsOf(on)}/${encodeURIComponent(id)}?${new URLSearchParams({ timeZone: zone() })}`), on, MAIL_CHARS);
+        },
       }),
       define({
         name: "calendar_add_event",
@@ -337,11 +350,11 @@ const APPS: Record<Connection, { maker: Maker; scopes: string[]; tools: AppTool[
           title: z.string().describe("What the event is called"),
           start: z.string().describe(`When it starts, ${WHEN}`),
           end: z.string().describe("When it ends, written the same way. An event that takes whole days ends on the day after its last."),
-          ...EVENT_PARTS,
           ...ON,
+          ...EVENT_PARTS,
         },
         run: async ({ calendar, ...event }, call) => {
-          const added = await call<Event>(`${await eventsOn(call, calendar)}?sendUpdates=all`, { method: "POST", body: eventOf(event) });
+          const added = await call<Event>(`${eventsOf(await calendarNamed(call, calendar))}?sendUpdates=all`, { method: "POST", body: eventOf(event) });
           return `Added, as event ${added.id}: ${added.htmlLink}`;
         },
       }),
@@ -351,13 +364,17 @@ const APPS: Record<Connection, { maker: Maker; scopes: string[]; tools: AppTool[
         checked: "acts",
         input: {
           id: z.string().describe("The event's id, as calendar_events gives it"),
+          ...ON,
           title: z.string().optional().describe("What the event is called"),
           start: z.string().optional().describe(`When it starts, ${WHEN}`),
           end: z.string().optional().describe("When it ends, written the same way"),
           ...EVENT_PARTS,
-          ...ON,
+          guests: z.array(z.string()).optional().describe("Everyone who is invited from now on, each an email address. It takes the place of the whole list, so name those who stay too."),
         },
-        run: async ({ id, calendar, ...changes }, call) => eventLines(await call<Event>(`${await eventsOn(call, calendar)}/${encodeURIComponent(id)}?sendUpdates=all`, { method: "PATCH", body: eventOf(changes) })),
+        run: async ({ id, calendar, ...changes }, call) => {
+          const on = await calendarNamed(call, calendar);
+          return eventLines(await call<Event>(`${eventsOf(on)}/${encodeURIComponent(id)}?sendUpdates=all`, { method: "PATCH", body: eventOf(changes) }), on);
+        },
       }),
       define({
         name: "calendar_remove_event",
@@ -365,7 +382,7 @@ const APPS: Record<Connection, { maker: Maker; scopes: string[]; tools: AppTool[
         checked: "acts",
         input: { id: z.string().describe("The event's id, as calendar_events gives it"), ...ON },
         run: async ({ id, calendar }, call) => {
-          await call(`${await eventsOn(call, calendar)}/${encodeURIComponent(id)}?sendUpdates=all`, { method: "DELETE" });
+          await call(`${eventsOf(await calendarNamed(call, calendar))}/${encodeURIComponent(id)}?sendUpdates=all`, { method: "DELETE" });
           return "Removed.";
         },
       }),
