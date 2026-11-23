@@ -143,11 +143,13 @@ const CALENDAR = "https://www.googleapis.com/calendar/v3";
 // The most events one look at the calendars answers, and asks Google for of each calendar, and the most of an event's notes.
 const EVENTS_MOST = 50;
 const NOTES_CHARS = 300;
-/** A calendar in the person's list in Google Calendar: their own, which is `primary`, and each one they made, follow or were shared. `selected` is whether they have it ticked there, and `summaryOverride` is the name they gave it. */
-type Calendar = { id: string; summary?: string; summaryOverride?: string; primary?: boolean; selected?: boolean };
+/** A calendar in the person's list in Google Calendar: their own, which is `primary`, and each one they made, follow or were shared. `selected` is whether they have it ticked there, `summaryOverride` is the name they gave it, and `accessRole` is what they may do with its events. */
+type Calendar = { id: string; summary?: string; summaryOverride?: string; primary?: boolean; selected?: boolean; accessRole?: string };
 const nameOf = (calendar: Calendar) => calendar.summaryOverride ?? calendar.summary ?? "(No name)";
+/** Whether the person can read a calendar's events and not change them, as with one they follow. */
+const readOnly = (calendar: Calendar) => calendar.accessRole === "reader" || calendar.accessRole === "freeBusyReader";
 /** The person's own calendar, by the name Google has for it whoever asks. */
-const OWN: Calendar = { id: "primary", summary: "primary", primary: true };
+const OWN: Calendar = { id: "primary", primary: true };
 /** The person's calendars in Google Calendar, ticked or not. */
 const calendarsOf = async (call: Call) => (await call<{ items?: Calendar[] }>(`${CALENDAR}/users/me/calendarList?maxResults=250`)).items ?? [];
 /** The calendar an agent named, by its id or by its name when one calendar has it. With none named it is the person's own. */
@@ -167,6 +169,8 @@ const zone = () => Intl.DateTimeFormat().resolvedOptions().timeZone;
 type Moment = { date?: string; dateTime?: string };
 type Event = {
   id: string;
+  // The same for every calendar's copy of an event, and for every time of one that repeats.
+  iCalUID?: string;
   summary?: string;
   location?: string;
   description?: string;
@@ -200,11 +204,11 @@ const eventOf = ({ title, start, end, place, notes, guests }: { title?: string; 
 /** When an event starts, as a number to sort by. One that takes whole days starts with its first day, by this machine's clock. */
 const starts = (event: Event) => Date.parse(event.start?.dateTime ?? `${event.start?.date}T00:00`);
 /** An event as an agent reads it, on the calendar it is on, with its notes cut to `notes` characters. One on a calendar that isn't the person's own names the calendar. Google marks as `self` the guest whose calendar an event is on, who is the person only on their own. */
-const eventLines = (event: Event, calendar = OWN, notes = NOTES_CHARS) => {
+const eventLines = (event: Event, calendar: Calendar, notes = NOTES_CHARS) => {
   const join = event.hangoutLink ?? event.conferenceData?.entryPoints?.find((entry) => entry.entryPointType === "video")?.uri;
   return [
     `id ${event.id}`,
-    !calendar.primary && `Calendar: ${nameOf(calendar)}, id ${calendar.id}`,
+    !calendar.primary && `Calendar: ${nameOf(calendar)}, id ${calendar.id}${readOnly(calendar) ? ", read only" : ""}`,
     event.summary ?? "(No title)",
     `${event.start?.dateTime ?? event.start?.date} to ${event.end?.dateTime ?? event.end?.date}`,
     event.recurringEventId && "One time of an event that repeats. Changing or removing it leaves the other times as they are.",
@@ -223,7 +227,7 @@ const EVENT_PARTS = {
   guests: z.array(z.string()).optional().describe("Who is invited, each an email address. Google mails each of them the invitation."),
 };
 const WHEN = "as YYYY-MM-DDTHH:MM by this machine's clock, or as YYYY-MM-DD for an event that takes whole days";
-const ON = { calendar: z.string().optional().describe("The calendar the event is on: its id, as calendar_events gives it, or its name. Leave it out for the person's own calendar.") };
+const ON = { calendar: z.string().optional().describe("The calendar the event is on: its id or its name, as calendar_events and calendar_list give them. Leave it out for the person's own calendar.") };
 
 /**
  * What Sidebots knows of each connection: whose app it is, what its sign-in
@@ -237,24 +241,24 @@ const APPS: Record<Connection, { maker: Maker; scopes: string[]; tools: AppTool[
     tools: [
       define({
         name: "gmail_search",
-        description: "Search the person's Gmail. Answers the mail that matches, newest first, each with its id, who it is from, its subject, its date and how it starts, and says so when more mail matches than it answers. Read one in full with gmail_read.",
+        description: "Search the person's Gmail. Answers the mail that matches, newest first, each with its id, who it is from and to, its subject, its date and how it starts, and says so when more mail matches than it answers. Read one in full with gmail_read.",
         input: {
           query: z.string().describe("What to look for, in the words Gmail's own search takes, such as `from:anna newer_than:7d`, `is:unread` or `subject:invoice`"),
           most: z.number().optional().describe("How many to answer at most, up to 25. 10 when left out."),
         },
         run: async ({ query, most = 10 }, call) => {
           const { messages = [], nextPageToken } = await call<{ messages?: { id: string }[]; nextPageToken?: string }>(`${GMAIL}/messages?${new URLSearchParams({ q: byThisClock(query), maxResults: String(Math.min(Math.max(Math.trunc(most), 1), 25)) })}`);
-          const found = await Promise.all(messages.map(({ id }) => call<Mail>(`${GMAIL}/messages/${id}?format=metadata&metadataHeaders=From&metadataHeaders=Subject&metadataHeaders=Date`)));
-          const more = nextPageToken ? ["More mail matches than this. Search for less at once for the rest."] : [];
+          const found = await Promise.all(messages.map(({ id }) => call<Mail>(`${GMAIL}/messages/${id}?format=metadata&metadataHeaders=From&metadataHeaders=To&metadataHeaders=Subject&metadataHeaders=Date`)));
+          const more = nextPageToken ? ["More mail matches than this. Ask for more at once, up to 25, or search for less."] : [];
           return (
-            [...found.map((mail) => [`id ${mail.id}${mail.labelIds?.includes("UNREAD") ? ", unread" : ""}`, ...headers(mail, ["From", "Subject", "Date"]), unescaped(mail.snippet ?? "")].join("\n")), ...more].join("\n\n") ||
+            [...found.map((mail) => [`id ${mail.id}${mail.labelIds?.includes("UNREAD") ? ", unread" : ""}`, ...headers(mail, ["From", "To", "Subject", "Date"]), unescaped(mail.snippet ?? "")].join("\n")), ...more].join("\n\n") ||
             "No mail matches."
           );
         },
       }),
       define({
         name: "gmail_read",
-        description: "Read one mail in the person's Gmail in full: who it is from and to, where it asks for answers to go when that is somewhere else, its subject, its date, what it says and the names of the files sent with it.",
+        description: "Read one mail in the person's Gmail in full: who it is from and to, where it asks for answers to go, its subject, its date, what it says and the names of the files sent with it.",
         input: { id: z.string().describe("The mail's id, as gmail_search gives it") },
         run: async ({ id }, call) => {
           const mail = await call<Mail>(`${GMAIL}/messages/${encodeURIComponent(id)}?format=full`);
@@ -304,7 +308,7 @@ const APPS: Record<Connection, { maker: Maker; scopes: string[]; tools: AppTool[
       define({
         name: "calendar_events",
         description:
-          "Look at the person's Google Calendar: the events between two times on every calendar they have ticked there, earliest first, each with its id, its title, when it starts and ends by this machine's clock, where it is, who is invited and how its notes start. An event that takes whole days ends on the day after its last. An event on a calendar that isn't their own, such as one they follow or were shared, names that calendar and its id. A calendar Google copies in from elsewhere, whose id ends in @import.calendar.google.com, can be hours behind where it comes from. Read one event in full with calendar_event.",
+          "Look at the person's Google Calendar: the events between two times on every calendar they have ticked there, earliest first, each with its id, its title, when it starts and ends by this machine's clock, where it is, who is invited and how its notes start. An event that takes whole days ends on the day after its last. An event on a calendar that isn't their own, such as one they follow or were shared, names that calendar and its id. A calendar Google copies in from elsewhere, whose id ends in @import.calendar.google.com, can be hours behind where it comes from. Read one event in full with calendar_event, and see which calendars there are with calendar_list.",
         input: {
           from: z.string().describe("The start of the time to look in, as YYYY-MM-DDTHH:MM by this machine's clock"),
           to: z.string().describe("The end of the time to look in, written the same way"),
@@ -312,25 +316,37 @@ const APPS: Record<Connection, { maker: Maker; scopes: string[]; tools: AppTool[
           calendar: z.string().optional().describe("The one calendar to look at, ticked or not: its id or its name. Leave it out for every calendar the person has ticked."),
         },
         run: async ({ from, to, text, calendar }, call) => {
-          const asked = new URLSearchParams({ timeMin: instant(from, "from"), timeMax: instant(to, "to"), timeZone: zone(), singleEvents: "true", orderBy: "startTime", maxResults: String(EVENTS_MOST), ...(text && { q: text }) });
-          const looked = calendar === undefined ? (await calendarsOf(call)).filter((each) => each.selected) : [await calendarNamed(call, calendar)];
+          const [since, until] = [instant(from, "from"), instant(to, "to")];
+          const asked = new URLSearchParams({ timeMin: since, timeMax: until, timeZone: zone(), singleEvents: "true", orderBy: "startTime", maxResults: String(EVENTS_MOST), ...(text && { q: text }) });
+          const named = calendar?.trim() ? await calendarNamed(call, calendar) : undefined;
+          const calendars = named ? [named] : await calendarsOf(call);
+          const looked = named ? calendars : calendars.filter((each) => each.selected);
           // A calendar that can't be looked at, as one whose owner took it back, is left out and said, and the rest are still looked at.
-          const looks = await Promise.all(
-            looked.map(async (on) => ({ on, items: [] as Event[], ...(await call<{ items?: Event[]; nextPageToken?: string }>(`${eventsOf(on)}?${asked}`).catch((failure: unknown) => ({ failure }))) })),
-          );
-          const failed = looks.flatMap((look) => ("failure" in look ? [look] : []));
+          const answers = await Promise.allSettled(looked.map((on) => call<{ items?: Event[]; nextPageToken?: string }>(`${eventsOf(on)}?${asked}`)));
+          const failed = answers.flatMap((answer, at) => (answer.status === "rejected" ? [{ on: looked[at], why: answer.reason as unknown }] : []));
           // When none can be looked at, the look itself is what failed.
-          if (failed.length && failed.length === looks.length) throw failed[0].failure;
-          // An event the person is a guest of is on their own calendar as well as its host's, so one that two calendars have is told once, as theirs.
+          if (failed.length && failed.length === looked.length) throw failed[0].why;
+          const found = answers.flatMap((answer, at) => (answer.status === "fulfilled" ? [{ on: looked[at], ...answer.value }] : []));
           const told = new Set<string>();
-          const events = [...looks]
+          const events = found
             .sort((one, other) => Number(other.on.primary ?? false) - Number(one.on.primary ?? false))
-            .flatMap(({ on, items }) => items.filter((event) => !told.has(event.id) && told.add(event.id)).map((event) => ({ event, on })))
+            .flatMap(({ on, items = [] }) => items.map((event) => ({ event, on })))
+            // Google reads a whole day by the clock of the calendar it is on, so one from the day before the look or the day after it by this machine's clock can come too.
+            .filter(({ event }) => !event.start?.date || (starts(event) < Date.parse(until) && Date.parse(`${event.end?.date}T00:00`) > Date.parse(since)))
+            // An event the person is a guest of is on their own calendar as well as its host's, so one that two calendars have is told once, as theirs.
+            .filter(({ event }) => {
+              const one = `${event.iCalUID ?? event.id} ${starts(event)}`;
+              return !told.has(one) && told.add(one);
+            })
             .sort((one, other) => starts(one.event) - starts(other.event));
           // Google can answer part of what a calendar has, and even none of it, with more to come.
-          const more = events.length > EVENTS_MOST || looks.some((look) => "nextPageToken" in look && look.nextPageToken) ? ["The calendars have more then than this. Look in a shorter time for the rest."] : [];
-          const left = failed.map(({ on, failure }) => `The calendar ${nameOf(on)} is left out. ${failure instanceof Error ? failure.message : String(failure)}`);
-          return [...events.slice(0, EVENTS_MOST).map(({ event, on }) => eventLines(event, on)), ...more, ...left].join("\n\n") || "The calendars have nothing then.";
+          const more = events.length > EVENTS_MOST || found.some((look) => look.nextPageToken) ? ["The calendars have more then than this. Look in a shorter time for the rest."] : [];
+          const left = failed.map(({ on, why }) => `The calendar ${nameOf(on)} is left out. ${why instanceof Error ? why.message : String(why)}`);
+          const unticked = calendars.filter((each) => !looked.includes(each)).map(nameOf);
+          return (
+            [...events.slice(0, EVENTS_MOST).map(({ event, on }) => eventLines(event, on)), ...more, ...left].join("\n\n") ||
+            `The calendars have nothing then.${unticked.length ? ` Not looked at, since the person has them unticked: ${unticked.join(", ")}.` : ""}`
+          );
         },
       }),
       define({
@@ -339,8 +355,17 @@ const APPS: Record<Connection, { maker: Maker; scopes: string[]; tools: AppTool[
         input: { id: z.string().describe("The event's id, as calendar_events gives it"), ...ON },
         run: async ({ id, calendar }, call) => {
           const on = await calendarNamed(call, calendar);
-          return eventLines(await call<Event>(`${eventsOf(on)}/${encodeURIComponent(id)}?${new URLSearchParams({ timeZone: zone() })}`), on, MAIL_CHARS);
+          return eventLines(await call<Event>(`${eventsOf(on)}/${encodeURIComponent(id)}?${new URLSearchParams({ timeZone: zone() })}`), on, Infinity);
         },
+      }),
+      define({
+        name: "calendar_list",
+        description: "List the person's calendars in Google Calendar: each with its name and its id, and whether it is their own, whether they have it ticked there, and whether its events can only be read.",
+        input: {},
+        run: async (_, call) =>
+          (await calendarsOf(call))
+            .map((calendar) => [nameOf(calendar), `id ${calendar.id}`, calendar.primary && "the person's own", calendar.selected ? "ticked" : "unticked", readOnly(calendar) && "read only"].filter(Boolean).join(", "))
+            .join("\n") || "The person has no calendars.",
       }),
       define({
         name: "calendar_add_event",
