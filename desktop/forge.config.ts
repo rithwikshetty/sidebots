@@ -27,7 +27,8 @@ const config: ForgeConfig = {
   plugins: [
     new VitePlugin({
       build: [
-        { entry: "src/main/main.ts", config: "vite.node.config.ts", target: "main" },
+        // A build made with E2E=1 for the tests in e2e starts from e2e/main.ts, which keeps the app out of the way of whoever is at the computer.
+        { entry: process.env.E2E === "1" ? "e2e/main.ts" : "src/main/main.ts", config: "vite.node.config.ts", target: "main" },
         { entry: "src/preload.ts", config: "vite.node.config.ts", target: "preload" },
       ],
       renderer: [{ name: "main_window", config: "vite.renderer.config.ts" }],

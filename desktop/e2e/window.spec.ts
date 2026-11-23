@@ -10,15 +10,11 @@
 //
 //   SHELL_SHOTS=<folder> pnpm e2e e2e/window.spec.ts --workers 2 -g screenshots
 
-import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { Locator, Page } from "@playwright/test";
 import { expect, test } from "./fixtures.ts";
 import { agentNamed, chooseMenu, clickNotification, keepNotifications, launchAgain, rowOf, settled, windowState } from "./shell.ts";
-
-/** Whether the Mac's screen is locked, while which it puts no window into full screen. */
-const screenLocked = () => /<key>CGSSessionScreenIsLocked<\/key>\s*<true\/>/.test(execFileSync("/usr/sbin/ioreg", ["-n", "Root", "-d1", "-a"]).toString());
 
 /** Where a locator is drawn, which must be on screen. */
 async function box(locator: Locator) {
@@ -270,19 +266,7 @@ test.describe("the window itself", () => {
     expect((await windowState(electronApp)).count).toBe(1);
   });
 
-  test("in full screen the top bar gives back the room kept for the traffic lights", async ({ page, electronApp }) => {
-    test.skip(screenLocked(), "The Mac's screen is locked, and macOS puts no window into full screen until it is unlocked.");
-    const bar = page.getByTestId("sidebar").locator("header[data-drag]");
-    await expect(bar).toHaveCSS("padding-inline-start", "80px");
-    await electronApp.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setFullScreen(true));
-    await expect.poll(async () => (await windowState(electronApp)).fullScreen, { timeout: 10_000 }).toBe(true);
-    await expect(bar).toHaveCSS("padding-inline-start", "12px");
-    await electronApp.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setFullScreen(false));
-    await expect.poll(async () => (await windowState(electronApp)).fullScreen, { timeout: 10_000 }).toBe(false);
-    await expect(bar).toHaveCSS("padding-inline-start", "80px");
-  });
-
-  // What macOS tells the window as it enters and leaves full screen is sent here by hand, so the window's own part is proved on a Mac whose screen is locked too.
+  // What macOS tells the window as it enters and leaves full screen is sent here by hand: a window that really fills the screen takes it from whoever is at the computer.
   test("told it is in full screen, the top bar gives back the room, and takes it again when told it has left", async ({ page, electronApp }) => {
     const bar = page.getByTestId("sidebar").locator("header[data-drag]");
     await expect(bar).toHaveCSS("padding-inline-start", "80px");

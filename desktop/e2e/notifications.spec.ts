@@ -163,7 +163,7 @@ test.describe("when the person isn't looking", () => {
     await openChat(page, atlas.id);
     await sendFromComposer(page, "hello");
     await expect(page.getByTestId("message-theirs")).toHaveCount(1);
-    // A hidden window has no focus; the test has the window read its focus as the system gives it, which Playwright otherwise always reads as there, and the window goes from the front as it hides.
+    // A hidden window has no focus; the test has the window read its focus as the system gives it, which Playwright otherwise always reads as there.
     await leaveWindow(page, electronApp);
     await electronApp.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].hide());
     await server.control("deliver", { agent: atlas.id, text: "While the window was hidden." });

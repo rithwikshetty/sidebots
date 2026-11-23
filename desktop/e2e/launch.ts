@@ -1,7 +1,8 @@
 // Opens the packaged desktop app against a server of the test's own, and
 // does to it what tests and screenshots do: wait for it to be ready, set its
 // colours and size, finish a sign-in, and close it. The app is the one
-// `E2E=1 pnpm package` makes, which Playwright can drive. The fixtures and
+// `E2E=1 pnpm package` makes, which Playwright can drive and which keeps out
+// of the way of whoever is at the computer (unseen.ts). The fixtures and
 // shots.ts both use this file.
 
 import { existsSync, mkdirSync } from "node:fs";
