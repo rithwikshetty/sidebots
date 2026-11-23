@@ -148,7 +148,7 @@ function ChatWith({ agent }: { agent: AgentWithLatest }) {
     <section aria-label={agent.name} data-testid="chat" className="relative flex h-full flex-col" onKeyDown={cancelReply} {...drag}>
       <ChatBar agent={agent} scrolled={scrolled} />
       <Timeline agent={agent} outgoing={outgoing} onReply={reply} handle={timeline} onScrolled={setScrolled} />
-      <div className="mx-auto w-full max-w-[46rem] shrink-0">
+      <div className="mx-auto w-full max-w-chat shrink-0">
         <Composer
           field={field}
           name={agent.name}
