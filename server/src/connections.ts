@@ -113,6 +113,9 @@ const wordsOn = (html: string) =>
   unescaped(
     html
       .replace(/<(style|script|head)[\s\S]*?<\/\1>/gi, "")
+      // A link keeps the address it goes to, and the cells of a row stay apart.
+      .replace(/<a\s[^>]*?href=["'](https?:[^"']+)["'][^>]*>([\s\S]*?)<\/a>/gi, "$2 ($1)")
+      .replace(/<\/t[dh]>/gi, " ")
       .replace(/<br\s*\/?>|<\/(p|div|tr|li|h\d)>/gi, "\n")
       .replace(/<[^>]+>/g, ""),
   )
@@ -127,15 +130,36 @@ function mailWords(mail: Mail): string {
   const words = read("text/plain") ?? (page ? wordsOn(page) : "");
   return words.length > MAIL_CHARS ? `${words.slice(0, MAIL_CHARS)}\n\nThe mail goes on past here.` : words;
 }
+/** A search with each day it names after `after:` or `before:` as the instant that day starts by this machine's clock. Gmail reads a day alone as one that starts at midnight in California. */
+const byThisClock = (query: string) =>
+  query.replace(/\b(after|before):(\d{4})[/-](\d{1,2})[/-](\d{1,2})\b/g, (_, word: string, year: string, month: string, day: string) => `${word}:${Math.floor(new Date(Number(year), Number(month) - 1, Number(day)).getTime() / 1000)}`);
 /** A value as one line of a mail's header. */
 const oneLine = (value: string) => value.replace(/[\r\n]+/g, " ").trim();
 /** A subject as a mail's header carries it: as it is in ASCII, and encoded otherwise. */
 const subjectLine = (subject: string) => (/^[\x20-\x7e]*$/.test(oneLine(subject)) ? oneLine(subject) : `=?UTF-8?B?${Buffer.from(oneLine(subject)).toString("base64")}?=`);
 
-const EVENTS = "https://www.googleapis.com/calendar/v3/calendars/primary/events";
-// The most events one look at the calendar asks Google for, and the most of an event's notes.
+const CALENDAR = "https://www.googleapis.com/calendar/v3";
+// The most events one look at the calendars answers, and asks Google for of each calendar, and the most of an event's notes.
 const EVENTS_MOST = 50;
 const NOTES_CHARS = 300;
+/** A calendar in the person's list in Google Calendar: their own, which is `primary`, and each one they made, follow or were shared. `selected` is whether they have it ticked there, and `summaryOverride` is the name they gave it. */
+type Calendar = { id: string; summary?: string; summaryOverride?: string; primary?: boolean; selected?: boolean };
+const nameOf = (calendar: Calendar) => calendar.summaryOverride ?? calendar.summary ?? "(No name)";
+/** The person's calendars in Google Calendar, ticked or not. */
+const calendarsOf = async (call: Call) => (await call<{ items?: Calendar[] }>(`${CALENDAR}/users/me/calendarList?maxResults=250`)).items ?? [];
+/** Where Google keeps a calendar's events. */
+const eventsOf = (id: string) => `${CALENDAR}/calendars/${encodeURIComponent(id)}/events`;
+/** Where Google keeps the events of the calendar an agent named, by its id or by its name when one calendar has it. With none named it is the person's own, which goes by `primary`. */
+async function eventsOn(call: Call, named?: string): Promise<string> {
+  if (named === undefined) return eventsOf("primary");
+  const calendars = await calendarsOf(call);
+  const called = calendars.filter((calendar) => nameOf(calendar).toLowerCase() === named.trim().toLowerCase());
+  const found = calendars.find((calendar) => calendar.id === named) ?? (called.length === 1 ? called[0] : undefined);
+  if (!found) throw new Told(`The person has no one calendar called ${named}. Their calendars: ${calendars.map((calendar) => `${nameOf(calendar)} (id ${calendar.id})`).join(", ")}.`);
+  return eventsOf(found.id);
+}
+/** The zone of this machine's clock, which Google is asked to answer an event's times in. */
+const zone = () => Intl.DateTimeFormat().resolvedOptions().timeZone;
 type Moment = { date?: string; dateTime?: string };
 type Event = {
   id: string;
@@ -143,9 +167,11 @@ type Event = {
   location?: string;
   description?: string;
   htmlLink?: string;
+  hangoutLink?: string;
+  recurringEventId?: string;
   start?: Moment;
   end?: Moment;
-  attendees?: { email: string; responseStatus?: string }[];
+  attendees?: { email: string; responseStatus?: string; self?: boolean }[];
 };
 
 const DAY = /^\d{4}-\d{2}-\d{2}$/;
@@ -166,15 +192,20 @@ const eventOf = ({ title, start, end, place, notes, guests }: { title?: string; 
   ...(notes !== undefined && { description: notes }),
   ...(guests !== undefined && { attendees: guests.map((email) => ({ email })) }),
 });
-/** An event as an agent reads it. */
-const eventLines = (event: Event) =>
+/** When an event starts, as a number to sort by. One that takes whole days starts with its first day, by this machine's clock. */
+const starts = (event: Event) => Date.parse(event.start?.dateTime ?? `${event.start?.date}T00:00`);
+/** An event as an agent reads it, with its notes cut to `notes` characters. One on a calendar that isn't the person's own names the calendar. */
+const eventLines = (event: Event, calendar?: Calendar, notes = NOTES_CHARS) =>
   [
     `id ${event.id}`,
+    calendar && !calendar.primary && `Calendar: ${nameOf(calendar)}, id ${calendar.id}`,
     event.summary ?? "(No title)",
     `${event.start?.dateTime ?? event.start?.date} to ${event.end?.dateTime ?? event.end?.date}`,
+    event.recurringEventId && "One time of an event that repeats. Changing or removing it leaves the other times as they are.",
     event.location && `At ${event.location}`,
-    event.attendees?.length && `With ${event.attendees.map((guest) => `${guest.email} (${guest.responseStatus ?? "needsAction"})`).join(", ")}`,
-    event.description && (event.description.length > NOTES_CHARS ? `${event.description.slice(0, NOTES_CHARS - 1)}…` : event.description),
+    event.hangoutLink && `Join at ${event.hangoutLink}`,
+    event.attendees?.length && `With ${event.attendees.map((guest) => `${guest.email} (${guest.self ? "the person, " : ""}${guest.responseStatus ?? "needsAction"})`).join(", ")}`,
+    event.description && (event.description.length > notes ? `${event.description.slice(0, notes - 1)}…` : event.description),
   ]
     .filter(Boolean)
     .join("\n");
@@ -185,6 +216,7 @@ const EVENT_PARTS = {
   guests: z.array(z.string()).optional().describe("Who is invited, each an email address. Google mails each of them the invitation."),
 };
 const WHEN = "as YYYY-MM-DDTHH:MM by this machine's clock, or as YYYY-MM-DD for an event that takes whole days";
+const ON = { calendar: z.string().optional().describe("The calendar the event is on: its id, as calendar_events gives it, or its name. Leave it out for the person's own calendar.") };
 
 /**
  * What Sidebots knows of each connection: whose app it is, what its sign-in
@@ -198,29 +230,29 @@ const APPS: Record<Connection, { maker: Maker; scopes: string[]; tools: AppTool[
     tools: [
       define({
         name: "gmail_search",
-        description: "Search the person's Gmail. Answers the mail that matches, newest first, each with its id, who it is from, its subject, its date and how it starts. Read one in full with gmail_read.",
+        description: "Search the person's Gmail. Answers the mail that matches, newest first, each with its id, who it is from, its subject, its date and how it starts, and says so when more mail matches than it answers. Read one in full with gmail_read.",
         input: {
           query: z.string().describe("What to look for, in the words Gmail's own search takes, such as `from:anna newer_than:7d`, `is:unread` or `subject:invoice`"),
           most: z.number().optional().describe("How many to answer at most, up to 25. 10 when left out."),
         },
         run: async ({ query, most = 10 }, call) => {
-          const { messages = [] } = await call<{ messages?: { id: string }[] }>(`${GMAIL}/messages?${new URLSearchParams({ q: query, maxResults: String(Math.min(Math.max(Math.trunc(most), 1), 25)) })}`);
+          const { messages = [], nextPageToken } = await call<{ messages?: { id: string }[]; nextPageToken?: string }>(`${GMAIL}/messages?${new URLSearchParams({ q: byThisClock(query), maxResults: String(Math.min(Math.max(Math.trunc(most), 1), 25)) })}`);
           const found = await Promise.all(messages.map(({ id }) => call<Mail>(`${GMAIL}/messages/${id}?format=metadata&metadataHeaders=From&metadataHeaders=Subject&metadataHeaders=Date`)));
+          const more = nextPageToken ? ["More mail matches than this. Search for less at once for the rest."] : [];
           return (
-            found
-              .map((mail) => [`id ${mail.id}${mail.labelIds?.includes("UNREAD") ? ", unread" : ""}`, ...headers(mail, ["From", "Subject", "Date"]), unescaped(mail.snippet ?? "")].join("\n"))
-              .join("\n\n") || "No mail matches."
+            [...found.map((mail) => [`id ${mail.id}${mail.labelIds?.includes("UNREAD") ? ", unread" : ""}`, ...headers(mail, ["From", "Subject", "Date"]), unescaped(mail.snippet ?? "")].join("\n")), ...more].join("\n\n") ||
+            "No mail matches."
           );
         },
       }),
       define({
         name: "gmail_read",
-        description: "Read one mail in the person's Gmail in full: who it is from and to, its subject, its date, what it says and the names of the files sent with it.",
+        description: "Read one mail in the person's Gmail in full: who it is from and to, where it asks for answers to go when that is somewhere else, its subject, its date, what it says and the names of the files sent with it.",
         input: { id: z.string().describe("The mail's id, as gmail_search gives it") },
         run: async ({ id }, call) => {
           const mail = await call<Mail>(`${GMAIL}/messages/${encodeURIComponent(id)}?format=full`);
           const files = everyPart(mail.payload ?? {}).flatMap((part) => (part.filename ? [part.filename] : []));
-          return [...headers(mail, ["From", "To", "Cc", "Subject", "Date"]), ...(files.length ? [`Files: ${files.join(", ")}`] : []), "", mailWords(mail)].join("\n");
+          return [...headers(mail, ["From", "Reply-To", "To", "Cc", "Subject", "Date"]), ...(files.length ? [`Files: ${files.join(", ")}`] : []), "", mailWords(mail)].join("\n");
         },
       }),
       define({
@@ -259,23 +291,43 @@ const APPS: Record<Connection, { maker: Maker; scopes: string[]; tools: AppTool[
   },
   calendar: {
     maker: "google",
-    scopes: ["https://www.googleapis.com/auth/calendar.events"],
+    // The first is for the events of every calendar, and the second for which calendars the person has.
+    scopes: ["https://www.googleapis.com/auth/calendar.events", "https://www.googleapis.com/auth/calendar.calendarlist.readonly"],
     tools: [
       define({
         name: "calendar_events",
-        description: "Look at the person's Google Calendar: the events between two times, earliest first, each with its id, its title, when it starts and ends, where it is and who is invited.",
+        description:
+          "Look at the person's Google Calendar: the events between two times on every calendar they have ticked there, earliest first, each with its id, its title, when it starts and ends by this machine's clock, where it is, who is invited and how its notes start. An event that takes whole days ends on the day after its last. An event on a calendar that isn't their own, such as one they follow or were shared, names that calendar and its id. Read one in full with calendar_event.",
         input: {
           from: z.string().describe("The start of the time to look in, as YYYY-MM-DDTHH:MM by this machine's clock"),
           to: z.string().describe("The end of the time to look in, written the same way"),
           text: z.string().optional().describe("Words the events have in them"),
         },
         run: async ({ from, to, text }, call) => {
-          const asked = { timeMin: instant(from, "from"), timeMax: instant(to, "to"), singleEvents: "true", orderBy: "startTime", maxResults: String(EVENTS_MOST), ...(text && { q: text }) };
-          const { items = [], nextPageToken } = await call<{ items?: Event[]; nextPageToken?: string }>(`${EVENTS}?${new URLSearchParams(asked)}`);
-          // Google can answer part of what there is, and even none of it, with more to come.
-          const more = nextPageToken ? ["The calendar has more then than this. Look in a shorter time for the rest."] : [];
-          return [...items.map(eventLines), ...more].join("\n\n") || "The calendar has nothing then.";
+          const asked = new URLSearchParams({ timeMin: instant(from, "from"), timeMax: instant(to, "to"), timeZone: zone(), singleEvents: "true", orderBy: "startTime", maxResults: String(EVENTS_MOST), ...(text && { q: text }) });
+          const ticked = (await calendarsOf(call)).filter((calendar) => calendar.selected);
+          // A calendar Google won't show, as one whose owner took it back, is left out and said, and the rest are still looked at.
+          const looks = await Promise.all(
+            ticked.map(async (calendar) => {
+              const look = await call<{ items?: Event[]; nextPageToken?: string }>(`${eventsOf(calendar.id)}?${asked}`).catch((error: unknown) => {
+                if (error instanceof Told) return { refused: error.message };
+                throw error;
+              });
+              return { calendar, items: [], ...look };
+            }),
+          );
+          const events = looks.flatMap(({ calendar, items }) => items.map((event) => ({ event, calendar }))).sort((one, other) => starts(one.event) - starts(other.event));
+          // Google can answer part of what a calendar has, and even none of it, with more to come.
+          const more = events.length > EVENTS_MOST || looks.some((look) => "nextPageToken" in look && look.nextPageToken) ? ["The calendars have more then than this. Look in a shorter time for the rest."] : [];
+          const left = looks.flatMap((look) => ("refused" in look ? [`The calendar ${nameOf(look.calendar)} is left out. ${look.refused}`] : []));
+          return [...events.slice(0, EVENTS_MOST).map(({ event, calendar }) => eventLines(event, calendar)), ...more, ...left].join("\n\n") || "The calendars have nothing then.";
         },
+      }),
+      define({
+        name: "calendar_event",
+        description: "Read one event in the person's Google Calendar in full, with all its notes, which is where the link to join a call often is.",
+        input: { id: z.string().describe("The event's id, as calendar_events gives it"), ...ON },
+        run: async ({ id, calendar }, call) => eventLines(await call<Event>(`${await eventsOn(call, calendar)}/${encodeURIComponent(id)}?${new URLSearchParams({ timeZone: zone() })}`), undefined, Infinity),
       }),
       define({
         name: "calendar_add_event",
@@ -286,9 +338,10 @@ const APPS: Record<Connection, { maker: Maker; scopes: string[]; tools: AppTool[
           start: z.string().describe(`When it starts, ${WHEN}`),
           end: z.string().describe("When it ends, written the same way. An event that takes whole days ends on the day after its last."),
           ...EVENT_PARTS,
+          ...ON,
         },
-        run: async (event, call) => {
-          const added = await call<Event>(`${EVENTS}?sendUpdates=all`, { method: "POST", body: eventOf(event) });
+        run: async ({ calendar, ...event }, call) => {
+          const added = await call<Event>(`${await eventsOn(call, calendar)}?sendUpdates=all`, { method: "POST", body: eventOf(event) });
           return `Added, as event ${added.id}: ${added.htmlLink}`;
         },
       }),
@@ -302,16 +355,17 @@ const APPS: Record<Connection, { maker: Maker; scopes: string[]; tools: AppTool[
           start: z.string().optional().describe(`When it starts, ${WHEN}`),
           end: z.string().optional().describe("When it ends, written the same way"),
           ...EVENT_PARTS,
+          ...ON,
         },
-        run: async ({ id, ...changes }, call) => eventLines(await call<Event>(`${EVENTS}/${encodeURIComponent(id)}?sendUpdates=all`, { method: "PATCH", body: eventOf(changes) })),
+        run: async ({ id, calendar, ...changes }, call) => eventLines(await call<Event>(`${await eventsOn(call, calendar)}/${encodeURIComponent(id)}?sendUpdates=all`, { method: "PATCH", body: eventOf(changes) })),
       }),
       define({
         name: "calendar_remove_event",
         description: "Remove an event from the person's Google Calendar. Google mails its guests that it is off.",
         checked: "acts",
-        input: { id: z.string().describe("The event's id, as calendar_events gives it") },
-        run: async ({ id }, call) => {
-          await call(`${EVENTS}/${encodeURIComponent(id)}?sendUpdates=all`, { method: "DELETE" });
+        input: { id: z.string().describe("The event's id, as calendar_events gives it"), ...ON },
+        run: async ({ id, calendar }, call) => {
+          await call(`${await eventsOn(call, calendar)}/${encodeURIComponent(id)}?sendUpdates=all`, { method: "DELETE" });
           return "Removed.";
         },
       }),
@@ -319,6 +373,9 @@ const APPS: Record<Connection, { maker: Maker; scopes: string[]; tools: AppTool[
   },
   notion: { maker: "notion", scopes: [], tools: [], server: NOTION },
 };
+
+/** Whether what a maker granted allows all a connection needs. It allows less when the person unticked part of what the sign-in asked for, and when the sign-in asked for less than the connection needs. */
+const allowsAll = (connection: Connection, granted: Granted) => APPS[connection].scopes.every((scope) => granted.scope?.split(" ").includes(scope));
 
 /** Every connection's tools, each with the connection it is of. */
 export const CONNECTION_TOOLS = (Object.keys(APPS) as Connection[]).flatMap((connection) => APPS[connection].tools.map((tool) => ({ ...tool, connection })));
@@ -376,13 +433,13 @@ export function createConnections(store: Store, clients: Partial<Record<Maker, s
     const granted = await grant(maker, { grant_type: "refresh_token", refresh_token: kept.token });
     // The person may have removed the connection, or made it again, while the maker answered. What it said is then of a sign-in that is gone.
     if (store.connection(personId, connection)?.token !== kept.token) return inHand(personId, connection) ?? renewed(personId, connection);
-    if (!("error" in granted)) {
+    if (!("error" in granted) && allowsAll(connection, granted)) {
       // A maker may answer with a new token that lasts, which ends the one before it.
       if (granted.refresh_token && granted.refresh_token !== kept.token) store.setConnection(personId, connection, { ...kept, token: granted.refresh_token });
       return hold(personId, connection, granted);
     }
-    if (granted.error !== "invalid_grant") throw new Told(`${MAKERS[maker].name} wouldn't renew the sign-in to ${name}: ${granted.error_description ?? granted.error}`);
-    // The person took the connection back at the maker's, or the maker ended it.
+    if ("error" in granted && granted.error !== "invalid_grant") throw new Told(`${MAKERS[maker].name} wouldn't renew the sign-in to ${name}: ${granted.error_description ?? granted.error}`);
+    // The person took the connection back at the maker's, the maker ended it, or its sign-in allows less than the connection needs.
     store.setConnection(personId, connection, null);
     tokens.delete(key(personId, connection));
     throw new Told(`${name} is no longer connected. ${connect}`);
@@ -441,7 +498,7 @@ export function createConnections(store: Store, clients: Partial<Record<Maker, s
      * than the connection needs.
      */
     async finish(personId: string, connection: Connection, url: string): Promise<Connected> {
-      const { maker, scopes } = APPS[connection];
+      const { maker } = APPS[connection];
       const { name } = MAKERS[maker];
       const back = URL.parse(url)?.searchParams;
       const state = back?.get("state") ?? "";
@@ -451,9 +508,7 @@ export function createConnections(store: Store, clients: Partial<Record<Maker, s
       const code = back?.get("code");
       const granted = code ? await grant(maker, { grant_type: "authorization_code", code, redirect_uri: MAKERS[maker].redirect(clients[maker] ?? ""), code_verifier: signIn.verifier }) : undefined;
       if (!granted || "error" in granted) throw new Error(`${name} didn't sign you in${granted ? `: ${granted.error_description ?? granted.error}` : "."}`);
-      // A person can untick part of what a sign-in asks for.
-      const allowed = new Set(granted.scope?.split(" "));
-      if (!granted.refresh_token || scopes.some((scope) => !allowed.has(scope))) {
+      if (!granted.refresh_token || !allowsAll(connection, granted)) {
         throw new Error(`${name} didn't allow everything ${CONNECTIONS[connection].name} needs. Connect it again, and allow all it asks for.`);
       }
       store.setConnection(personId, connection, { account: MAKERS[maker].account(granted) ?? name, token: granted.refresh_token });

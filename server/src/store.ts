@@ -65,6 +65,8 @@ const TABLE_CHANGES: (string | { table: string; change: string })[] = [
   // A Codex session keeps the tools it started with, so each one from before the connections' tools gets a fresh start.
   "insert into messages (id, agent_id, sender, body, status, created_at) select lower(hex(randomblob(16))), id, 'sidebots', 'Fresh start', 'queued', cast(unixepoch('subsec') * 1000 as integer) from agents where provider = 'codex' and session_id is not null",
   "alter table devices add column kind text not null default 'phone' check (kind in ('phone', 'desktop'))",
+  // So does each one from before `calendar_event`, and before the calendar's tools took the calendar an event is on.
+  "insert into messages (id, agent_id, sender, body, status, created_at) select lower(hex(randomblob(16))), id, 'sidebots', 'Fresh start', 'queued', cast(unixepoch('subsec') * 1000 as integer) from agents where provider = 'codex' and session_id is not null",
 ];
 
 const SCHEMA = `

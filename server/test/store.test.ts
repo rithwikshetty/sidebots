@@ -144,7 +144,7 @@ test("a database that counted turns without their tokens keeps the turns, and co
   assert.deepEqual(store.usage(person.id, []).used.map((used) => ({ ...used })), [{ agent_id: agent.id, kind: "reply", turns: 3, cost: 3.5, tokens: 50_000 }]);
 });
 
-test("a Codex session from before the connections' tools gets a fresh start, since a Codex chat keeps the tools it started with", () => {
+test("a Codex session from before the connections' tools, or before those tools changed, gets a fresh start, since a Codex chat keeps the tools it started with", () => {
   const home = mkdtempSync(join(tmpdir(), "sidebots-store-test-"));
   const fresh = openStore(home);
   const person = fresh.addPerson({ name: "Rithwik", provider: "claude", configDir: "/tmp/claude" });
@@ -162,7 +162,7 @@ test("a Codex session from before the connections' tools gets a fresh start, sin
   const store = openStore(home);
   assert.deepEqual([maya, theo, ruby].map((agent) => store.nextQueued(agent.id)?.body), ["Fresh start", undefined, undefined]);
   assert.deepEqual(store.requeueInterrupted(), [maya.id]);
-  // A database that has had the change doesn't get it again.
+  // The session gets one for the tools and one for their change, and a database that has had the changes doesn't get them again.
   store.close();
-  assert.equal(openStore(home).messages(maya.id).length, 1);
+  assert.equal(openStore(home).messages(maya.id).length, 2);
 });
