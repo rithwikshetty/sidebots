@@ -228,11 +228,19 @@ export function openStore(home: string) {
   mkdirSync(join(home, "agents"), { recursive: true });
   // The server and its commands open the database at once, as the Mac app runs them, so each waits its turn for a lock.
   const db = new DatabaseSync(join(home, "sidebots.sqlite"), { timeout: 5000 });
-  db.exec("pragma journal_mode = wal; pragma foreign_keys = on;");
+  // SQLite gives a statement that long to get its lock, but none to a change of journal mode, which fails at once while another is making the database or closing it. So this gives it as long.
+  for (const until = Date.now() + 5000; ; Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 20)) {
+    try {
+      db.exec("pragma journal_mode = wal; pragma foreign_keys = on;");
+      break;
+    } catch (failure) {
+      if ((failure as { errcode?: number }).errcode !== 5 || Date.now() > until) throw failure;
+    }
+  }
+  // The tables are read and made, and the count read, under the lock the changes are made under, so when two open a database at once, the second finds the first's tables made and its changes counted.
+  db.exec("begin immediate");
   const had = new Set((db.prepare("select name from sqlite_master where type = 'table'").all() as { name: string }[]).map((table) => table.name));
   db.exec(SCHEMA);
-  // The count is read under the lock the changes are made under, so when two open an older database at once, the second finds the first's changes counted.
-  db.exec("begin immediate");
   const version = had.has("people") ? (db.prepare("pragma user_version").get() as { user_version: number }).user_version : TABLE_CHANGES.length;
   for (const change of TABLE_CHANGES.slice(version)) {
     if (typeof change === "string") db.exec(change);
