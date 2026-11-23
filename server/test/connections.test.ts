@@ -81,7 +81,7 @@ test("a token asked for under a sign-in the person has since replaced is not use
 });
 
 test("a mail with no plain text is read as the words of its page", async () => {
-  const page = "<html><head><style>p { color: red }</style></head><body><p>Your order &amp; receipt</p><table><tr><td>Total:</td><td>&lt;£20&gt;</td></tr></table><div>Thanks<br><a class='button' data-href='https://shop.example/not-this' href='https://shop.example/track?order=7&amp;key=k'>Track it</a> <a href=\"https://shop.example/o'brien\">Yours</a></div></body></html>";
+  const page = "<html><head><style>p { color: red }</style></head><body><p>Your order &amp; receipt</p><table><tr><td>Total:</td><td>&lt;£20&gt;</td></tr></table><div>Thanks<br><a class='button' data-href='https://shop.example/not-this' href='https://shop.example/track?order=7&#38;key=k'>Track it</a> <a href=\"https://shop.example/o'brien\">Yours</a></div></body></html>";
   const { use } = setup(() => ({
     id: "m2",
     threadId: "t2",
@@ -106,13 +106,14 @@ test("a mail with no plain text is read as the words of its page", async () => {
 });
 
 test("a search reads a day by this machine's clock, and says when more mail matches than it answers", async () => {
-  const { sent, use } = setup((request) => (request.includes("/messages?") ? { messages: [{ id: "m1" }], ...(new URL(request.slice("GET ".length)).searchParams.get("maxResults") === "1" && { nextPageToken: "more" }) } : { id: "m1", snippet: "See you at 3" }));
-  assert.equal(await use("gmail_search", { query: "from:anna after:2026/11/20 before:2026-11-21 OLDER:2026/11/21", most: 1 }), "id m1\nSee you at 3\n\nMore mail matches than this. Ask for more at once, up to 25, or search for less.");
+  const { sent, use } = setup((request) => (request.includes("/messages?") ? { messages: [{ id: "m1" }], ...(new URL(request.slice("GET ".length)).searchParams.get("maxResults") === "1" && { nextPageToken: "more" }) } : { id: "m1", labelIds: ["DRAFT"], snippet: "See you at 3", payload: { headers: [{ name: "To", value: "anna@example.com" }] } }));
+  assert.equal(await use("gmail_search", { query: "from:anna after:2026/11/20 before:2026-11-21 OLDER:2026/11/21", most: 1 }), "id m1, a draft that isn't sent\nTo: anna@example.com\nSee you at 3\n\nMore mail matches than this. Ask for more at once, up to 25, or search for less.");
   // Gmail takes a day alone as one in California, and an instant as it is.
   const seconds = (day: Date) => Math.floor(day.getTime() / 1000);
   assert.equal(new URL(sent[0][0].slice("GET ".length)).searchParams.get("q"), `from:anna after:${seconds(new Date(2026, 10, 20))} before:${seconds(new Date(2026, 10, 21))} OLDER:${seconds(new Date(2026, 10, 21))}`);
-  assert.equal(await use("gmail_search", { query: "newer_than:2d" }), "id m1\nSee you at 3");
+  assert.equal(await use("gmail_search", { query: "newer_than:2d" }), "id m1, a draft that isn't sent\nTo: anna@example.com\nSee you at 3");
   assert.equal(new URL(sent.at(-2)![0].slice("GET ".length)).searchParams.get("q"), "newer_than:2d");
+  assert.deepEqual(new URL(sent.at(-1)![0].slice("GET ".length)).searchParams.getAll("metadataHeaders"), ["From", "To", "Subject", "Date"]);
 });
 
 test("the events of every calendar the person has ticked are looked at as one, and an event is added, changed and removed on the calendar named, with times read by this machine's clock", async () => {
@@ -127,9 +128,9 @@ test("the events of every calendar the person has ticked are looked at as one, a
   ];
   const notes = `Agenda: the week ahead. ${"_".repeat(300)} Join the call: https://calls.example/standup`;
   // Google marks as `self` the guest whose calendar an event is on, which on the calendar from work is the one at work who shared it.
-  const standup = { id: "w2", summary: "Standup", recurringEventId: "w", conferenceData: { entryPoints: [{ entryPointType: "phone", uri: "tel:+61-2-5550-0100" }, { entryPointType: "video", uri: "https://calls.example/abc" }] }, description: notes, start: { dateTime: "2026-11-20T09:30:00+11:00" }, end: { dateTime: "2026-11-20T10:00:00+11:00" }, attendees: [{ email: "sam@work.example", self: true, responseStatus: "declined" }] };
+  const standup = { id: "w2", iCalUID: "standup@work.example", summary: "Standup", recurringEventId: "w", conferenceData: { entryPoints: [{ entryPointType: "phone", uri: "tel:+61-2-5550-0100" }, { entryPointType: "video", uri: "https://calls.example/abc" }] }, description: notes, start: { dateTime: "2026-11-20T09:30:00+11:00" }, end: { dateTime: "2026-11-20T10:00:00+11:00" }, attendees: [{ email: "sam@work.example", self: true, responseStatus: "declined" }] };
   // The calendar from work has its own copy of the bike repair, since someone there is its guest, and a day off that ended as the look begins.
-  const atWork = [{ id: "w0", summary: "Day off", start: { date: "2026-11-18" }, end: { date: "2026-11-19" } }, { id: "w1", summary: "Offsite", start: { date: "2026-11-19" }, end: { date: "2026-11-20" } }, standup, { ...event, id: "w3", attendees: [] }];
+  const atWork = [{ id: "w0", summary: "Day off", start: { date: "2026-11-18" }, end: { date: "2026-11-19" } }, { id: "w1", summary: "Offsite", start: { date: "2026-11-19" }, end: { date: "2026-11-20" } }, standup, { ...event, id: "w3", attendees: [] }, { ...standup, id: "w4", description: undefined, start: { dateTime: "2026-11-20T23:30:00+11:00" }, end: { dateTime: "2026-11-20T23:45:00+11:00" } }, { id: "w5", summary: "Day after", start: { date: "2026-11-21" }, end: { date: "2026-11-22" } }];
   const { sent, use } = setup((request) => {
     if (request.startsWith("GET https://www.googleapis.com/calendar/v3/users/me/calendarList")) return { items: calendars };
     if (request.includes("gone%40group")) return Response.json({ error: { message: "Not Found" } }, { status: 404 });
@@ -142,7 +143,7 @@ test("the events of every calendar the person has ticked are looked at as one, a
   assert.match(await use("calendar_events", { from, to, text: "busy" }), /\n\nThe calendars have more then than this\. Look in a shorter time for the rest\.\n\n/);
   sent.length = 0;
 
-  // The events come earliest first whichever calendar each is on, and one on a calendar that isn't the person's own names it. One that two calendars have is told once, as the person's. A whole day that Google answers from outside the look by this machine's clock is left out, and so, in words, is a calendar Google won't show.
+  // The events come earliest first whichever calendar each is on, and one on a calendar that isn't the person's own names it. One that two calendars have is told once, as the person's, and each time of one that repeats is told. A whole day that Google answers from outside the look by this machine's clock is left out, and so, in words, is a calendar Google won't show.
   const work = `Calendar: Work, id ${WORK}, read only`;
   const repeats = "One time of an event that repeats. Changing or removing it leaves the other times as they are.";
   const standupLines = `id w2\n${work}\nStandup\n2026-11-20T09:30:00+11:00 to 2026-11-20T10:00:00+11:00\n${repeats}\nJoin at https://calls.example/abc\nWith sam@work.example (declined)`;
@@ -152,6 +153,7 @@ test("the events of every calendar the person has ticked are looked at as one, a
       `id w1\n${work}\nOffsite\n2026-11-19 to 2026-11-20`,
       `${standupLines}\n${notes.slice(0, 299)}…`,
       "id e1\nBike repair\n2026-11-20T15:00:00+11:00 to 2026-11-20T16:00:00+11:00\nAt The shop\nJoin at https://meet.example/bike\nWith anna@example.com (accepted), alex@example.com (the person, tentative)",
+      `${standupLines.replace("id w2", "id w4").replace("09:30:00+11:00 to 2026-11-20T10:00", "23:30:00+11:00 to 2026-11-20T23:45")}`,
       "The calendar Club is left out. Google Calendar refused that: Not Found",
     ].join("\n\n"),
   );
@@ -213,6 +215,16 @@ test("a look that finds nothing names the calendars the person has unticked, whi
   const { use } = setup((request) => (request.includes("/calendarList") ? { items: [{ id: "alex@example.com", primary: true, selected: true }, { id: "work@import.calendar.google.com", summary: "Work" }] } : {}));
   assert.equal(await use("calendar_events", { from: "2026-11-20", to: "2026-11-21" }), "The calendars have nothing then. Not looked at, since the person has them unticked: Work.");
   assert.equal(await use("calendar_events", { from: "2026-11-20", to: "2026-11-21", calendar: "Work" }), "The calendars have nothing then.");
+
+  // A calendar that is left out doesn't stand for the ones that had nothing.
+  const broken = setup((request) => {
+    if (request.includes("/calendarList")) return { items: [{ id: "alex@example.com", primary: true, selected: true }, { id: "club@group.calendar.google.com", summary: "Club", selected: true }, { id: "work@import.calendar.google.com", summary: "Work" }] };
+    return request.includes("club%40group") ? Response.json({ error: { message: "Not Found" } }, { status: 404 }) : {};
+  });
+  assert.equal(
+    await broken.use("calendar_events", { from: "2026-11-20", to: "2026-11-21" }),
+    "The calendars have nothing then. Not looked at, since the person has them unticked: Work.\n\nThe calendar Club is left out. Google Calendar refused that: Not Found",
+  );
 });
 
 test("a connection whose sign-in allows less than it needs is forgotten, so that the agent asks the person to sign in again", async () => {

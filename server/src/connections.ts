@@ -107,7 +107,7 @@ const headers = (mail: Mail, names: string[]) => names.flatMap((name) => (header
 const everyPart = (part: Part): Part[] => [part, ...(part.parts ?? []).flatMap(everyPart)];
 /** Text with HTML's names for characters as the characters. */
 const unescaped = (text: string) =>
-  text.replace(/&nbsp;/g, " ").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&amp;/g, "&");
+  text.replace(/&nbsp;/g, " ").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&quot;/g, '"').replace(/&#(\d+);/g, (_, code: string) => String.fromCodePoint(Number(code))).replace(/&amp;/g, "&");
 /** A page of HTML as the words on it. */
 const wordsOn = (html: string) =>
   unescaped(
@@ -251,7 +251,7 @@ const APPS: Record<Connection, { maker: Maker; scopes: string[]; tools: AppTool[
           const found = await Promise.all(messages.map(({ id }) => call<Mail>(`${GMAIL}/messages/${id}?format=metadata&metadataHeaders=From&metadataHeaders=To&metadataHeaders=Subject&metadataHeaders=Date`)));
           const more = nextPageToken ? ["More mail matches than this. Ask for more at once, up to 25, or search for less."] : [];
           return (
-            [...found.map((mail) => [`id ${mail.id}${mail.labelIds?.includes("UNREAD") ? ", unread" : ""}`, ...headers(mail, ["From", "To", "Subject", "Date"]), unescaped(mail.snippet ?? "")].join("\n")), ...more].join("\n\n") ||
+            [...found.map((mail) => [`id ${mail.id}${mail.labelIds?.includes("UNREAD") ? ", unread" : ""}${mail.labelIds?.includes("DRAFT") ? ", a draft that isn't sent" : ""}`, ...headers(mail, ["From", "To", "Subject", "Date"]), unescaped(mail.snippet ?? "")].join("\n")), ...more].join("\n\n") ||
             "No mail matches."
           );
         },
@@ -343,10 +343,8 @@ const APPS: Record<Connection, { maker: Maker; scopes: string[]; tools: AppTool[
           const more = events.length > EVENTS_MOST || found.some((look) => look.nextPageToken) ? ["The calendars have more then than this. Look in a shorter time for the rest."] : [];
           const left = failed.map(({ on, why }) => `The calendar ${nameOf(on)} is left out. ${why instanceof Error ? why.message : String(why)}`);
           const unticked = calendars.filter((each) => !looked.includes(each)).map(nameOf);
-          return (
-            [...events.slice(0, EVENTS_MOST).map(({ event, on }) => eventLines(event, on)), ...more, ...left].join("\n\n") ||
-            `The calendars have nothing then.${unticked.length ? ` Not looked at, since the person has them unticked: ${unticked.join(", ")}.` : ""}`
-          );
+          const none = events.length || more.length ? [] : [`The calendars have nothing then.${unticked.length ? ` Not looked at, since the person has them unticked: ${unticked.join(", ")}.` : ""}`];
+          return [...none, ...events.slice(0, EVENTS_MOST).map(({ event, on }) => eventLines(event, on)), ...more, ...left].join("\n\n");
         },
       }),
       define({
