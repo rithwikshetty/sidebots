@@ -120,6 +120,8 @@
   --radius-xl: 14px;
   /* A message bubble's corners, and the smaller one its tail is. */
   --radius-bubble: 18px;
+  /* The message field's corners, which follow the round buttons at its edge. */
+  --radius-composer: 22px;
 
   --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
   --default-transition-duration: 150ms;
