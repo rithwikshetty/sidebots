@@ -137,7 +137,7 @@ test("a turn starts a thread with the agent's tools, on the newest model of its 
   const tools = (started.dynamicTools as { name: string; inputSchema: { properties: object } }[]).map((tool) => tool.name);
   assert.deepEqual(tools, [
     ...["search_history", "schedule_job", "list_jobs", "cancel_job", "list_agents", "ask_agent", "send_files", "connect"],
-    ...["gmail_search", "gmail_read", "gmail_send", "calendar_events", "calendar_add_event", "calendar_change_event", "calendar_remove_event", "send_update"],
+    ...["gmail_search", "gmail_read", "gmail_send", "calendar_events", "calendar_event", "calendar_list", "calendar_add_event", "calendar_change_event", "calendar_remove_event", "send_update"],
   ]);
   assert.match(started.developerInstructions, /memory\/MEMORY\.md/);
   // The agent is told when its reply comes with something to look at.

@@ -46,7 +46,7 @@ async function makers(url: string | URL | Request): Promise<Response> {
   const google = { email: "tester@example.com" };
   const idToken = `e30.${Buffer.from(JSON.stringify(google)).toString("base64url")}.signature`;
   if (address === "https://oauth2.googleapis.com/token") {
-    const scope = ["openid", "email", "https://www.googleapis.com/auth/gmail.readonly", "https://www.googleapis.com/auth/gmail.send", "https://www.googleapis.com/auth/calendar.events"].join(" ");
+    const scope = ["openid", "email", "https://www.googleapis.com/auth/gmail.readonly", "https://www.googleapis.com/auth/gmail.send", "https://www.googleapis.com/auth/calendar.events", "https://www.googleapis.com/auth/calendar.calendarlist.readonly"].join(" ");
     return Response.json({ access_token: "test-google-access", expires_in: 3600, refresh_token: "test-google-refresh", scope, id_token: idToken });
   }
   if (address === "https://mcp.notion.com/token") return Response.json({ access_token: "test-notion-access", expires_in: 3600, refresh_token: "test-notion-refresh", scope: "default", workspace_name: "Tester's Notion" });
