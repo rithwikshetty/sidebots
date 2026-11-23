@@ -84,6 +84,22 @@ test("a database a newer Sidebots has changed keeps its count of changes when an
   assert.equal(count(), newer);
 });
 
+test("several that open a new database at once all open it", async () => {
+  // The Mac app starts the server and runs its `status` command at the same moment, on a database neither has made yet. One of them fails only some of the times, so this makes several databases.
+  for (let round = 0; round < 6; round++) {
+    const home = mkdtempSync(join(tmpdir(), "sidebots-store-test-"));
+    const opens = `import { openStore } from ${JSON.stringify(new URL("../src/store.ts", import.meta.url).href)}; openStore(${JSON.stringify(home)}).close();`;
+    const ends = Array.from({ length: 8 }, async () => {
+      const child = spawn(process.execPath, ["--input-type=module", "--eval", opens], { stdio: ["ignore", "ignore", "pipe"] });
+      let failure = "";
+      child.stderr.on("data", (chunk) => (failure += chunk));
+      const [code] = await once(child, "exit");
+      return code === 0 ? "" : failure;
+    });
+    assert.deepEqual(await Promise.all(ends), Array(8).fill(""));
+  }
+});
+
 test("two that open an older database at once make its changes once", async () => {
   const home = mkdtempSync(join(tmpdir(), "sidebots-store-test-"));
   openStore(home).close();
