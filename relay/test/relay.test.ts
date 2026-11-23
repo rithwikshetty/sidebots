@@ -265,7 +265,7 @@ test("a server says how much it is used as it registers, a day's count only grow
   const person = store.addPerson({ name: "Alex", provider: "claude", configDir: "/tmp/claude" });
   const maya = store.createAgent(person, "Maya", "mochi", "claude");
   const theo = store.createAgent(person, "Theo", "mochi", "claude");
-  store.pair(store.addPairing(person.id).code, "Alex's phone");
+  store.pair(store.addPairing(person.id).code, "Alex's phone", "phone");
   store.addUsage(maya.id, "reply", { sessionId: "chat", cost: 1, tokens: 1000 }, false);
   store.addUsage(maya.id, "reply", { sessionId: "chat", cost: 2, tokens: 2000 }, true);
   store.addUsage(maya.id, "job", { sessionId: "job", cost: 1, tokens: 1000 }, false);
