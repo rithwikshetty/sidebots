@@ -38,7 +38,8 @@ const config: ForgeConfig = {
     new FusesPlugin({
       version: FuseVersion.V1,
       [FuseV1Options.RunAsNode]: false,
-      [FuseV1Options.EnableCookieEncryption]: true,
+      // The app uses no cookies; leaving this on makes Chromium ask macOS for a Keychain entry it never needs.
+      [FuseV1Options.EnableCookieEncryption]: false,
       [FuseV1Options.EnableNodeOptionsEnvironmentVariable]: false,
       // Playwright drives the app through Node's inspector, so a build made with E2E=1 for the tests in e2e keeps it.
       [FuseV1Options.EnableNodeCliInspectArguments]: process.env.E2E === "1",
