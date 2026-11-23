@@ -234,7 +234,7 @@ export function Timeline({
         aria-label="Messages"
         role="log"
       >
-        <div ref={content} className="mx-auto flex min-h-full max-w-[46rem] flex-col justify-end px-4 pt-15 pb-3">
+        <div ref={content} className="mx-auto flex min-h-full max-w-chat flex-col justify-end px-4 pt-15 pb-3">
           {loading && messages.length === 0 ? (
             <div className="grid flex-1 place-items-center text-ink3">
               <Spinner label="Loading messages" />
