@@ -123,6 +123,9 @@
   /* The message field's corners, which follow the round buttons at its edge. */
   --radius-composer: 22px;
 
+  /* How wide a chat's column grows: 46rem of messages and composer, and the 1rem padding each side. */
+  --container-chat: 48rem;
+
   --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
   --default-transition-duration: 150ms;
   --default-transition-timing-function: cubic-bezier(0.22, 1, 0.36, 1);
