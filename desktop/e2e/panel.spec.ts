@@ -644,6 +644,8 @@ test.describe("a page an agent sent", () => {
   });
 
   test("the page takes the window's colours, and changes with them when the system turns dark", async ({ page, server, setColorScheme }) => {
+    // The test starts in light, whichever the computer is set to.
+    await setColorScheme("light");
     const agent = await addAgent(page, server, "Atlas");
     await openChat(page, agent.id);
     await sendFromComposer(page, "/page");

@@ -69,7 +69,7 @@ export function windowState(app: ElectronApplication) {
   return app.evaluate(({ BrowserWindow }) => {
     const all = BrowserWindow.getAllWindows();
     const [window] = all;
-    return { count: all.length, visible: window.isVisible(), bounds: window.getBounds(), fullScreen: window.isFullScreen() };
+    return { count: all.length, visible: window.isVisible(), bounds: window.getBounds() };
   });
 }
 

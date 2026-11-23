@@ -168,6 +168,8 @@ test.describe("inside an agent's page", () => {
   });
 
   test("a page loads in the chat, and loads again when the system turns dark and when the panel's Reload is pressed", async ({ page, server, setColorScheme }) => {
+    // The test starts in light, whichever the computer is set to.
+    await setColorScheme("light");
     const frame = await chatWithPage(page, server);
     /** The page's frame in `holder` once a document of its own has loaded there, with the page's words and the scheme it was given. */
     const loaded = async (holder: ReturnType<Page["getByTestId"]>) => {

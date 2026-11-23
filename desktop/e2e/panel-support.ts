@@ -120,25 +120,16 @@ export async function clickNotification(app: ElectronApplication, index: number)
 }
 
 /**
- * Has the window read its focus as the system gives it, which the test
- * leaves to another app, so the window reads as one the person isn't using.
- * Playwright otherwise has every page it drives read as focused.
+ * Has the window read its focus as the system gives it, which is none, as a
+ * test's window never comes to the front: the window reads as one the person
+ * isn't using. Playwright otherwise has every page it drives read as focused.
  */
 export async function leaveWindow(page: Page, app: ElectronApplication): Promise<void> {
   const session = await page.context().newCDPSession(page);
   await session.send("Emulation.setFocusEmulationEnabled", { enabled: false });
-  // Another test's window may have left this one in front, so it is also sent behind, as when the person clicks another app. Its content is given the focus first, so the content hears it go even where the system never put the window in front, as while the screen is locked.
-  await expect
-    .poll(async () => {
-      if (await page.evaluate(() => document.hasFocus()))
-        await app.evaluate(({ BrowserWindow }) => {
-          const window = BrowserWindow.getAllWindows()[0];
-          window.webContents.focus();
-          window.blur();
-        });
-      return page.evaluate(() => document.hasFocus());
-    })
-    .toBe(false);
+  // The content keeps the focus Playwright gave it until it is told the focus has gone.
+  await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].blurWebView());
+  await expect.poll(() => page.evaluate(() => document.hasFocus())).toBe(false);
 }
 
 /** Gives the window back the focus the test reads it with. */
