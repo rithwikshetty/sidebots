@@ -1,4 +1,4 @@
-// Starts the Sidebots server. `add-person` adds a person, `add-account` sets a person up on another
+// Starts the Sidebots server, which with `--with-parent` ends when the program that started it does. `add-person` adds a person, `add-account` sets a person up on another
 // provider, `api-key` has a person's agents on a provider run on an API key, `pair` makes the code a
 // device pairs with, `devices` lists the paired devices, `remove-device` unpairs one, and `status` says
 // whether the server is running and how each person's agents sign in to their providers. `counts`
@@ -280,19 +280,21 @@ const queue = createQueue(store, { claude, codex }, connections);
 for (const agentId of store.requeueInterrupted()) void queue.kick(agentId);
 queue.startClock();
 
+// The server's input is a pipe from the program that started it, which closes when that program ends however it ends, and the server ends with it.
+if (process.argv[2] === "--with-parent") {
+  process.stdin.on("end", () => process.exit(0));
+  process.stdin.resume();
+}
+
 // The relay gives the machine its address and tunnel, and passes notifications to Apple. `off` uses neither, for a server reached some other way.
 const relayOrigin = process.env.SIDEBOTS_RELAY ?? "https://relay.sidebots.app";
 if (relayOrigin !== "off") {
   const toRelay = relay(store, relayOrigin, port, process.env.SIDEBOTS_VERSION);
   startPush(store, toRelay.notify);
   const stopTunnel = startTunnel(store, toRelay.register, process.env.SIDEBOTS_CLOUDFLARED ?? "cloudflared");
-  // `cloudflared` runs apart from the server, so it would outlive a server that is stopped. The server stops it first.
-  for (const signal of ["SIGTERM", "SIGINT"] as const) {
-    process.once(signal, () => {
-      stopTunnel();
-      process.exit(0);
-    });
-  }
+  // `cloudflared` runs apart from the server, so it would outlive it. The server stops it as it exits, whatever ends it: a signal, an error, or its parent ending.
+  process.once("exit", stopTunnel);
+  for (const signal of ["SIGTERM", "SIGINT"] as const) process.once(signal, () => process.exit(0));
 } else console.log("The tunnel and notifications are off, as SIDEBOTS_RELAY is off.");
 
 // The machine's name as its owner knows it. macOS keeps one apart from the network's name for the machine.

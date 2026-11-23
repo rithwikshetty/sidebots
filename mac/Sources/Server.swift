@@ -80,7 +80,8 @@ enum SignIn {
 
 /// The Sidebots server inside the app: Node running `server/src/main.ts`. The
 /// app starts it, starts it again when it stops, and learns its state only
-/// from the server's own commands.
+/// from the server's own commands. The server ends when the app does, even
+/// an app that ends without stopping it.
 @MainActor @Observable final class Server {
   private(set) var status: ServerStatus?
   /// Whether the server's `status` command failed when it was last run, as when the server can't open its data. Nothing is known of the person or the server while it does.
@@ -135,7 +136,9 @@ enum SignIn {
   func start() {
     let process = Process()
     process.executableURL = Self.node
-    process.arguments = ["src/main.ts"]
+    // The server's input is a pipe the app holds open, which closes when the app ends however it ends, and the server ends with it.
+    process.arguments = ["src/main.ts", "--with-parent"]
+    process.standardInput = Pipe()
     process.currentDirectoryURL = Self.folder
     process.environment = Self.environment
     try? FileManager.default.createDirectory(at: Self.log.deletingLastPathComponent(), withIntermediateDirectories: true)
