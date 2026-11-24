@@ -3,12 +3,12 @@
   <channel>
     <title>Sidebots</title>
     <item>
-      <title>Sidebots 1.0.17</title>
-      <pubDate>Mon, 23 Nov 2026 18:27:53 +0000</pubDate>
-      <sparkle:version>127</sparkle:version>
-      <sparkle:shortVersionString>1.0.17</sparkle:shortVersionString>
+      <title>Sidebots 1.0.18</title>
+      <pubDate>Tue, 24 Nov 2026 07:43:08 +0000</pubDate>
+      <sparkle:version>133</sparkle:version>
+      <sparkle:shortVersionString>1.0.18</sparkle:shortVersionString>
       <sparkle:minimumSystemVersion>26.0</sparkle:minimumSystemVersion>
-      <enclosure url="https://github.com/rithwikshetty/sidebots/releases/download/v1.0.17/Sidebots.dmg" type="application/octet-stream" sparkle:edSignature="7Jt6cUA6Y2b+CKxPm9kJzku6Zog1e17IyPIsWMdHLs6L+pUMd0VOtf22ol9vQ9nWr4dLNIQoKscCWUtDofesDw==" length="207386381"/>
+      <enclosure url="https://github.com/rithwikshetty/sidebots/releases/download/v1.0.18/Sidebots.dmg" type="application/octet-stream" sparkle:edSignature="fxyiyc7NGht0PCAI26TG3CGgEaGS/sBgQ+zlHsT04iP0tdWcPiE1WRc+RH2LUcaWQ0/qKDvnu9LIjpZFlIZGCA==" length="207408289"/>
     </item>
   </channel>
 </rss>
