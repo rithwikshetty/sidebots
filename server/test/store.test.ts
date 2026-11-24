@@ -101,7 +101,7 @@ test("several that open a new database at once all open it", async () => {
 });
 
 // Takes a database back to before an agent had a fast mode, and to before `devices.kind`, the change before that.
-const BEFORE_FAST = "alter table agents drop column fast; alter table agents drop column switched_from; alter table messages drop column switched;";
+const BEFORE_FAST = "alter table agents drop column fast; alter table agents drop column ran_on; alter table messages drop column switched;";
 const BEFORE_KIND = `alter table devices drop column kind; ${BEFORE_FAST}`;
 
 test("two that open an older database at once make its changes once", async () => {
@@ -165,6 +165,8 @@ test("a Codex session from before the connections' tools, or before those tools 
 
   const store = openStore(home);
   assert.deepEqual([maya, theo, ruby].map((agent) => store.nextQueued(agent.id)?.body), ["Fresh start", undefined, undefined]);
+  // An agent in the middle of a session ran its last turn on what it answers with now, so a move to another provider hands that session over.
+  assert.deepEqual([maya, theo, ruby].map((agent) => store.agent(agent.id)?.ran_on?.provider ?? null), ["codex", null, "claude"]);
   assert.deepEqual(store.requeueInterrupted(), [maya.id]);
   // One fresh start is enough for the tools and for their change, and a database that has had the changes doesn't get them again.
   store.close();

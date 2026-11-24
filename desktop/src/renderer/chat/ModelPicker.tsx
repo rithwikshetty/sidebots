@@ -2,7 +2,7 @@ import { Popover } from "@base-ui/react/popover";
 import { Tabs } from "@base-ui/react/tabs";
 import { Check, Zap } from "lucide-react";
 import { useState, type KeyboardEvent, type RefObject } from "react";
-import { PROVIDERS, runsFast, type AgentWithLatest, type Offered, type Provider } from "@server/contract.ts";
+import { PROVIDERS, runsFast, type AgentWithLatest, type Logo, type Offered, type Provider } from "@server/contract.ts";
 import { cn } from "../lib/cn.ts";
 import { loadUsage, useUsage, type AgentChanges } from "../lib/store.ts";
 import { BrandLogo } from "../ui/BrandLogo.tsx";
@@ -62,12 +62,12 @@ export function ModelPicker({ agent, onSet, returnTo }: { agent: AgentWithLatest
             data-floating
             aria-label="Model"
             finalFocus={returnTo}
-            className="w-[26rem] origin-(--transform-origin) overflow-hidden rounded-xl bg-raised text-ink shadow-menu outline-none transition-[opacity,scale] duration-150 ease-out data-ending-style:scale-[0.97] data-ending-style:opacity-0 data-starting-style:scale-[0.97] data-starting-style:opacity-0"
+            className="w-[33rem] max-w-[calc(100vw-2rem)] origin-(--transform-origin) overflow-hidden rounded-xl bg-raised text-ink shadow-menu outline-none transition-[opacity,scale] duration-150 ease-out data-ending-style:scale-[0.97] data-ending-style:opacity-0 data-starting-style:scale-[0.97] data-starting-style:opacity-0"
             data-testid="model-picker"
           >
-            <div className="flex h-64">
+            <div className="flex h-[19rem]">
               <Tabs.Root orientation="vertical" value={listed} onValueChange={(provider) => setListed(provider as Provider)} className="flex min-w-0 flex-1">
-                <Tabs.List aria-label="Providers" className="relative flex w-11 shrink-0 flex-col gap-1 bg-field/60 p-1">
+                <Tabs.List aria-label="Providers" className="relative flex w-12 shrink-0 flex-col gap-1 bg-field/60 p-1.5">
                   {(Object.keys(PROVIDERS) as Provider[]).map((provider) => (
                     <Tabs.Tab
                       key={provider}
@@ -88,9 +88,9 @@ export function ModelPicker({ agent, onSet, returnTo }: { agent: AgentWithLatest
                     <Tabs.Panel key={provider} value={provider} className="flex min-w-0 flex-1 flex-col border-l border-line outline-none">
                       <Heading title={name} />
                       {setUp(provider) ? (
-                        <Options label={`${name} models`} options={models} value={provider === agent.provider ? agent.model : undefined} onPick={(model) => pick(provider, model)} />
+                        <Options label={`${name} models`} options={models} value={provider === agent.provider ? agent.model : undefined} onPick={(model) => pick(provider, model)} logo={PROVIDERS[provider].logo} />
                       ) : (
-                        <p className="px-3 pt-2.5 text-sm text-ink2" data-testid="not-set-up">
+                        <p className="px-4 pt-3 text-sm text-ink2" data-testid="not-set-up">
                           {name} isn't set up on this computer. Set it up from Sidebots in the menu bar.
                         </p>
                       )}
@@ -98,14 +98,15 @@ export function ModelPicker({ agent, onSet, returnTo }: { agent: AgentWithLatest
                   );
                 })}
               </Tabs.Root>
-              <div className="flex w-40 shrink-0 flex-col border-l border-line bg-field/40">
+              <div className="flex w-48 shrink-0 flex-col border-l border-line bg-field/40">
                 <Heading title="Effort" detail={own.models[agent.model]} />
                 <Options label="Effort" options={own.efforts} value={agent.effort} onPick={(effort) => onSet({ effort })} />
               </div>
             </div>
-            <div className="flex items-center gap-3 border-t border-line bg-field/40 px-3 py-2">
-              <Segmented label="Speed" options={SPEEDS} value={fast ? "fast" : "standard"} onChange={(speed) => onSet({ fast: speed === "fast" })} disabled={!own.fast.includes(agent.model)} plain className="h-7 w-40 shrink-0" />
-              <p className="min-w-0 flex-1 text-xs text-ink2">{own.fast.includes(agent.model) ? "Fast answers sooner and uses more of your plan or credit." : `${own.models[agent.model]} has no fast mode.`}</p>
+            <div className="flex items-center gap-3 border-t border-line bg-field/40 px-4 py-2.5">
+              <span className="text-sm text-ink2">Speed</span>
+              <Segmented label="Speed" options={SPEEDS} value={fast ? "fast" : "standard"} onChange={(speed) => onSet({ fast: speed === "fast" })} disabled={!own.fast.includes(agent.model)} plain className="h-7 w-44 shrink-0" />
+              <p className="ml-auto min-w-0 truncate text-xs text-ink2">{own.fast.includes(agent.model) ? "Fast uses more of your plan" : `${own.models[agent.model]} has no fast mode`}</p>
             </div>
           </Popover.Popup>
         </Popover.Positioner>
@@ -117,15 +118,15 @@ export function ModelPicker({ agent, onSet, returnTo }: { agent: AgentWithLatest
 /** What heads a column of the panel: its title over a line, with a `detail` at the line's end, as the model an effort is for. */
 function Heading({ title, detail }: { title: string; detail?: string }) {
   return (
-    <div className="mx-3 flex h-9 shrink-0 items-center gap-2 border-b border-line text-sm">
+    <div className="mx-4 flex h-11 shrink-0 items-center gap-2 border-b border-line text-sm">
       <span className="truncate font-semibold">{title}</span>
       {detail ? <span className="ml-auto truncate text-xs text-ink2">{detail}</span> : null}
     </div>
   );
 }
 
-/** A column of choices where one may be in effect, which wears a check. Up and Down move between them, and Enter or a click picks one. */
-function Options<Id extends string>({ label, options, value, onPick }: { label: string; options: Partial<Record<Id, string>>; value: Id | undefined; onPick: (id: Id) => void }) {
+/** A column of choices where one may be in effect, which wears a check. Up and Down move between them, and Enter or a click picks one. Models wear their maker's `logo`. */
+function Options<Id extends string>({ label, options, value, onPick, logo }: { label: string; options: Partial<Record<Id, string>>; value: Id | undefined; onPick: (id: Id) => void; logo?: Logo }) {
   const move = (event: KeyboardEvent<HTMLDivElement>) => {
     if (event.key !== "ArrowDown" && event.key !== "ArrowUp") return;
     event.preventDefault();
@@ -134,7 +135,7 @@ function Options<Id extends string>({ label, options, value, onPick }: { label: 
     rows[(at + (event.key === "ArrowDown" ? 1 : -1) + rows.length) % rows.length]?.focus();
   };
   return (
-    <div role="radiogroup" aria-label={label} onKeyDown={move} className="flex min-h-0 flex-1 flex-col gap-0.5 overflow-y-auto px-1.5 py-1.5">
+    <div role="radiogroup" aria-label={label} onKeyDown={move} className="flex min-h-0 flex-1 flex-col gap-0.5 overflow-y-auto px-2 py-2">
       {(Object.keys(options) as Id[]).map((id) => (
         <button
           key={id}
@@ -142,8 +143,9 @@ function Options<Id extends string>({ label, options, value, onPick }: { label: 
           role="radio"
           aria-checked={id === value}
           onClick={() => id !== value && onPick(id)}
-          className="flex h-7 shrink-0 items-center gap-2 rounded-sm px-2 text-left text-sm outline-none select-none hover:bg-hover focus-visible:bg-hover active:bg-press"
+          className="flex h-8 shrink-0 items-center gap-2.5 rounded-md px-2.5 text-left text-sm outline-none select-none hover:bg-hover focus-visible:bg-hover active:bg-press"
         >
+          {logo ? <BrandLogo logo={logo} size={16} /> : null}
           <span className="min-w-0 flex-1 truncate">{options[id]}</span>
           {id === value ? <Check aria-hidden className="size-3.5 shrink-0 text-ink2" strokeWidth={2.5} /> : null}
         </button>

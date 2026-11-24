@@ -182,7 +182,7 @@ function addAgent(name: string, avatarId: string, at: number): Agent {
     model: "opus",
     effort: "medium",
     fast: false,
-    switched_from: null,
+    ran_on: null,
     muted: false,
     hidden: false,
     color: null,

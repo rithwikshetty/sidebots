@@ -197,8 +197,8 @@ export type SignIn = { url: string; redirect: string };
  * `muted` agent sends no notifications. A `hidden` one is kept off the home
  * screen until it next has something to say. `color` fills the person's
  * messages in the agent's chat, as `#RRGGBB`; null takes the colour of its
- * avatar. `switched_from` is what the agent answered with on its last turn,
- * while the person has picked something else since and no turn has run on it.
+ * avatar. `ran_on` is what the agent's last turn ran on, which its session
+ * is on, and null before its first turn.
  */
 export type Agent = {
   id: string;
@@ -209,7 +209,7 @@ export type Agent = {
   model: Model;
   effort: Effort;
   fast: boolean;
-  switched_from: Selection | null;
+  ran_on: Selection | null;
   muted: boolean;
   hidden: boolean;
   color: string | null;

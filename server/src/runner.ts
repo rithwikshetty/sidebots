@@ -3,7 +3,7 @@
 
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
-import { CONNECTIONS, MESSAGE_BYTES, PROVIDERS, fenced, runsFast, scheduleWords, selectionWords } from "./contract.ts";
+import { CONNECTIONS, MESSAGE_BYTES, PROVIDERS, fenced, runsFast, sameSelection, scheduleWords, selectionWords } from "./contract.ts";
 import type { Agent, Ask, Connection, Effort, Found, Job, Limit, Message, Model, Provider, Question, Schedule, Selection, Switched, TurnKind } from "./contract.ts";
 import { CONNECTION_TOOLS, type Connections, type Servers } from "./connections.ts";
 import { selectionOf, type Person, type Store, type Upload } from "./store.ts";
@@ -362,9 +362,9 @@ function fromAgent(message: Message, person: Person, { recent, quoted }: { recen
  * order they came, and then any job whose time has come. A message the person
  * sends during a turn goes into that turn instead of waiting for the next.
  *
- * A turn runs on what the agent answers with as the turn starts. When the
- * person has picked something else since the agent's last turn, the chat says
- * so first. A session doesn't cross to another provider, so an agent moved to
+ * A turn runs on what the agent answers with as the turn starts, which the
+ * agent keeps as `ran_on`. When the person has picked something else since
+ * the agent's last turn, the chat says so first. A session doesn't cross to another provider, so an agent moved to
  * one is handed over as for a fresh start: it saves what is worth keeping to
  * its memory in the session it had, and starts a new one on the new provider
  * with the latest of the chat.
@@ -416,7 +416,7 @@ export function createQueue(store: Store, drivers: Drivers, connections: Connect
       const signedIn = (provider: Provider) => ({ driver: drivers[provider], account: store.account(person.id, provider), apiKey: store.apiKey(person.id, provider) });
       const { driver, apiKey } = signedIn(agent.provider);
       // What the agent's session is on: what its last turn ran on.
-      const ranOn = agent.switched_from ?? selectionOf(agent);
+      const ranOn = agent.ran_on ?? selectionOf(agent);
       const message = store.nextQueued(agentId);
       const job = message ? undefined : store.dueJob(agentId, now());
       // The files the agent has asked to send, which its next message takes.
@@ -526,7 +526,8 @@ export function createQueue(store: Store, drivers: Drivers, connections: Connect
       };
 
       // A fresh start is no turn of the agent's own, so what the person picked waits for the turn after it.
-      if (agent.switched_from && (job || (message && message.sender !== "sidebots"))) {
+      const startsTurn = job !== undefined || (message !== undefined && message.sender !== "sidebots");
+      if (startsTurn && !sameSelection(ranOn, agent)) {
         const handsOver = ranOn.provider !== agent.provider && agent.session_id !== null;
         const notice = store.addMessage(agent.id, "sidebots", switchedWords({ from: ranOn, to: selectionOf(agent) }), handsOver ? "running" : "done", { switched: { from: ranOn, to: selectionOf(agent) } });
         if (handsOver) {
@@ -535,11 +536,13 @@ export function createQueue(store: Store, drivers: Drivers, connections: Connect
           store.setSession(agent.id, null);
           store.setStatus(notice.id, "done");
         }
-        store.setRunsOn(agent.id, selectionOf(agent));
+        store.setRanOn(agent.id, agent);
         // Stopped while it handed over, the turn it was for doesn't run.
         if (stop.signal.aborted) stopped();
         continue;
       }
+
+      if (startsTurn && agent.ran_on === null) store.setRanOn(agent.id, agent);
 
       if (job) {
         try {

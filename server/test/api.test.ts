@@ -592,7 +592,7 @@ test("an agent moved to another provider hands over: it saves its memory where i
   const moved = (await call(ME, "PATCH", `/agents/${agent.id}`, { provider: "codex" })).json;
   const opus = { provider: "claude", model: "opus", effort: "medium", fast: false };
   const sol = { provider: "codex", model: "sol", effort: "medium", fast: false };
-  assert.deepEqual([moved.provider, moved.model, moved.effort, moved.switched_from, moved.session_id], ["codex", "sol", "medium", opus, "session-1"]);
+  assert.deepEqual([moved.provider, moved.model, moved.effort, moved.ran_on, moved.session_id], ["codex", "sol", "medium", opus, "session-1"]);
   // Its instructions went with it, to the file Codex reads.
   assert.match(readFileSync(join(home, "agents", agent.id, "AGENTS.md"), "utf8"), /^# Theo\n/);
   assert.equal(existsSync(join(home, "agents", agent.id, "CLAUDE.md")), false);
@@ -628,7 +628,34 @@ test("an agent moved to another provider hands over: it saves its memory where i
   );
   assert.deepEqual(messages[3].switched, { from: opus, to: sol });
   const [after] = (await call(ME, "GET", "/agents")).json;
-  assert.deepEqual([after.switched_from, after.session_id], [null, "session-3"]);
+  assert.deepEqual([after.ran_on, after.session_id], [sol, "session-3"]);
+});
+
+test("a move to another provider while a turn runs hands over before the next turn, as the session is the old provider's", async () => {
+  const turns: Turn[] = [];
+  const { store, queue, call, say } = setup(async (turn) => {
+    turns.push(turn);
+    // The person picks Claude Code as the agent's first reply arrives, before its turn on Codex has ended.
+    if (turns.length === 1) await call(ME, "PATCH", `/agents/${agent.id}`, { provider: "claude" });
+    return reply("sure", `session-${turns.length}`);
+  });
+  store.addAccount(store.personByName(ME)!.id, "codex", "/config/alex-codex");
+  const agent = (await call(ME, "POST", "/agents", { name: "Tony", avatarId: "mochi", provider: "codex" })).json;
+  await say(ME, agent.id, "hi");
+  await queue.kick(agent.id);
+  await say(ME, agent.id, "hi again");
+  await queue.kick(agent.id);
+  // The Codex thread is saved to on Codex and never handed to Claude Code.
+  assert.deepEqual(
+    turns.map((turn) => [turn.configDir, turn.sessionId]),
+    [
+      ["/config/alex-codex", null],
+      ["/config/alex-codex", "session-1"],
+      ["/config/alex", null],
+    ],
+  );
+  const notices = (await call(ME, "GET", `/agents/${agent.id}/messages`)).json.filter((m: { sender: string }) => m.sender === "sidebots");
+  assert.deepEqual(notices.map((m: { body: string; status: string }) => [m.body, m.status]), [["Switched from Codex Sol Medium to Claude Code Opus Medium", "done"]]);
 });
 
 test("another model, effort or speed on the same provider keeps the session, and the chat says what changed before the turn that first runs on it", async () => {
@@ -639,7 +666,7 @@ test("another model, effort or speed on the same provider keeps the session, and
   });
   const agent = (await call(ME, "POST", "/agents", { name: "Theo", avatarId: "mochi" })).json;
   // An agent that has yet to answer has nothing to switch from.
-  assert.equal((await call(ME, "PATCH", `/agents/${agent.id}`, { model: "sonnet" })).json.switched_from, null);
+  assert.equal((await call(ME, "PATCH", `/agents/${agent.id}`, { model: "sonnet" })).json.ran_on, null);
   await call(ME, "PATCH", `/agents/${agent.id}`, { model: "opus" });
   await say(ME, agent.id, "book the band");
   await queue.kick(agent.id);
@@ -647,7 +674,7 @@ test("another model, effort or speed on the same provider keeps the session, and
 
   // A choice the person takes back before a turn runs on it changes nothing.
   await call(ME, "PATCH", `/agents/${agent.id}`, { model: "haiku" });
-  assert.equal((await call(ME, "PATCH", `/agents/${agent.id}`, { model: "opus" })).json.switched_from, null);
+  await call(ME, "PATCH", `/agents/${agent.id}`, { model: "opus" });
   // Several choices before the next turn are one change.
   await call(ME, "PATCH", `/agents/${agent.id}`, { effort: "high" });
   await call(ME, "PATCH", `/agents/${agent.id}`, { fast: true });

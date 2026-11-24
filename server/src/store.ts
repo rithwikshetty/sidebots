@@ -6,7 +6,7 @@ import { basename, join, resolve } from "node:path";
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
 
-import { COLOR, PROVIDERS, USAGE_DAYS, betweenAgents, readableColor, sameSelection } from "./contract.ts";
+import { COLOR, PROVIDERS, USAGE_DAYS, betweenAgents, readableColor } from "./contract.ts";
 import type { About, Agent, AgentWithLatest, Ask, Avatar, Connection, Day, Found, Job, Limit, Memory, Message, Provider, PushToken, Question, Schedule, Selection, Sender, Status, Switched, TurnKind, Usage, Used } from "./contract.ts";
 
 export type Person = { id: string; name: string };
@@ -68,8 +68,10 @@ const TABLE_CHANGES: (string | { table: string; change: string })[] = [
   // A Codex session from before `calendar_event` and `calendar_list`, and before the calendar's tools took the calendar an event is on, gets a fresh start too, unless one waits for it already.
   "insert into messages (id, agent_id, sender, body, status, created_at) select lower(hex(randomblob(16))), id, 'sidebots', 'Fresh start', 'queued', cast(unixepoch('subsec') * 1000 as integer) from agents where provider = 'codex' and session_id is not null and not exists (select 1 from messages where agent_id = agents.id and sender = 'sidebots' and status in ('queued', 'running'))",
   "alter table agents add column fast integer not null default 0",
-  "alter table agents add column switched_from text",
+  "alter table agents add column ran_on text",
   "alter table messages add column switched text",
+  // An agent in the middle of a session ran its last turn on what it answers with now.
+  "update agents set ran_on = json_object('provider', provider, 'model', model, 'effort', effort, 'fast', json('false')) where session_id is not null",
 ];
 
 const SCHEMA = `
@@ -92,7 +94,7 @@ create table if not exists agents (
   model       text not null default 'opus',
   effort      text not null default 'medium',
   fast        integer not null default 0,
-  switched_from text,
+  ran_on      text,
   muted       integer not null default 0,
   hidden      integer not null default 0,
   color       text,
@@ -208,13 +210,13 @@ const toMessage = (row: Row): Message => ({
   switched: row.switched === null ? null : (JSON.parse(row.switched) as Switched),
 });
 /** An agent as SQLite holds it, with yes and no as 1 and 0 and what it last answered with as JSON text. */
-type AgentRow = Omit<Agent, "fast" | "muted" | "hidden" | "switched_from"> & { fast: number; muted: number; hidden: number; switched_from: string | null };
+type AgentRow = Omit<Agent, "fast" | "muted" | "hidden" | "ran_on"> & { fast: number; muted: number; hidden: number; ran_on: string | null };
 const toAgent = (row: AgentRow): Agent => ({
   ...row,
   fast: row.fast === 1,
   muted: row.muted === 1,
   hidden: row.hidden === 1,
-  switched_from: row.switched_from === null ? null : (JSON.parse(row.switched_from) as Selection),
+  ran_on: row.ran_on === null ? null : (JSON.parse(row.ran_on) as Selection),
 });
 /** What an agent answers with, apart from the rest of it. */
 export const selectionOf = ({ provider, model, effort, fast }: Selection): Selection => ({ provider, model, effort, fast });
@@ -448,7 +450,7 @@ export function openStore(home: string) {
         model: PROVIDERS[provider].model,
         effort: PROVIDERS[provider].effort,
         fast: false,
-        switched_from: null,
+        ran_on: null,
         muted: false,
         hidden: false,
         color: null,
@@ -498,20 +500,14 @@ export function openStore(home: string) {
      * whether it is muted or hidden. A new name is written into the agent's
      * instructions where they say who it is. An agent moved to another
      * provider takes its instructions with it, in the file that provider
-     * reads. When what it answers with changes, the agent keeps what its
-     * last turn ran on as `switched_from`, until a turn runs on the new or
-     * the person picks the old again. One that has yet to run a turn has
-     * answered with nothing, and keeps nothing.
+     * reads.
      */
     updateAgent(agent: Agent, changes: AgentChanges): void {
-      if (Object.keys(changes).length === 0) return;
+      const columns = Object.keys(changes) as (keyof AgentChanges)[];
+      if (columns.length === 0) return;
       const next = { ...agent, ...changes };
-      const from = agent.switched_from ?? selectionOf(agent);
-      const ran = db.prepare("select 1 from usage where agent_id = ? limit 1").get(agent.id) !== undefined;
-      next.switched_from = !ran || sameSelection(from, next) ? null : from;
-      const set: Record<string, string | number | null> = { switched_from: next.switched_from && JSON.stringify(next.switched_from) };
-      for (const column of Object.keys(changes) as (keyof AgentChanges)[]) set[column] = typeof changes[column] === "boolean" ? Number(changes[column]) : changes[column]!;
-      db.prepare(`update agents set ${Object.keys(set).map((column) => `${column} = ?`).join(", ")} where id = ?`).run(...Object.values(set), agent.id);
+      const values = columns.map((column) => (typeof changes[column] === "boolean" ? Number(changes[column]) : changes[column]!));
+      db.prepare(`update agents set ${columns.map((column) => `${column} = ?`).join(", ")} where id = ?`).run(...values, agent.id);
       const instructions = (provider: Provider) => join(agentHome(agent.id), PROVIDERS[provider].instructions);
       if (next.provider !== agent.provider && existsSync(instructions(agent.provider))) renameSync(instructions(agent.provider), instructions(next.provider));
       if (next.name !== agent.name) {
@@ -521,16 +517,9 @@ export function openStore(home: string) {
       changed({ agent: next, deleted: false });
     },
 
-    /**
-     * Records that the agent's turns run on `selection` from here on. What
-     * the person has picked since, if anything, is still to take effect.
-     */
-    setRunsOn(agentId: string, selection: Selection): void {
-      const agent = agentById(agentId);
-      if (!agent) return;
-      const from = sameSelection(selection, agent) ? null : selection;
-      db.prepare("update agents set switched_from = ? where id = ?").run(from && JSON.stringify(from), agentId);
-      changed({ agent: { ...agent, switched_from: from }, deleted: false });
+    /** Records what the agent's turn runs on, as the turn starts. */
+    setRanOn(agentId: string, selection: Selection): void {
+      db.prepare("update agents set ran_on = ? where id = ?").run(JSON.stringify(selectionOf(selection)), agentId);
     },
 
     /** Removes an agent and everything Sidebots kept for it: its messages, its jobs, what it used and its home folder. */

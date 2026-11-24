@@ -441,7 +441,7 @@ test.describe("the model", () => {
     await expect(model).toHaveAccessibleName("Model: Sonnet · Medium effort");
     await expect(speed.getByRole("radio", { name: "Standard" })).toBeChecked();
     await expect(speed.getByRole("radio", { name: "Fast" })).toBeDisabled();
-    await expect(page.getByTestId("model-picker")).toContainText("Sonnet has no fast mode.");
+    await expect(page.getByTestId("model-picker")).toContainText("Sonnet has no fast mode");
   });
 
   test("a model of another provider moves the agent there, and the chat says so before its next reply", async ({ page, server }) => {

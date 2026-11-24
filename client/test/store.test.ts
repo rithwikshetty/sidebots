@@ -13,7 +13,7 @@ const agent = (id: string, more: Partial<AgentWithLatest> = {}): AgentWithLatest
   model: "opus",
   effort: "medium",
   fast: false,
-  switched_from: null,
+  ran_on: null,
   muted: false,
   hidden: false,
   color: null,
