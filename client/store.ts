@@ -224,8 +224,10 @@ export function createStore<Picked>(platform: Platform<Picked>) {
    */
   function apply(event: StreamEvent): void {
     if ("plan" in event) {
-      for (const heard of plansHeard) heard.set(event.plan.provider, event.plan);
-      if (state.usage) set({ usage: withPlans(state.usage, new Map([[event.plan.provider, event.plan]])) });
+      // A plan that waited on its way, as behind a catch-up, may name a limit that has reset since, which the computer leaves out by now.
+      const plan = { ...event.plan, limits: event.plan.limits.filter((limit) => limit.resets_at === null || limit.resets_at > Date.now()) };
+      for (const heard of plansHeard) heard.set(plan.provider, plan);
+      if (state.usage) set({ usage: withPlans(state.usage, new Map([[plan.provider, plan]])) });
       return;
     }
     if ("deleted" in event) forget(event.deleted);

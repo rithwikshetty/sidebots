@@ -224,7 +224,7 @@ test("an agent the app has that the stream brings with no message keeps its plac
 });
 
 test("a provider's plan from the stream takes its place in the usage the app has, and an event the app doesn't know is passed over", async (t) => {
-  const { store, answers, streams } = app(t);
+  const { store, answers, streams, tick } = app(t);
   answers["GET /agents"] = () => [agent("mochi")];
   const events = stream();
   streams.push(() => events.response);
@@ -232,7 +232,7 @@ test("a provider's plan from the stream takes its place in the usage the app has
   store.onAgents((agents) => told.push(agents.length));
   store.startSync();
   await settle();
-  const weekly = { name: "Weekly limit", used: 0.4, resets_at: 2, at: 1 };
+  const weekly = { name: "Weekly limit", used: 0.4, resets_at: 100, at: 1 };
 
   // An app that hasn't fetched usage has none to change.
   events.say({ plan: { provider: "claude", apiKey: false, limits: [weekly] } });
@@ -254,6 +254,13 @@ test("a provider's plan from the stream takes its place in the usage the app has
   events.say({ plan: { provider: "codex", apiKey: true, limits: [] } });
   await settle();
   assert.deepEqual(store.useUsage()?.accounts, [{ provider: "claude", apiKey: false, limits: [weekly] }, { provider: "codex", apiKey: true, limits: [] }]);
+
+  // A plan that comes late may name a limit that has reset since, which is left out, as the computer leaves it out.
+  tick(5);
+  const reset = { name: "5-hour limit", used: 1, resets_at: 4, at: 1 };
+  events.say({ plan: { provider: "claude", apiKey: false, limits: [reset, weekly] } });
+  await settle();
+  assert.deepEqual(store.useUsage()?.accounts[0], { provider: "claude", apiKey: false, limits: [weekly] });
 
   // What a newer computer might send, which this app reads nothing of, and the stream goes on.
   events.write(`event: news\ndata: ${JSON.stringify({ news: "something new" })}\n\n`);
