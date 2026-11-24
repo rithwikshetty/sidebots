@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type RefObject } from "react";
+import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type RefObject } from "react";
 import { ArrowDown } from "lucide-react";
 import { betweenAgents, exchanges, type AgentWithLatest, type Message } from "@server/contract.ts";
 import { standingOf } from "@client/exchanges.ts";
@@ -6,6 +6,7 @@ import { dayLabel, sameDay } from "@client/time.ts";
 import { cn } from "../lib/cn.ts";
 import { loadMessages, loadOlder, useMessages, useOnline } from "../lib/store.ts";
 import { useOpenChat } from "../lib/view.ts";
+import { useToday } from "../lib/window.ts";
 import { Spinner } from "../ui/Spinner.tsx";
 import { ExchangeRow } from "./Exchange.tsx";
 import { MessageRow, OutgoingRow, type Arrival, type Outgoing } from "./MessageRow.tsx";
@@ -40,7 +41,7 @@ export type TimelineHandle = { toEnd: () => void };
  * it fetches back until it has it, then scrolls to it and flashes it, or the
  * message drawn nearest to it when it draws nothing itself.
  */
-export function Timeline({
+export const Timeline = memo(function Timeline({
   agent,
   outgoing,
   onReply,
@@ -57,6 +58,7 @@ export function Timeline({
   const online = useOnline();
   const messages = useMessages(agent.id);
   const opened = useOpenChat();
+  const today = useToday();
   const scroller = useRef<HTMLDivElement>(null);
   const content = useRef<HTMLDivElement>(null);
   const atEnd = useRef(true);
@@ -247,7 +249,7 @@ export function Timeline({
               <div key={message.id}>
                 {!before || !sameDay(before.created_at, message.created_at) ? (
                   <p className="mt-4 mb-1.5 text-center text-sm font-medium text-ink2" data-testid="day">
-                    {dayLabel(message.created_at)}
+                    {dayLabel(message.created_at, today)}
                   </p>
                 ) : null}
                 {standing ? (
@@ -293,4 +295,4 @@ export function Timeline({
       </button>
     </div>
   );
-}
+});
