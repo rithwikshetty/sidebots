@@ -233,7 +233,7 @@ export function switchedWords({ from, to }: Switched): string {
 const STOPPED = "Stopped";
 // A session this large gets a fresh start once its reply is in.
 const FRESH_START_TOKENS = 120_000;
-// How much of the chat a new session is shown before its first message.
+// How many messages a session is shown that it hasn't seen: the chat so far for a new session, and what its jobs sent for one that is going.
 const RECENT_MESSAGES = 20;
 const RECENT_MESSAGE_CHARS = 1500;
 // How much of the message a reply answers the agent is shown.
@@ -331,7 +331,8 @@ const silent = (reply: string) => reply.trim() === "" || new RegExp(`^\\W*${SILE
 /**
  * A message as the agent reads it: the message it answers, the files sent
  * with it, and what the session hasn't seen. For a new session that is the
- * chat so far, and for one going it is whatever the agent's jobs have sent.
+ * chat so far, and for one going it is the latest of what the agent's jobs
+ * have sent, which says so when there was more.
  * A message from another of the person's agents, `from`, says so first: that
  * agent asks something, or answers what this agent asked it, which is
  * `quoted`.
@@ -344,7 +345,13 @@ function promptFor(message: Message, person: Person, unseen: { recent: Message[]
   const sent = `${quote}${message.body}${files}`.trim();
   const lines = (messages: Message[]) => messages.map((earlier) => `${earlier.sender === "person" ? person.name : "You"}: ${earlier.body.slice(0, RECENT_MESSAGE_CHARS)}`).join("\n\n");
   if (recent.length) return `This is a fresh session in a chat that was already going. The latest messages in it:\n\n${lines(recent)}\n\n${person.name}'s new message:\n\n${sent}`;
-  if (fromJobs.length) return `Since your last reply in this chat, your jobs sent ${person.name} these messages, which this session hasn't seen:\n\n${lines(fromJobs)}\n\n${person.name}'s new message:\n\n${sent}`;
+  if (fromJobs.length) {
+    const these =
+      fromJobs.length > RECENT_MESSAGES
+        ? `messages this session hasn't seen. These are the latest ${RECENT_MESSAGES}, and \`search_history\` finds earlier ones by a word or phrase in them`
+        : "these messages, which this session hasn't seen";
+    return `Since your last reply in this chat, your jobs sent ${person.name} ${these}:\n\n${lines(fromJobs.slice(-RECENT_MESSAGES))}\n\n${person.name}'s new message:\n\n${sent}`;
+  }
   return sent;
 }
 
@@ -642,7 +649,8 @@ export function createQueue(store: Store, drivers: Drivers, connections: Connect
             {
               recent: agent.session_id ? [] : store.messagesBefore(agent.id, message.id, RECENT_MESSAGES),
               quoted: quotedBy(message),
-              fromJobs: store.sentByJobsBefore(agent.id, message.id),
+              // One more than the turn is shown, which is how it knows there was more.
+              fromJobs: store.sentByJobsBefore(agent.id, message.id, RECENT_MESSAGES + 1),
             },
             from,
           ),

@@ -31,7 +31,7 @@ test("what runs with every message, and with every look at the home screen or a 
   store.messages(maya.id, { after: first.id });
   store.message(theo.id, first.id);
   store.messagesBefore(maya.id, first.id, 10);
-  store.sentByJobsBefore(maya.id, first.id);
+  store.sentByJobsBefore(maya.id, first.id, 10);
   store.nextQueued(theo.id);
   store.waitingFromPerson(maya.id);
   store.asked(maya.id);
@@ -80,6 +80,22 @@ test("a page of a chat holds its own messages and what another agent sent it, in
   assert.deepEqual(bodies(store.messages(maya.id, { after: sent[9].id })), said.slice(10));
   assert.deepEqual(store.messages(maya.id, { after: sent[119].id }), []);
   assert.deepEqual(store.messages(maya.id, { before: "no such message" }), []);
+});
+
+test("what an agent's jobs sent since it last replied is the latest few of them, oldest first", () => {
+  const { store, maya } = withAgents();
+  const bodies = (messages: { body: string }[]) => messages.map((message) => message.body);
+  store.addMessage(maya.id, "agent", "post before the reply", "done", { jobId: "job" });
+  store.addMessage(maya.id, "agent", "The reply.", "done");
+  const posts = Array.from({ length: 30 }, (_, index) => store.addMessage(maya.id, "agent", `post ${index}`, "done", { jobId: "job" }).body);
+  const next = store.addMessage(maya.id, "person", "Any news?", "queued");
+
+  assert.deepEqual(bodies(store.sentByJobsBefore(maya.id, next.id, 5)), posts.slice(25));
+  // With room for more, it ends at the reply, and what a job sent before that stays out.
+  assert.deepEqual(bodies(store.sentByJobsBefore(maya.id, next.id, 40)), posts);
+  // Once the agent has replied again, there is nothing its session hasn't seen.
+  store.addMessage(maya.id, "agent", "Nothing new.", "done");
+  assert.deepEqual(store.sentByJobsBefore(maya.id, store.addMessage(maya.id, "person", "And now?", "queued").id, 5), []);
 });
 
 test("a turn counts on the day it ran by the computer's clock, and a day without one counts nothing", (t) => {
