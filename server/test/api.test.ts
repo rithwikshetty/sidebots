@@ -1555,7 +1555,7 @@ test("an ask closes unanswered when the person sends a message instead, takes to
   assert.deepEqual((await asks()).at(-1), "unanswered");
 });
 
-test("a server that stops while an agent hands over to another provider hands over again, and the notice it left is no fresh start", async () => {
+test("the switch notice a server leaves when it stops mid hand-over is done with, and not taken for a fresh start", async () => {
   const { store, queue, call, say } = setup(async () => reply("sure"));
   const agent = (await call(ME, "POST", "/agents", { name: "Tony", avatarId: "mochi" })).json;
   const opus = { provider: "claude", model: "opus", effort: "medium", fast: false } as const;
