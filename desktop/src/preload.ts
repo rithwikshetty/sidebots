@@ -9,6 +9,11 @@ let fullScreen = startup.fullScreen;
 ipcRenderer.on(CHANNELS.changeFullScreen, (_event, now: boolean) => {
   fullScreen = now;
 });
+// The person is at the computer until the main process finds they have left it.
+let present = true;
+ipcRenderer.on(CHANNELS.changePresent, (_event, now: boolean) => {
+  present = now;
+});
 
 /** Asks the main process for something. A refusal arrives as the main process worded it, without Electron's own words around it. */
 async function ask<T>(channel: string, ...values: unknown[]): Promise<T> {
@@ -31,6 +36,8 @@ const desktop: Desktop = {
   version: startup.version,
   fullScreen: () => fullScreen,
   onFullScreen: (listener) => hear<boolean>(CHANNELS.changeFullScreen, listener),
+  present: () => present,
+  onPresent: (listener) => hear<boolean>(CHANNELS.changePresent, listener),
   connection: () => ask<Connection>(CHANNELS.readConnection),
   onConnection: (listener) => hear<Connection>(CHANNELS.changeConnection, listener),
   retry: () => ask(CHANNELS.retryConnection),
@@ -43,6 +50,7 @@ const desktop: Desktop = {
   openFile: (agentId, path) => ask(CHANNELS.openFile, agentId, path),
   saveFile: (agentId, path) => ask(CHANNELS.saveFile, agentId, path),
   notify: (notice) => ipcRenderer.send(CHANNELS.showNotice, notice),
+  clearNotices: (agentId) => ipcRenderer.send(CHANNELS.clearNotices, agentId),
   onOpenChat: (listener) => hear<OpenChat>(CHANNELS.openChat, listener),
   setBadge: (count) => ipcRenderer.send(CHANNELS.setBadge, count),
   onMenu: (listener) => hear<MenuAction>(CHANNELS.runMenu, listener),

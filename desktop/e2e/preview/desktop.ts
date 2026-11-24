@@ -69,6 +69,8 @@ const desktop: Desktop = {
   version,
   fullScreen: () => fullScreen,
   onFullScreen: (listener) => listen(listeners.fullScreen, listener),
+  present: () => true,
+  onPresent: () => () => undefined,
   connection: async () => connection,
   onConnection: (listener) => listen(listeners.connection, listener),
   retry: async () => {
@@ -94,6 +96,7 @@ const desktop: Desktop = {
     return true;
   },
   notify: (notice) => record("notify", notice),
+  clearNotices: (agentId) => record("clearNotices", agentId),
   onOpenChat: (listener) => listen(listeners.openChat, listener),
   setBadge: (count) => record("setBadge", count),
   onMenu: (listener) => listen(listeners.menu, listener),

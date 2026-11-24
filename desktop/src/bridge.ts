@@ -53,6 +53,11 @@ export type Desktop = {
   /** Calls `listener` when the window starts or stops filling the screen. Returns a function that stops it. */
   onFullScreen(listener: (fullScreen: boolean) => void): () => void;
 
+  /** Whether the person is at the computer: its screen isn't locked, and they have used it in the last two minutes. */
+  present(): boolean;
+  /** Calls `listener` when the person leaves the computer or comes back to it. Returns a function that stops it. */
+  onPresent(listener: (present: boolean) => void): () => void;
+
   connection(): Promise<Connection>;
   /** Calls `listener` whenever the connection changes. Returns a function that stops it. */
   onConnection(listener: (connection: Connection) => void): () => void;
@@ -88,6 +93,8 @@ export type Desktop = {
 
   /** Shows a notification through the system. A click on it shows the window and tells `onOpenChat`. */
   notify(notice: Notice): void;
+  /** Takes away the notifications shown for an agent, as when the person has read its chat on another device. */
+  clearNotices(agentId: string): void;
   onOpenChat(listener: (chat: OpenChat) => void): () => void;
   /** Sets the number on the app's icon. Zero takes it off. */
   setBadge(count: number): void;
@@ -99,6 +106,7 @@ export type Desktop = {
 export const CHANNELS = {
   readStartup: "desktop:read-startup",
   changeFullScreen: "desktop:change-full-screen",
+  changePresent: "desktop:change-present",
   readConnection: "desktop:read-connection",
   changeConnection: "desktop:change-connection",
   retryConnection: "desktop:retry-connection",
@@ -111,6 +119,7 @@ export const CHANNELS = {
   openFile: "desktop:open-file",
   saveFile: "desktop:save-file",
   showNotice: "desktop:show-notice",
+  clearNotices: "desktop:clear-notices",
   openChat: "desktop:open-chat",
   setBadge: "desktop:set-badge",
   runMenu: "desktop:run-menu",

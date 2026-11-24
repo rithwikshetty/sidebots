@@ -666,9 +666,13 @@ export function openStore(home: string) {
       else db.prepare("insert or replace into settings (name, value) values ('counts', 'off')").run();
     },
 
-    /** Records that the person has read everything in the chat so far. */
+    /** Records that the person has read everything in the chat so far, and says so when that leaves less unread, so their other devices hear of it. */
     markRead(agentId: string): void {
-      db.prepare("update agents set read_at = ? where id = ?").run(Date.now(), agentId);
+      const agent = agentById(agentId);
+      if (!agent || withLatest(agent).unread === 0) return;
+      const read = { ...agent, read_at: Date.now() };
+      db.prepare("update agents set read_at = ? where id = ?").run(read.read_at, agentId);
+      changed({ agent: read, deleted: false });
     },
 
     setSession(agentId: string, sessionId: string | null): void {

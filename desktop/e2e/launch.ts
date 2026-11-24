@@ -12,15 +12,16 @@ import { DESKTOP, SERVER, childEnv } from "./server.ts";
 
 export const PROGRAM = join(DESKTOP, "out", "Sidebots-darwin-arm64", "Sidebots.app", "Contents", "MacOS", "Sidebots");
 
-/** What the main process was asked to do outside the window, which the tests keep from happening: links and sign-ins it opened, files it opened, showed in their folder or saved, notifications, and the Dock's badge. */
-export type MainCalls = { opened: string[]; files: string[]; shown: string[]; saved: string[]; notices: { title: string; body: string }[]; badge: number[] };
+/** What the main process was asked to do outside the window, which the tests keep from happening: links and sign-ins it opened, files it opened, showed in their folder or saved, notifications it showed and took away, and the Dock's badge. */
+export type MainCalls = { opened: string[]; files: string[]; shown: string[]; saved: string[]; notices: { title: string; body: string }[]; cleared: { title: string; body: string }[]; badge: number[] };
 
 /**
  * Opens the app with its data in `home` and its server on `port`. The app
  * opens nothing outside itself: a link or a sign-in is recorded and not
  * opened, a file is recorded and neither opened nor shown in its folder, a
  * save goes into the home's `saved` folder, and a notification is recorded
- * and not shown.
+ * and not shown. The person reads as at the computer, whether or not anyone
+ * is using the one the tests run on.
  */
 export async function launchApp({ home, port }: { home: string; port: number }): Promise<ElectronApplication> {
   if (!existsSync(PROGRAM)) throw new Error(`There is no packaged app at ${PROGRAM}. Build it with \`E2E=1 pnpm package\` in desktop/.`);
@@ -30,8 +31,9 @@ export async function launchApp({ home, port }: { home: string; port: number }):
     executablePath: PROGRAM,
     env: childEnv({ SIDEBOTS_HOME: home, PORT: String(port), SIDEBOTS_RELAY: "off", SIDEBOTS_NODE: process.execPath, SIDEBOTS_SERVER: SERVER }) as Record<string, string>,
   });
-  await app.evaluate(({ app: electronApp, dialog, shell, Notification }, saveTo) => {
-    const calls: MainCalls = { opened: [], files: [], shown: [], saved: [], notices: [], badge: [] };
+  await app.evaluate(({ app: electronApp, dialog, shell, powerMonitor, Notification }, saveTo) => {
+    const calls: MainCalls = { opened: [], files: [], shown: [], saved: [], notices: [], cleared: [], badge: [] };
+    powerMonitor.getSystemIdleState = () => "active";
     (globalThis as { e2e?: MainCalls }).e2e = calls;
     shell.openExternal = async (url: string) => void calls.opened.push(url);
     shell.openPath = async (path: string) => {
@@ -47,6 +49,9 @@ export async function launchApp({ home, port }: { home: string; port: number }):
     }) as typeof dialog.showSaveDialog;
     Notification.prototype.show = function (this: { title: string; body: string }) {
       calls.notices.push({ title: this.title, body: this.body });
+    };
+    Notification.prototype.close = function (this: { title: string; body: string }) {
+      calls.cleared.push({ title: this.title, body: this.body });
     };
     const setBadgeCount = electronApp.setBadgeCount.bind(electronApp);
     electronApp.setBadgeCount = (count?: number) => {

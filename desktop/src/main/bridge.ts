@@ -4,7 +4,7 @@
 
 import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
-import { type BrowserWindow, type IpcMainEvent, type IpcMainInvokeEvent, Notification, app, dialog, ipcMain, shell } from "electron";
+import { type BrowserWindow, type IpcMainEvent, type IpcMainInvokeEvent, Notification, app, dialog, ipcMain, powerMonitor, shell } from "electron";
 import { CHANNELS, type Connection, type MenuAction, type Notice, type OpenChat, type Phone, type PhonePairing, type Startup } from "../bridge.ts";
 import type { Watch } from "./connection.ts";
 import type { Host, Status } from "./host.ts";
@@ -14,6 +14,9 @@ import { show } from "./window.ts";
 
 // How long the person has to come back from a sign-in in the browser.
 const SIGN_IN_MS = 10 * 60_000;
+// How long the computer goes unused before its person counts as away from it, in seconds, and how often the main process looks, in milliseconds.
+const AWAY_AFTER_SECONDS = 2 * 60;
+const LOOK_MS = 5_000;
 
 /** A device as the server's `devices --json` command lists it. */
 type Device = { id: string; name: string; kind: "phone" | "desktop"; paired_at: number };
@@ -61,6 +64,15 @@ export function answerWindow({ window, host, watch, key, fetch, userData }: {
   });
   window.on("enter-full-screen", () => tell(window, CHANNELS.changeFullScreen, true));
   window.on("leave-full-screen", () => tell(window, CHANNELS.changeFullScreen, false));
+
+  // The person is at the computer while its screen is unlocked and they have used it lately. A chat they left open in front isn't one they are looking at, so the window hears when they leave and when they come back.
+  let present = true;
+  const looks = setInterval(() => {
+    const state = powerMonitor.getSystemIdleState(AWAY_AFTER_SECONDS);
+    const now = state !== "idle" && state !== "locked";
+    if (now !== present) tell(window, CHANNELS.changePresent, (present = now));
+  }, LOOK_MS);
+  window.on("closed", () => clearInterval(looks));
 
   answer(CHANNELS.readConnection, () => watch.connection());
   answer(CHANNELS.retryConnection, () => watch.retry());
@@ -132,13 +144,13 @@ export function answerWindow({ window, host, watch, key, fetch, userData }: {
     return true;
   });
 
-  // A notification is kept until it goes, since one nothing holds can't be clicked.
-  const shown = new Set<Notification>();
+  // A notification is kept until it goes, since one nothing holds can't be clicked, with the agent it is about.
+  const shown = new Map<Notification, string>();
   hear(CHANNELS.showNotice, (value) => {
     const { title, body, agentId, messageId } = value as Notice;
     if (!Notification.isSupported() || typeof title !== "string" || typeof body !== "string") return;
     const notification = new Notification({ title, body });
-    shown.add(notification);
+    shown.set(notification, agentId);
     notification.on("close", () => shown.delete(notification));
     notification.on("click", () => {
       shown.delete(notification);
@@ -146,6 +158,13 @@ export function answerWindow({ window, host, watch, key, fetch, userData }: {
       tell(window, CHANNELS.openChat, { agentId, messageId });
     });
     notification.show();
+  });
+  hear(CHANNELS.clearNotices, (agentId) => {
+    for (const [notification, about] of shown) {
+      if (about !== agentId) continue;
+      shown.delete(notification);
+      notification.close();
+    }
   });
   hear(CHANNELS.setBadge, (count) => void app.setBadgeCount(Number(count) || 0));
 }
