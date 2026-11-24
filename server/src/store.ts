@@ -257,6 +257,10 @@ const FOR_AGENT = "((agent_id = ?1 and peer_id is null) or (peer_id = ?1 and ask
 // A message whose turn hasn't ended: it waits to be read, or the agent works on it. It is worded as `messages_unfinished` is, which is how SQLite knows the index holds every such message.
 const UNFINISHED = "(status = 'queued' or status = 'running')";
 
+// A message's columns, with its row's place in the table as the order it came in.
+const MESSAGE = 'rowid as "order", *';
+// The place a new message takes: above every message there is, and above every one there has been. Left to itself SQLite gives a new row the place after the last one there is, which a deleted agent's message had when its messages were the last.
+const NEXT_ORDER = "(select max((select coalesce(max(rowid), 0) from messages), coalesce((select cast(value as integer) from settings where name = 'order'), 0)) + 1)";
 /** A message as SQLite holds it, with its attachments, its question and its change as JSON text and yes and no as 1 and 0. */
 type Row = Omit<Message, "attachments" | "interim" | "question" | "switched"> & { attachments: string; interim: number; question: string | null; switched: string | null };
 const toMessage = (row: Row): Message => ({
@@ -374,7 +378,7 @@ export function openStore(home: string) {
        and ((sender = 'agent' and interim = 0 and (ask is null or ask = 'waiting')) or (sender = 'sidebots' and status = 'failed'))`,
   );
   // What the agent asked other agents and hasn't heard back on, oldest first. It names the index, since SQLite left to choose reads the agent's whole chat for the order it comes in.
-  const asked = (agentId: string): Message[] => many(`select * from messages indexed by messages_unfinished where agent_id = ? and ${ASKED} and ${UNFINISHED} order by rowid`, agentId);
+  const asked = (agentId: string): Message[] => many(`select ${MESSAGE} from messages indexed by messages_unfinished where agent_id = ? and ${ASKED} and ${UNFINISHED} order by rowid`, agentId);
   const agentById = (id: string): Agent | undefined => {
     const row = db.prepare("select * from agents where id = ?").get(id) as AgentRow | undefined;
     return row && toAgent(row);
@@ -383,7 +387,7 @@ export function openStore(home: string) {
   const jobsFor = (agentId: string): Job[] => (db.prepare("select * from jobs where agent_id = ? order by next_at").all(agentId) as JobRow[]).map(toJob);
   const withLatest = (agent: Agent): AgentWithLatest => ({
     ...agent,
-    latest: one(`select * from messages where agent_id = ? and ${WITH_PERSON} order by rowid desc limit 1`, agent.id) ?? null,
+    latest: one(`select ${MESSAGE} from messages where agent_id = ? and ${WITH_PERSON} order by rowid desc limit 1`, agent.id) ?? null,
     working: pendingTurn.get(agent.id) !== undefined,
     unread: (unread.get(agent.id, agent.read_at) as { unread: number }).unread,
     waiting_on: asked(agent.id)[0]?.peer_id ?? null,
@@ -604,6 +608,8 @@ export function openStore(home: string) {
      */
     deleteAgent(agent: Agent): void {
       const talkedWith = db.prepare("select agent_id as id from messages where peer_id = ?1 union select peer_id from messages where agent_id = ?1 and peer_id is not null").all(agent.id) as { id: string }[];
+      // The last message's place is kept, so that no later message takes the place of one that goes now.
+      db.prepare(`insert or replace into settings (name, value) values ('order', ${NEXT_ORDER} - 1)`).run();
       db.prepare("delete from usage where agent_id = ?").run(agent.id);
       db.prepare("delete from jobs where agent_id = ?").run(agent.id);
       db.prepare("delete from messages where agent_id = ?").run(agent.id);
@@ -810,7 +816,7 @@ export function openStore(home: string) {
         writeFileSync(join(agentHome(agentId), "attachments", name), file.bytes);
         return `attachments/${name}`;
       });
-      const message: Message = {
+      const said: Omit<Message, "order"> = {
         id: randomUUID(),
         agent_id: agentId,
         sender,
@@ -827,22 +833,23 @@ export function openStore(home: string) {
         switched: switched ?? null,
         created_at: Date.now(),
       };
-      db.prepare("insert into messages (id, agent_id, sender, body, attachments, status, reply_to, job_id, interim, ask, question, peer_id, switched, created_at) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)").run(
-        message.id,
-        message.agent_id,
-        message.sender,
-        message.body,
+      const { lastInsertRowid } = db.prepare(`insert into messages (rowid, id, agent_id, sender, body, attachments, status, reply_to, job_id, interim, ask, question, peer_id, switched, created_at) values (${NEXT_ORDER}, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
+        said.id,
+        said.agent_id,
+        said.sender,
+        said.body,
         JSON.stringify(attachments),
-        message.status,
-        message.reply_to,
-        message.job_id,
+        said.status,
+        said.reply_to,
+        said.job_id,
         Number(interim),
-        message.ask,
+        said.ask,
         question ? JSON.stringify(question) : null,
-        message.peer_id,
+        said.peer_id,
         switched ? JSON.stringify(switched) : null,
-        message.created_at,
+        said.created_at,
       );
+      const message: Message = { ...said, order: Number(lastInsertRowid) };
       if ((sender === "agent" && !interim && !betweenAgents(message)) || (sender === "sidebots" && status === "failed")) {
         db.prepare("update agents set hidden = 0 where id = ? and muted = 0").run(agentId);
       }
@@ -875,21 +882,21 @@ export function openStore(home: string) {
       const now = Date.now();
       for (const id of messageIds) {
         const read = db.prepare("update messages set status = 'running', seen_at = ? where id = ? and sender != 'sidebots' and status = 'queued'").run(now, id);
-        const message = read.changes ? one("select * from messages where id = ?", id) : undefined;
+        const message = read.changes ? one(`select ${MESSAGE} from messages where id = ?`, id) : undefined;
         if (message) messageChanged(message);
       }
     },
 
     setStatus(messageId: string, status: Status): void {
       db.prepare("update messages set status = ? where id = ?").run(status, messageId);
-      const message = one("select * from messages where id = ?", messageId);
+      const message = one(`select ${MESSAGE} from messages where id = ?`, messageId);
       if (message) messageChanged(message);
     },
 
     /** Records where an ask that was waiting now stands. */
     answerAsk(messageId: string, answer: Exclude<Ask, "waiting">): void {
       const answered = db.prepare("update messages set ask = ? where id = ? and ask = 'waiting'").run(answer, messageId).changes > 0;
-      const message = answered ? one("select * from messages where id = ?", messageId) : undefined;
+      const message = answered ? one(`select ${MESSAGE} from messages where id = ?`, messageId) : undefined;
       if (message) messageChanged(message);
     },
 
@@ -903,18 +910,18 @@ export function openStore(home: string) {
     messages(agentId: string, { after, before, through }: { after?: string; before?: string; through?: string } = {}): Message[] {
       const known = "(select rowid from messages where id = ?2)";
       // A limit below zero is no limit.
-      if (after) return many(`select * from messages where ${pageOfChat(`rowid > ${known}`, "-1")} order by rowid`, agentId, after);
+      if (after) return many(`select ${MESSAGE} from messages where ${pageOfChat(`rowid > ${known}`, "-1")} order by rowid`, agentId, after);
       if (before && through) {
         const from = `(select rowid from messages where ${IN_CHAT} and id = ?3)`;
-        return many(`select * from messages where ${pageOfChat(`rowid between ${from} and ${known}`, "?4", "oldest")} order by rowid`, agentId, before, through, RUN);
+        return many(`select ${MESSAGE} from messages where ${pageOfChat(`rowid between ${from} and ${known}`, "?4", "oldest")} order by rowid`, agentId, before, through, RUN);
       }
-      if (before) return many(`select * from messages where ${pageOfChat(`rowid < ${known}`, "?3")} order by rowid`, agentId, before, PAGE);
-      return many(`select * from messages where ${pageOfChat("true", "?2")} order by rowid`, agentId, PAGE);
+      if (before) return many(`select ${MESSAGE} from messages where ${pageOfChat(`rowid < ${known}`, "?3")} order by rowid`, agentId, before, PAGE);
+      return many(`select ${MESSAGE} from messages where ${pageOfChat("true", "?2")} order by rowid`, agentId, PAGE);
     },
 
     /** A message, if it is in the agent's chat. */
     message(agentId: string, id: string): Message | undefined {
-      return one(`select * from messages where ${IN_CHAT} and id = ?2`, agentId, id);
+      return one(`select ${MESSAGE} from messages where ${IN_CHAT} and id = ?2`, agentId, id);
     },
 
     /** What the agent asked other agents and hasn't heard back on, oldest first. */
@@ -922,7 +929,7 @@ export function openStore(home: string) {
 
     /** What other agents asked the agent that it has read and not answered, oldest first. */
     askedOf(agentId: string): Message[] {
-      return many(`select * from messages where peer_id = ? and ${ASKED} and status = 'running' order by rowid`, agentId);
+      return many(`select ${MESSAGE} from messages where peer_id = ? and ${ASKED} and status = 'running' order by rowid`, agentId);
     },
 
     /**
@@ -934,7 +941,7 @@ export function openStore(home: string) {
     sentByJobsBefore(agentId: string, messageId: string, limit: number): Message[] {
       const latest: Message[] = [];
       const back = db.prepare(
-        `select * from messages where sender = 'agent' and ${WITH_PERSON} and agent_id = ?1 and rowid < (select rowid from messages where id = ?2)
+        `select ${MESSAGE} from messages where sender = 'agent' and ${WITH_PERSON} and agent_id = ?1 and rowid < (select rowid from messages where id = ?2)
          order by rowid desc limit ?3`,
       );
       for (const row of back.iterate(agentId, messageId, limit) as Iterable<Row>) {
@@ -947,7 +954,7 @@ export function openStore(home: string) {
     /** The last few things the person and the agent said to each other before a message, oldest first. */
     messagesBefore(agentId: string, messageId: string, limit: number): Message[] {
       return many(
-        `select * from messages where sender != 'sidebots' and ${WITH_PERSON} and agent_id = ?1 and rowid < (select rowid from messages where id = ?2)
+        `select ${MESSAGE} from messages where sender != 'sidebots' and ${WITH_PERSON} and agent_id = ?1 and rowid < (select rowid from messages where id = ?2)
          order by rowid desc limit ?3`,
         agentId,
         messageId,
@@ -970,12 +977,12 @@ export function openStore(home: string) {
 
     /** The messages from the person that wait for the agent to read them, oldest first. */
     waitingFromPerson(agentId: string): Message[] {
-      return many("select * from messages where agent_id = ? and sender = 'person' and status = 'queued' order by rowid", agentId);
+      return many(`select ${MESSAGE} from messages where agent_id = ? and sender = 'person' and status = 'queued' order by rowid`, agentId);
     },
 
     /** The oldest message that waits for the agent's turn: the person's, a fresh start, or another agent's to it. */
     nextQueued(agentId: string): Message | undefined {
-      return one(`select * from messages where ${FOR_AGENT} and status = 'queued' order by rowid limit 1`, agentId);
+      return one(`select ${MESSAGE} from messages where ${FOR_AGENT} and status = 'queued' order by rowid limit 1`, agentId);
     },
 
     /**

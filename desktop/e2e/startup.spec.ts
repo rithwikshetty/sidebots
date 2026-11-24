@@ -259,7 +259,7 @@ test.describe("restarting the app", () => {
     const ledger = await agentNamed(server, "Ledger");
     await expect(rowOf(page, ledger.id)).toBeVisible();
     // The window saves its copy a moment after it changes, which a person who quits takes far longer than.
-    await expect.poll(() => page.evaluate((id) => localStorage.getItem("cache-6")?.includes(id) ?? false, ledger.id)).toBe(true);
+    await expect.poll(() => page.evaluate((id) => localStorage.getItem("cache-7")?.includes(id) ?? false, ledger.id)).toBe(true);
     // The window hears nothing more, a phone renames Ledger, and the server stops answering before the app opens again.
     await server.control("drop-events", { ms: 600_000 });
     await expect(page.getByTestId("reach")).toHaveText("Out of reach");

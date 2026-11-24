@@ -95,6 +95,8 @@ export type Message = {
    * Null for every other message.
    */
   switched: Switched | null;
+  /** Its place among the messages on the computer. A message made later has a higher one, whatever the clock said when each was made. */
+  order: number;
   created_at: number;
 };
 
