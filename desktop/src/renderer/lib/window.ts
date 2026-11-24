@@ -43,22 +43,17 @@ export function useFullScreen(): boolean {
   return useSyncExternalStore(window.desktop.onFullScreen, window.desktop.fullScreen);
 }
 
-/** Calls `listener` at each midnight on the computer's clock. Returns a function that stops it. */
-function onMidnight(listener: () => void): () => void {
-  let timer: ReturnType<typeof setTimeout>;
-  const wait = () => {
-    timer = setTimeout(() => {
-      listener();
-      wait();
-    }, new Date().setHours(24, 0, 0, 0) - Date.now());
-  };
-  wait();
-  return () => clearTimeout(timer);
+// How often the window looks at what day it is. A timer set for midnight would run late after the computer slept.
+const DAY_CHECK_MS = 60_000;
+
+function onDayCheck(listener: () => void): () => void {
+  const timer = setInterval(listener, DAY_CHECK_MS);
+  return () => clearInterval(timer);
 }
 
 /** When today began on the computer's clock, kept up as the day changes, for a time told by it, as "Yesterday" is. */
 export function useToday(): number {
-  return useSyncExternalStore(onMidnight, () => new Date().setHours(0, 0, 0, 0));
+  return useSyncExternalStore(onDayCheck, () => new Date().setHours(0, 0, 0, 0));
 }
 
 const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
