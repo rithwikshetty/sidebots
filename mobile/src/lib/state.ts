@@ -25,10 +25,14 @@ const store = createStore<Picked>({
     return (isDemo(events.uri) ? demoFetch : streamingFetch)(events.uri, { headers: { ...events.headers, Accept: "text/event-stream" }, signal });
   },
   storage: { getItem: (key) => Storage.getItemSync(key), setItem: (key, value) => void Storage.setItem(key, value) },
-  // iOS drops the stream while the app is in the background.
+  // iOS drops the stream while the app is in the background, and leaves it open while the app is only covered, as by Control Centre.
   onFront(listener) {
+    let dropped = false;
     const appState = AppState.addEventListener("change", (next) => {
-      if (next === "active") listener();
+      if (next === "background") dropped = true;
+      if (next !== "active") return;
+      listener(dropped);
+      dropped = false;
     });
     return () => appState.remove();
   },

@@ -44,28 +44,44 @@ import SwiftUI
     terminating?.resume()
     server.start()
     _ = updater
+    // The menu bar panel is a window of the system's making, which becomes the key window each time it opens. It shows the server as it stands then.
+    NotificationCenter.default.addObserver(forName: NSWindow.didBecomeKeyNotification, object: nil, queue: .main) { [weak self] opened in
+      MainActor.assumeIsolated {
+        guard let self, let window = opened.object as? NSWindow, !self.windows.values.contains(window) else { return }
+        Task {
+          await self.server.refresh()
+          await self.server.checkSignIn()
+        }
+      }
+    }
     Task {
-      await server.refresh()
+      await server.readStatus()
       var opensWindow = opensWindow
       // A server that can't say who is set up is no sign that nobody is. Setup opens the window once it ends.
       if !server.failed, server.person == nil {
         showSetup()
         opensWindow = false
       }
-      // Every two seconds until the server answers, then every fifteen. Each provider's program and sign-in are looked at once a minute.
-      var lookedAtSignIn = ContinuousClock.now - .seconds(60)
+      // What the panel shows is read apart from the window, which waits for none of it.
+      Task {
+        await server.readPhones()
+        await server.checkSignIn()
+      }
+      // The app looks at the server once a minute while it runs and phones reach it. After a look that found it short of that it looks again a moment later, then waits twice as long each time, up to the minute.
+      let (firstWait, longestWait) = (Duration.milliseconds(250), Duration.seconds(60))
+      var wait = firstWait
       while true {
+        await server.lookAtPort()
+        // The window opens once the server answers on its port, before the app has asked at its address.
         if opensWindow, server.status?.running == true, server.person != nil {
           opensWindow = false
           DesktopApp.open()
         }
-        if ContinuousClock.now - lookedAtSignIn >= .seconds(60) {
-          await server.checkSignIn()
-          lookedAtSignIn = .now
-        }
-        try? await Task.sleep(for: server.status?.running == true ? .seconds(15) : .seconds(2))
-        await server.refresh()
-        updater.installIfIdle()
+        await server.lookAtAddress()
+        await updater.installIfIdle()
+        let settled = server.status?.running == true && server.status?.reachable == true
+        try? await Task.sleep(for: settled ? longestWait : wait)
+        wait = settled ? firstWait : min(wait * 2, longestWait)
       }
     }
   }

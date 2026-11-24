@@ -229,16 +229,17 @@ if (process.argv[2] === "sign-in" || process.argv[2] === "signed-in") {
 if (process.argv[2] === "status") {
   // Sidebots names its contract version on every answer, refusals included. The address refuses a request with no `Authorization` header before it reaches the server.
   const answers = (origin: string) =>
-    fetch(`${origin}/agents`, { headers: { Authorization: "Bearer status" }, signal: AbortSignal.timeout(5000) }).then(
+    fetch(`${origin}/status`, { headers: { Authorization: "Bearer status" }, signal: AbortSignal.timeout(5000) }).then(
       (response) => response.headers.has(CONTRACT_HEADER),
       () => false,
     );
   const address = store.machine()?.address ?? null;
+  const running = await answers(`http://127.0.0.1:${port}`);
   const status = {
-    running: await answers(`http://127.0.0.1:${port}`),
+    running,
     address,
-    // Whether a phone reaches the server at its address. Null until it has one.
-    reachable: address ? await answers(`https://${address}`) : null,
+    // Whether a phone reaches the server at its address, which leads to its port, so only a server that runs is asked there. Null until it has one.
+    reachable: address ? running && (await answers(`https://${address}`)) : null,
     // Whether any agent has a turn queued or running, which an update waits for before it restarts the server.
     working: store.people().some((person) => store.agentsFor(person.id).some((agent) => agent.working)),
     // Whether the server tells the relay how much it is used.

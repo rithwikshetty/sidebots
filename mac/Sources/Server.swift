@@ -17,11 +17,11 @@ struct ServerStatus: Decodable {
     let signIn: String
   }
 
-  let running: Bool
+  var running: Bool
   /// The address phones reach this computer at, once the relay has given it one.
   let address: String?
   /// Whether phones reach the server at its address. Nil until it has one.
-  let reachable: Bool?
+  var reachable: Bool?
   /// Whether any agent has a turn queued or running.
   let working: Bool
   /// Whether the server tells the relay how much it is used.
@@ -79,9 +79,10 @@ enum SignIn {
 }
 
 /// The Sidebots server inside the app: Node running `server/src/main.ts`. The
-/// app starts it, starts it again when it stops, and learns its state only
-/// from the server's own commands. The server ends when the app does, even
-/// an app that ends without stopping it.
+/// app starts it, starts it again when it stops, and learns its state from
+/// the server's own commands. Between commands it asks the server itself
+/// whether it still answers, which starts no program. The server ends when
+/// the app does, even an app that ends without stopping it.
 @MainActor @Observable final class Server {
   private(set) var status: ServerStatus?
   /// Whether the server's `status` command failed when it was last run, as when the server can't open its data. Nothing is known of the person or the server while it does.
@@ -110,6 +111,10 @@ enum SignIn {
   nonisolated static let name = Bundle.main.infoDictionary?["CFBundleName"] as? String ?? "Sidebots"
   /// The server's output, where Console shows it, in a folder named for the app.
   private static let log = FileManager.default.homeDirectoryForCurrentUser.appending(path: "Library/Logs/\(name)/server.log")
+  /// How big the log gets before a server that starts begins a new one, with the last kept beside it.
+  private static let logBytes = 5_000_000
+  /// The port the server listens on, on 127.0.0.1.
+  nonisolated private static let port = environment["PORT"] ?? "4317"
 
   /// The person the app sets up, named as the computer knows its user.
   static let personName = NSFullUserName().isEmpty ? NSUserName() : NSFullUserName()
@@ -148,6 +153,11 @@ enum SignIn {
     process.currentDirectoryURL = Self.folder
     process.environment = Self.environment
     try? FileManager.default.createDirectory(at: Self.log.deletingLastPathComponent(), withIntermediateDirectories: true)
+    if let size = try? FileManager.default.attributesOfItem(atPath: Self.log.path)[.size] as? Int, size > Self.logBytes {
+      let last = Self.log.deletingPathExtension().appendingPathExtension("old.log")
+      try? FileManager.default.removeItem(at: last)
+      try? FileManager.default.moveItem(at: Self.log, to: last)
+    }
     if !FileManager.default.fileExists(atPath: Self.log.path) { FileManager.default.createFile(atPath: Self.log.path, contents: nil) }
     if let log = try? FileHandle(forWritingTo: Self.log) {
       log.seekToEndOfFile()
@@ -184,14 +194,51 @@ enum SignIn {
     process.terminate()
   }
 
-  /// Reads the server's state and the paired phones, which leave out the desktop app.
+  /// Reads the server's state and the paired phones.
   func refresh() async {
+    await readStatus()
+    await readPhones()
+  }
+
+  /// Reads the server's state from its `status` command.
+  func readStatus() async {
     let saves = countingSaves
     status = try? Self.decode(await command(["status", "--json"]))
     failed = status == nil
     // What the server said while it was saving the switch, or since before it last did, may be from before it saved.
     if let status, !savingCounting, saves == countingSaves { counting = status.counting }
+  }
+
+  /// Reads the paired phones, which leave out the desktop app.
+  func readPhones() async {
     if let devices: [Phone] = try? Self.decode(await command(["devices", "--json"])) { phones = devices.filter { $0.kind == "phone" } }
+  }
+
+  /// Looks whether the server answers on its port, by asking the server itself. A server with no address yet has its state read, which is where an address shows.
+  func lookAtPort() async {
+    guard status?.address != nil else { return await readStatus() }
+    status?.running = await Self.answers("http://127.0.0.1:\(Self.port)")
+  }
+
+  /// Looks whether phones reach the server at its address, by asking the server there. The address leads to the port, so only a server that runs is asked. When nothing answers there the server's state is read, since the relay may have given it another address.
+  func lookAtAddress() async {
+    guard let status, let address = status.address else { return }
+    if !status.running {
+      self.status?.reachable = false
+    } else if await Self.answers("https://\(address)") {
+      self.status?.reachable = true
+    } else {
+      await readStatus()
+    }
+  }
+
+  /// Whether Sidebots answers at an origin, as its `status` command asks: its `/status` route names the contract version on every answer, a refusal included. The address refuses a request with no `Authorization` header before it reaches the server.
+  nonisolated private static func answers(_ origin: String) async -> Bool {
+    guard let url = URL(string: "\(origin)/status") else { return false }
+    var request = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: 5)
+    request.setValue("Bearer status", forHTTPHeaderField: "Authorization")
+    let answer = try? await URLSession.shared.data(for: request).1 as? HTTPURLResponse
+    return answer?.value(forHTTPHeaderField: "Sidebots-Contract") != nil
   }
 
   /// Opens the server's log, which says why it stopped.
@@ -299,8 +346,10 @@ enum SignIn {
       process.standardOutput = output
       process.standardError = errors
       do { try process.run() } catch { return (-1, Data(), error.localizedDescription) }
+      // Both are read at once: a program that fills one pipe waits for it to be read, and would never end the other.
+      let failing = Task.detached { errors.fileHandleForReading.readDataToEndOfFile() }
       let printed = output.fileHandleForReading.readDataToEndOfFile()
-      let failed = errors.fileHandleForReading.readDataToEndOfFile()
+      let failed = await failing.value
       process.waitUntilExit()
       return (process.terminationStatus, printed, String(decoding: failed, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines))
     }.value

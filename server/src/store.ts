@@ -6,7 +6,7 @@ import { basename, join, resolve } from "node:path";
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
 
-import { COLOR, PROVIDERS, USAGE_DAYS, betweenAgents, readableColor, selectionOf } from "./contract.ts";
+import { COLOR, PAGE, PROVIDERS, USAGE_DAYS, betweenAgents, readableColor, selectionOf } from "./contract.ts";
 import type { About, Agent, AgentWithLatest, Ask, Avatar, Connection, Day, Found, Job, Limit, Memory, Message, Provider, PushToken, Question, Schedule, Selection, Sender, Status, Switched, TurnKind, Usage, Used } from "./contract.ts";
 
 export type Person = { id: string; name: string };
@@ -198,7 +198,6 @@ create index if not exists messages_peer on messages (peer_id) where peer_id is 
 create index if not exists messages_unfinished on messages (status) where status = 'queued' or status = 'running';
 `;
 
-const PAGE = 50;
 const SEARCH_LIMIT = 20;
 const AVATAR_ID = /^[a-z0-9-]+$/;
 // A stored attachment's file name: no folders, and never a dot first.
@@ -873,20 +872,22 @@ export function openStore(home: string) {
     },
 
     /**
-     * What the agent's jobs have sent since the agent last replied in the
-     * chat, before a message, oldest first. The session a reply comes from
-     * never saw them.
+     * The latest `limit` of what the agent's jobs have sent since the agent
+     * last replied in the chat, before a message, oldest first. The session a
+     * reply comes from never saw them. It reads back from the message and
+     * stops at that reply, so it reads what it returns and one message more.
      */
-    sentByJobsBefore(agentId: string, messageId: string): Message[] {
-      return many(
-        `select * from messages where sender = 'agent' and job_id is not null and ${WITH_PERSON}
-           and agent_id = ?1 and rowid < (select rowid from messages where id = ?2)
-           and rowid > coalesce((select max(rowid) from messages where sender = 'agent' and job_id is null and ${WITH_PERSON}
-             and agent_id = ?1 and rowid < (select rowid from messages where id = ?2)), 0)
-         order by rowid`,
-        agentId,
-        messageId,
+    sentByJobsBefore(agentId: string, messageId: string, limit: number): Message[] {
+      const latest: Message[] = [];
+      const back = db.prepare(
+        `select * from messages where sender = 'agent' and ${WITH_PERSON} and agent_id = ?1 and rowid < (select rowid from messages where id = ?2)
+         order by rowid desc limit ?3`,
       );
+      for (const row of back.iterate(agentId, messageId, limit) as Iterable<Row>) {
+        if (row.job_id === null) break;
+        latest.push(toMessage(row));
+      }
+      return latest.reverse();
     },
 
     /** The last few things the person and the agent said to each other before a message, oldest first. */

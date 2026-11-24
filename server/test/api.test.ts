@@ -118,6 +118,11 @@ test("a phone pairs once with a code, and only a paired phone is let in", async 
   assert.equal((await call({ Authorization: `Bearer ${code}` }, "GET", "/agents")).status, 401);
   assert.deepEqual((await call({ Authorization: `Bearer ${paired.json.key}` }, "GET", "/agents")).json, []);
 
+  // Asked how it stands, the server answers a paired phone with nothing, and anyone with the version of the contract it speaks.
+  const [known, unknown] = await Promise.all([paired.json.key, "made-up"].map((key) => app.request("/status", { headers: { Authorization: `Bearer ${key}` } })));
+  assert.deepEqual([known.status, await known.text(), unknown.status], [204, "", 401]);
+  for (const answer of [known, unknown]) assert.equal(answer.headers.get("Sidebots-Contract"), String(CONTRACT_VERSION));
+
   const late = store.addPairing(alex.id);
   assert.equal(late.expiresAt, Date.now() + 10 * 60_000);
   t.mock.timers.tick(10 * 60_000);
@@ -1287,6 +1292,45 @@ test("a job runs when its time comes, in a session of its own, and only a run wi
   time += 60 * 60_000;
   await queue.kick(agent.id);
   assert.equal(runs.length, 3);
+});
+
+test("a reply is shown the latest twenty of what the agent's jobs sent since its last one, and told when there were more", async () => {
+  let time = new Date(2026, 10, 16, 9, 0).getTime();
+  const prompts: string[] = [];
+  let posts = 0;
+  const { queue, call, say } = setup(async (turn) => {
+    if (turn.prompt.text === "watch the price") {
+      turn.scheduleJob({ what: "Say the price.", every_minutes: 5 });
+      return reply("Watching.");
+    }
+    if (turn.prompt.text.startsWith("This is a run of one of your jobs")) return reply(`Post ${++posts}.`, "job-session");
+    prompts.push(turn.prompt.text);
+    return reply("ok");
+  }, () => time);
+  const agent = (await call(ME, "POST", "/agents", { name: "Maya", avatarId: "moss" })).json;
+  await say(ME, agent.id, "watch the price");
+  await queue.kick(agent.id);
+  /** Lets the job run so many times, then sends the agent a message. */
+  const sayAfter = async (runs: number, text: string) => {
+    for (let run = 0; run < runs; run++) {
+      time += 5 * 60_000;
+      await queue.kick(agent.id);
+    }
+    await say(ME, agent.id, text);
+    await queue.kick(agent.id);
+  };
+  const shown = (from: number, to: number) => Array.from({ length: to - from + 1 }, (_, index) => `You: Post ${from + index}.`).join("\n\n");
+
+  // Twenty is all of them.
+  await sayAfter(20, "how is it going");
+  assert.equal(prompts[0], `Since your last reply in this chat, your jobs sent Alex these messages, which this session hasn't seen:\n\n${shown(1, 20)}\n\nAlex's new message:\n\nhow is it going`);
+
+  // Of twenty-two since that reply, the first two are left out.
+  await sayAfter(22, "buy it");
+  assert.equal(
+    prompts[1],
+    `Since your last reply in this chat, your jobs sent Alex messages this session hasn't seen. These are the latest 20, and \`search_history\` finds earlier ones by a word or phrase in them:\n\n${shown(23, 42)}\n\nAlex's new message:\n\nbuy it`,
+  );
 });
 
 test("a job set for one time runs once, a daily one keeps to its days, and a job that keeps failing says so once", async () => {
