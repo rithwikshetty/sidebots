@@ -6,7 +6,7 @@
 import type { Page } from "@playwright/test";
 import type { Message } from "../../server/src/contract.ts";
 import { expect, test, type TestServer } from "./fixtures.ts";
-import { addAgent, agentId, field, idle, json, messagesOf, mine, notices, openChat, said, sendFromApp, theirs, toast, until, wholeChat } from "./chat-helpers.ts";
+import { addAgent, agentId, field, idle, json, messagesOf, notices, openChat, said, scrollChatTo, sendFromApp, theirs, toast, until, wholeChat } from "./chat-helpers.ts";
 
 /** Waits for the agent's ask to wait for the person, and resolves to it as the server has it. */
 const waitingAsk = (server: TestServer, agentId: string) =>
@@ -226,17 +226,15 @@ test.describe("asks in history", () => {
     const id = await agentId(server, "Atlas");
     const all = await wholeChat(server, id);
     await openChat(page, server, "Atlas");
-    const first = mine(page).filter({ hasText: "Morning! Can you keep track of the errands for this week?" });
-    await expect(async () => {
-      await page.getByTestId("timeline").hover();
-      await page.mouse.wheel(0, -50_000);
-      await expect(first).toHaveCount(1, { timeout: 1_500 });
-    }).toPass({ timeout: 30_000 });
     const asks = all.filter((message) => message.question);
     const expected = asks.map((message) => (message.question!.connection ? { allowed: "Connected", refused: "Not connected", unanswered: "Not connected" } : { allowed: "Allowed", refused: "Not allowed", unanswered: "Not answered" })[message.ask as "allowed"]);
     expect(expected).toEqual(["Allowed", "Not allowed", "Not answered", "Connected"]);
-    await expect(page.getByTestId("ask-outcome")).toHaveText(expected);
-    await expect(page.getByTestId("ask-answers")).toHaveCount(0);
+    // Newest first, as scrolling back through the chat comes to them.
+    for (const [at, ask] of [...asks.entries()].reverse()) {
+      await scrollChatTo(page, askRow(page, ask));
+      await expect(askRow(page, ask).getByTestId("ask-outcome")).toHaveText(expected[at]);
+      await expect(askRow(page, ask).getByTestId("ask-answers")).toHaveCount(0);
+    }
   });
 
   test("Tidy's ask waits in its chat with Allow and Don't allow", async ({ page, server }) => {

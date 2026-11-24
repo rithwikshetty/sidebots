@@ -1,7 +1,8 @@
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type RefObject } from "react";
+import { LegendList, type LegendListRef, type LegendListRenderItemProps } from "@legendapp/list/react";
 import { ArrowDown } from "lucide-react";
 import { betweenAgents, exchanges, type AgentWithLatest, type Message } from "@server/contract.ts";
-import { standingOf } from "@client/exchanges.ts";
+import { standingOf, type Standing } from "@client/exchanges.ts";
 import { dayLabel, sameDay } from "@client/time.ts";
 import { cn } from "../lib/cn.ts";
 import { loadMessages, loadOlder, useMessages, useOnline } from "../lib/store.ts";
@@ -9,37 +10,150 @@ import { useOpenChat } from "../lib/view.ts";
 import { useToday } from "../lib/window.ts";
 import { Spinner } from "../ui/Spinner.tsx";
 import { ExchangeRow } from "./Exchange.tsx";
-import { MessageRow, OutgoingRow, type Arrival, type Outgoing } from "./MessageRow.tsx";
+import { MessageRow, OutgoingRow, drawnAs, type Arrival, type Outgoing } from "./MessageRow.tsx";
 import { WorkingLine } from "./WorkingLine.tsx";
 
-// Within this many pixels of the end, the person is reading the newest message, and the chat follows what comes.
-const AT_END = 32;
-// Within this many pixels of the top, the chat fetches the page before the oldest message it has.
-const NEAR_TOP = 800;
+// Within this share of the room from the end, the person is reading the newest message, and the chat follows what comes.
+const AT_END = 0.05;
+// Within this many rooms of the top, the chat fetches the page before the oldest message it has.
+const NEAR_TOP = 1;
+// How tall a row is taken to be until the list has measured one of its kind.
+const ROW_HEIGHT = 90;
 // The window's clock and the server's may disagree by a little.
 const CLOCK_SLACK_MS = 2000;
-// A scroll this soon after the person's wheel, key or pointer is theirs.
-const BY_PERSON_MS = 600;
 // How long a message the chat was opened at flashes.
 const FLASH_MS = 1600;
+// How many frames a glide to the end is given to land on it.
+const LANDING_FRAMES = 60;
 
-// The messages that have come in with motion, so a row drawn again, as when its chat is opened again, shows as it is.
+// The messages that have come in with motion, so a row drawn again, as when it is scrolled back to or its chat is opened again, shows as it is.
 const arrived = new Set<string>();
 
 /** What the chat's foot can ask of its messages: to scroll to the newest. */
 export type TimelineHandle = { toEnd: () => void };
 
+/** The day above the first message of a day. It is a row of its own, so it comes and goes as pages load without the message under it changing height. */
+type Day = { id: string; day: number };
+/** The person's message on its way. It is the chat's last row until the server's copy takes its place, so the list follows it as it does any message. */
+type Going = { id: string; outgoing: Outgoing };
+type Row = Message | Day | Going;
+const isDay = (row: Row): row is Day => "day" in row;
+const isGoing = (row: Row): row is Going => "outgoing" in row;
+
+/** What a row draws from besides its own message. */
+type Around = {
+  agentId: string;
+  /** Where each exchange stands, by the message it was last asked at. */
+  standings: Map<string, Standing>;
+  byId: Map<string, Message>;
+  /** The person's newest message, which carries the chat's receipt. */
+  newestMine: string | undefined;
+  flashing: string | null;
+  today: number;
+  /** Messages made from here on came in while the chat was open, so they arrive with motion. */
+  openedAt: number;
+  onReply: (message: Message) => void;
+  onPageShown: (message: Message) => void;
+};
+
+const idOf = (row: Row) => row.id;
+
+/** The kind a row is. The list takes a row it hasn't measured to be as tall as the others of its kind: a message is of a kind with those of its sender, under 2,000 characters or under 4,000, with files or without. A longer message's height says little about another's, so each is a kind of its own. */
+function rowKind(row: Row): string {
+  if (isDay(row)) return "day";
+  if (isGoing(row)) return "going";
+  if (betweenAgents(row)) return "exchange";
+  const drawn = drawnAs(row);
+  if (drawn !== "message") return drawn;
+  const { length } = row.body;
+  return length < 4000 ? `${row.sender}:${length < 2000 ? "short" : "long"}:${row.attachments.length > 0 ? "files" : "words"}` : row.id;
+}
+
+/** A row as it is drawn: a day, a message, the exchange a message was last asked in, or the person's message on its way. */
+function drawRow({ item: row, extraData }: LegendListRenderItemProps<Row>) {
+  const { agentId, standings, byId, newestMine, flashing, today, openedAt, onReply, onPageShown } = extraData as Around;
+  if (isDay(row)) {
+    return (
+      <p className="mt-4 px-4 text-center text-sm font-medium text-ink2" data-testid="day" data-day={row.id}>
+        {dayLabel(row.day, today)}
+      </p>
+    );
+  }
+  if (isGoing(row)) {
+    return (
+      <div className="px-4">
+        <OutgoingRow outgoing={row.outgoing} />
+      </div>
+    );
+  }
+  const message = row;
+  const standing = standings.get(message.id);
+  const arrival: Arrival = message.created_at < openedAt || arrived.has(message.id) ? "none" : message.sender === "person" ? "settle" : "rise";
+  return (
+    <div className="px-4">
+      {standing ? (
+        <ExchangeRow agentId={agentId} asked={message} state={standing} flashing={flashing === message.id} />
+      ) : (
+        <MessageRow
+          message={message}
+          quoted={message.reply_to ? byId.get(message.reply_to) : undefined}
+          // An ask another agent raised while working for this one says whose it is.
+          from={message.agent_id === agentId ? undefined : message.agent_id}
+          receipt={message.id === newestMine}
+          arrival={arrival}
+          flashing={flashing === message.id}
+          onReply={onReply}
+          onPageShown={onPageShown}
+        />
+      )}
+    </div>
+  );
+}
+
+/**
+ * Lands a glide to the chat's end on the end. The list aims the glide by the
+ * heights it guesses for rows it hasn't drawn, so when messages came in
+ * unseen it stops short, and goes on waiting to reach a place that isn't
+ * there. Once the glide has stopped, by the list's word or the page's, the
+ * list is put at the end as the page measures it, as T3 Code does, until it
+ * has stayed there for two frames or `over` says the scroll is no longer the
+ * chat's.
+ */
+async function landAtEnd(list: LegendListRef, glide: Promise<void>, over: () => boolean): Promise<void> {
+  const stopped = new AbortController();
+  await Promise.race([glide, new Promise((resolve) => list.getScrollableNode()?.addEventListener("scrollend", resolve, { once: true, signal: stopped.signal }))]);
+  stopped.abort();
+  for (let frames = 0, still = 0; frames < LANDING_FRAMES && still < 2 && !over(); frames++) {
+    const scroller = list.getScrollableNode();
+    if (!scroller) return;
+    const end = scroller.scrollHeight - scroller.clientHeight;
+    if (Math.abs(scroller.scrollTop - end) > 1) {
+      still = 0;
+      await list.scrollToOffset({ offset: end, animated: false });
+    } else still++;
+    await new Promise((resolve) => requestAnimationFrame(resolve));
+  }
+}
+
+// The list cuts each row off at its own edge, with `contain: paint` in the style of the element that holds it, which would take the bottom of a message's focus ring and the start of its rise into place. Those elements, under the scroller, its content and its rows' box, keep their layout to themselves and draw past their edge.
+const ROWS_DRAW_PAST_THEIR_EDGE = "[&>div>div>div[style*='contain']]:[contain:layout_style]!";
+const COLUMN = { display: "flex", flexDirection: "column" } as const;
+// The room the chat's top bar covers.
+const UNDER_BAR = <div className="h-15" />;
+
 /**
  * An agent's messages in a column down the middle of the chat, oldest at the
  * top, with the day between days, what it and another agent said to each
  * other as one line for each exchange, the person's message on its way, and
- * the working line while the agent works. It opens at the newest message and
- * stays there as messages come and pictures and pages load, while the person
- * is at the end. Scrolled up, they stay where they are reading, and a button
- * that jumps to the newest shows once something comes. Near the top, it
- * fetches the page before, keeping the place on screen. Opened at a message,
- * it fetches back until it has it, then scrolls to it and flashes it, or the
- * message drawn nearest to it when it draws nothing itself.
+ * the working line while the agent works. It draws the rows near the screen,
+ * however many messages it holds, and keeps a row drawn once a page in it has
+ * shown, so the page stays as the person left it. It opens at the newest
+ * message and stays there as messages come and pictures and pages load, while
+ * the person is at the end. Scrolled up, they stay where they are reading,
+ * and a button that jumps to the newest shows once something comes. Near the
+ * top, it fetches the page before, keeping the place on screen. Opened at a
+ * message, it fetches back until it has it, then scrolls to it and flashes
+ * it, or the message drawn nearest to it when it draws nothing itself.
  */
 export const Timeline = memo(function Timeline({
   agent,
@@ -59,15 +173,20 @@ export const Timeline = memo(function Timeline({
   const messages = useMessages(agent.id);
   const opened = useOpenChat();
   const today = useToday();
-  const scroller = useRef<HTMLDivElement>(null);
-  const content = useRef<HTMLDivElement>(null);
-  const atEnd = useRef(true);
+  const list = useRef<LegendListRef>(null);
   const [behind, setBehind] = useState(false);
   const [loading, setLoading] = useState(messages.length === 0 && agent.latest !== null);
   const [flashing, setFlashing] = useState<string | null>(null);
-  // Messages made from here on came in while the chat was open, so they arrive with motion.
   const [openedAt] = useState(() => Date.now() - CLOCK_SLACK_MS);
-  const older = useRef<"more" | "loading" | "none">("more");
+  // A chat that opens with messages, or with some to fetch, opens at its end. One with none has no end to open at, and a list still waiting to open at one draws the first row it is given a frame late, after the copy of the message on its way has gone.
+  const [opensAtEnd] = useState(() => messages.length > 0 || agent.latest !== null);
+  // Whether the chat has messages before the oldest the window holds.
+  const older = useRef(true);
+  // The rows that have shown a page.
+  const [kept, setKept] = useState<string[]>([]);
+  const keep = useCallback((message: Message) => setKept((ids) => (ids.includes(message.id) ? ids : [...ids, message.id])), []);
+  // They stay drawn wherever the chat is scrolled to, so each page stays as the person left it. So does the newest row, as in T3 Code, so the list has measured the end before the chat glides to it.
+  const pinned = useMemo(() => ({ keys: kept, bottom: 1 }), [kept]);
 
   useEffect(() => {
     loadMessages(agent.id)
@@ -78,98 +197,99 @@ export const Timeline = memo(function Timeline({
   // What the agent and another said to each other shows as one line for each exchange, where the newest thing in it was asked.
   const standings = useMemo(() => new Map(exchanges(messages).map((exchange) => standingOf(exchange, messages)).map(({ asked, state }) => [asked.id, state])), [messages]);
   const shown = useMemo(() => messages.filter((message) => !betweenAgents(message) || standings.has(message.id)), [messages, standings]);
-  const byId = useMemo(() => new Map(messages.map((message) => [message.id, message])), [messages]);
   // The person's newest message, which carries the chat's receipt.
   const newestMine = messages.findLast((message) => message.sender === "person")?.id;
+  // The faded copy goes once the server's copy is in the chat, which may come over the event stream first.
+  const sending = outgoing && outgoing.after === newestMine ? outgoing : null;
+  const rows = useMemo(() => {
+    const rows = shown.flatMap((message, index): Row[] => {
+      const before = shown[index - 1];
+      return !before || !sameDay(before.created_at, message.created_at) ? [{ id: `day:${message.id}`, day: message.created_at }, message] : [message];
+    });
+    return sending ? [...rows, { id: "going", outgoing: sending }] : rows;
+  }, [shown, sending]);
+  // The list takes the rows once it has been told what to hold. When rows land above what is on screen, as a page fetched from the top or one the panel fetched, it holds the first message on screen where it is, and moves with each height it measures above it, in the frame it measures it. Left to keep the place by itself, it moves the scroll a frame after the rows, and draws that frame out of place. At the chat's end it follows the end.
+  const [listed, setListed] = useState(rows);
+  useLayoutEffect(() => {
+    const at = list.current;
+    if (at && listed[0]?.id !== rows[0]?.id && at.getState().isWithinMaintainScrollAtEndThreshold === false) {
+      const stays = new Set(rows.map(idOf));
+      const first = listed.slice(at.getState().start ?? 0).find((row) => !isDay(row) && stays.has(row.id));
+      if (first) at.anchorVisibleContent({ key: first.id });
+    }
+    setListed(rows);
+  }, [rows, listed]);
+  const byId = useMemo(() => new Map(messages.map((message) => [message.id, message])), [messages]);
   // Whether the agent waits on the person's answer to an ask of its own, which is then the last thing in the chat.
   const asksPerson = messages.some((message) => message.ask === "waiting" && message.agent_id === agent.id);
   const working = agent.working && online && !asksPerson;
-  // The faded copy goes once the server's copy is in the chat, which may come over the event stream first.
-  const sending = outgoing && outgoing.after === newestMine ? outgoing : null;
+  const around = useMemo<Around>(
+    () => ({ agentId: agent.id, standings, byId, newestMine, flashing, today, openedAt, onReply, onPageShown: keep }),
+    [agent.id, standings, byId, newestMine, flashing, today, openedAt, onReply, keep],
+  );
 
-  const toEnd = useCallback((smooth = false) => {
-    const element = scroller.current;
-    if (!element) return;
-    atEnd.current = true;
+  // Counts the chat's own scrolls and the person's, so a glide to the end that the person takes over, or that a later scroll follows, is left where it is.
+  const scrolls = useRef(0);
+  const toEnd = useCallback(async (smooth = false) => {
+    const at = list.current;
+    if (!at) return;
     setBehind(false);
-    // A long way back, the chat jumps to a screen short of the end, and glides the rest.
-    if (smooth && element.scrollHeight - element.scrollTop > element.clientHeight * 3) element.scrollTop = element.scrollHeight - element.clientHeight * 2;
-    element.scrollTo({ top: element.scrollHeight, behavior: smooth ? "smooth" : "instant" });
+    const mine = ++scrolls.current;
+    if (!smooth) return void at.scrollToEnd({ animated: false });
+    const over = () => mine !== scrolls.current;
+    const { contentLength, distanceFromEnd, scrollLength } = at.getState();
+    // A long way back, the chat jumps to a screen short of the end, and glides the rest once the page has taken the jump.
+    if (distanceFromEnd > scrollLength * 2) {
+      await at.scrollToOffset({ offset: contentLength - scrollLength * 2, animated: false });
+      await new Promise((resolve) => requestAnimationFrame(resolve));
+      if (over()) return;
+    }
+    await landAtEnd(at, at.scrollToEnd({ animated: true }), over);
   }, []);
   useEffect(() => {
-    handle.current = { toEnd: () => toEnd() };
+    handle.current = { toEnd: () => void toEnd() };
   }, [handle, toEnd]);
 
-  useLayoutEffect(() => {
-    const element = scroller.current!;
-    element.scrollTop = element.scrollHeight;
-    // As the messages or the room for them change size, the chat stays at its end while the person is there.
-    const observer = new ResizeObserver(() => {
-      if (atEnd.current) element.scrollTop = element.scrollHeight;
-    });
-    observer.observe(content.current!);
-    observer.observe(element);
-    return () => observer.disconnect();
-  }, []);
-
-  // A page fetched above the top, while the person is right at the top, would push what they read down, so the first message drawn before it stays where it was on screen, however much else changed size with it. The browser keeps the place itself anywhere else.
-  const anchor = useRef<{ row: Element; at: number } | null>(null);
-  const oldest = shown[0]?.id;
-  useLayoutEffect(() => {
-    const element = scroller.current!;
-    const offset = (row: Element) => row.getBoundingClientRect().top - element.getBoundingClientRect().top + element.scrollTop;
-    const before = anchor.current;
-    if (before?.row.isConnected && element.scrollTop === 0 && !atEnd.current) element.scrollTop = offset(before.row) - before.at;
-    const row = content.current!.querySelector("[data-message-id]");
-    anchor.current = row ? { row, at: offset(row) } : null;
-  }, [oldest]);
-
+  // The page before the oldest message the window holds. With none yet, as while the first page is on its way, there is nothing to fetch before.
   const fetchOlder = useCallback(() => {
-    if (older.current !== "more") return;
-    older.current = "loading";
-    loadOlder(agent.id).then(
-      (more) => (older.current = more ? "more" : "none"),
-      () => (older.current = "more"),
-    );
+    if (older.current && held.current.messages.length > 0) return loadOlder(agent.id).then((more) => void (older.current = more), () => undefined);
   }, [agent.id]);
 
-  // A chat shorter than its room has no top to scroll near, so it fetches until it fills the room or reaches its beginning.
-  useEffect(() => {
-    const element = scroller.current!;
-    if (!loading && shown.length > 0 && element.scrollHeight <= element.clientHeight) fetchOlder();
-  }, [loading, shown.length, fetchOlder]);
-
-  // Something new at the end while the person reads further up shows the button that jumps to it.
+  // Something new at the end while the person reads further up shows the button that jumps to it, until they are back at the end.
   const newest = shown.at(-1)?.id;
   const seenNewest = useRef(newest);
   useEffect(() => {
     if (newest === seenNewest.current) return;
     seenNewest.current = newest;
-    if (!atEnd.current) setBehind(true);
+    if (list.current?.getState().isWithinMaintainScrollAtEndThreshold === false) setBehind(true);
   }, [newest]);
+  useEffect(() => list.current?.getState().listen("isWithinMaintainScrollAtEndThreshold", (atEnd) => atEnd && setBehind(false)), []);
 
   // Opened at a message, the chat fetches back until it has it, or until its beginning. A message that draws no row, as a turn that ended without a reply, is opened at the nearest row to it, the one before it first.
-  const held = useRef(messages);
-  held.current = messages;
+  const held = useRef({ messages, shown });
+  held.current = { messages, shown };
   useEffect(() => {
     const id = opened?.agentId === agent.id ? opened.messageId : undefined;
     if (!id || loading) return;
     let going = true;
-    const rowOf = (message: Message | undefined) => (message ? document.querySelector<HTMLElement>(`[data-message-id="${CSS.escape(message.id)}"]`) : null);
     (async () => {
-      while (going && !held.current.some((message) => message.id === id)) {
+      while (going && !held.current.messages.some((message) => message.id === id)) {
         const more = await loadOlder(agent.id).catch(() => false);
         if (!more) break;
         await new Promise((resolve) => requestAnimationFrame(resolve));
       }
-      const at = going ? held.current.findIndex((message) => message.id === id) : -1;
-      if (at < 0) return;
-      let nearest: HTMLElement | null = null;
-      for (let step = 0; !nearest && step < held.current.length; step++) nearest = rowOf(held.current[at - step]) ?? rowOf(held.current[at + step]);
+      const { messages, shown } = held.current;
+      const at = list.current;
+      const index = going ? messages.findIndex((message) => message.id === id) : -1;
+      if (!at || index < 0) return;
+      const drawn = (message: Message | undefined) => (message && drawnAs(message) !== "nothing" && shown.includes(message) ? message : undefined);
+      let nearest: Message | undefined;
+      for (let step = 0; !nearest && step < messages.length; step++) nearest = drawn(messages[index - step]) ?? drawn(messages[index + step]);
       if (!nearest) return;
-      atEnd.current = false;
-      nearest.scrollIntoView({ block: "center" });
-      setFlashing(nearest.dataset.messageId!);
+      scrolls.current++;
+      await at.scrollToKey({ key: nearest.id, viewPosition: 0.5, animated: false });
+      if (!going) return;
+      setFlashing(nearest.id);
       setTimeout(() => going && setFlashing(null), FLASH_MS);
     })();
     return () => {
@@ -177,111 +297,82 @@ export const Timeline = memo(function Timeline({
     };
   }, [opened, agent.id, loading]);
 
-  // When the person last scrolled the messages themselves, with the wheel, a key or the scroll bar. Only they move the chat away from its end; the browser also scrolls it, as it keeps the place while something above changes size.
-  const moved = useRef(0);
-  const holding = useRef(false);
-  const byPerson = () => (moved.current = Date.now());
-  const hold = () => {
-    holding.current = true;
-    window.addEventListener("pointerup", () => (holding.current = false), { once: true });
-  };
-  const scrolled = () => {
-    const element = scroller.current!;
-    if (holding.current || Date.now() - moved.current < BY_PERSON_MS) atEnd.current = element.scrollHeight - element.scrollTop - element.clientHeight < AT_END;
-    if (atEnd.current) setBehind(false);
-    if (element.scrollTop < NEAR_TOP) fetchOlder();
-    onScrolled(element.scrollTop > 0);
-  };
-
   // The arrow keys move focus from message to message, the first time to the newest one on screen, so the keyboard reaches each message's Reply and menu.
   const stepFocus = (event: KeyboardEvent<HTMLDivElement>) => {
     if ((event.key !== "ArrowUp" && event.key !== "ArrowDown") || event.altKey || event.metaKey || event.ctrlKey || event.shiftKey) return;
-    const element = scroller.current!;
-    const rows = [...element.querySelectorAll<HTMLElement>("[data-message-row]")];
-    const at = rows.indexOf(event.target as HTMLElement);
-    if (at < 0 && event.target !== element) return;
-    const bottom = element.getBoundingClientRect().bottom;
-    const next = at < 0 ? rows.findLast((row) => row.getBoundingClientRect().top < bottom) : rows[at + (event.key === "ArrowDown" ? 1 : -1)];
-    if (!next) return;
+    const at = list.current;
+    const scroller = event.currentTarget;
+    const target = event.target as HTMLElement;
+    const focused = target.dataset.messageRow === undefined ? -1 : listed.findIndex((row) => row.id === target.dataset.messageId);
+    if (!at || (focused < 0 && target !== scroller)) return;
+    const takesFocus = (row: Row) => !isDay(row) && !isGoing(row) && !standings.has(row.id) && drawnAs(row) === "message";
+    const step = event.key === "ArrowDown" ? 1 : -1;
+    let next = focused < 0 ? (at.getState().end ?? -1) : focused + step;
+    while (listed[next] && !takesFocus(listed[next])) next += focused < 0 ? -1 : step;
+    const message = listed[next];
+    if (!message) return;
     event.preventDefault();
-    next.focus({ preventScroll: true });
-    next.scrollIntoView({ block: "nearest" });
+    // A row that is drawn takes focus at once, and one further off once the list has scrolled to it and drawn it.
+    const focus = () => scroller.querySelector<HTMLElement>(`[data-message-row][data-message-id="${CSS.escape(message.id)}"]`)?.focus({ preventScroll: true });
+    focus();
+    void at.scrollItemIntoView({ item: message, animated: false }).then(focus);
   };
 
-  const arrival = (message: Message): Arrival => {
-    if (message.created_at < openedAt || arrived.has(message.id)) return "none";
-    return message.sender === "person" ? "settle" : "rise";
-  };
+  // A message that has come in is drawn with its motion once. The list draws its row after this has run, so it counts as arrived from the frame after.
   useEffect(() => {
-    for (const message of shown) if (message.created_at >= openedAt) arrived.add(message.id);
+    const frame = requestAnimationFrame(() => {
+      for (const message of shown) if (message.created_at >= openedAt) arrived.add(message.id);
+    });
+    return () => cancelAnimationFrame(frame);
   }, [shown, openedAt]);
-
   const empty = !agent.latest && messages.length === 0 && !sending;
 
   return (
     <div className="relative min-h-0 flex-1">
-      <div
-        ref={scroller}
-        onScroll={scrolled}
-        onWheel={byPerson}
-        onPointerDown={hold}
-        onKeyDown={(event) => {
-          byPerson();
-          stepFocus(event);
-        }}
-        onTouchMove={byPerson}
+      <LegendList<Row>
+        ref={list}
+        data={listed}
+        extraData={around}
+        keyExtractor={idOf}
+        getItemType={rowKind}
+        renderItem={drawRow}
+        recycleItems={false}
+        estimatedItemSize={ROW_HEIGHT}
+        initialScrollAtEnd={opensAtEnd}
+        alignItemsAtEnd
+        maintainScrollAtEnd
+        maintainScrollAtEndThreshold={AT_END}
+        alwaysRender={pinned}
+        onStartReached={fetchOlder}
+        onStartReachedThreshold={NEAR_TOP}
+        onScroll={(event) => onScrolled(event.nativeEvent.contentOffset.y > 0)}
+        onUserScroll={() => void scrolls.current++}
+        onKeyDown={stepFocus}
         tabIndex={0}
-        className="h-full overflow-x-hidden overflow-y-auto focus-visible:-outline-offset-2"
+        showsHorizontalScrollIndicator={false}
+        className={cn("h-full focus-visible:-outline-offset-2", ROWS_DRAW_PAST_THEIR_EDGE)}
+        contentContainerClassName="mx-auto max-w-chat"
+        contentContainerStyle={COLUMN}
         data-testid="timeline"
         aria-label="Messages"
         role="log"
-      >
-        <div ref={content} className="mx-auto flex min-h-full max-w-chat flex-col justify-end px-4 pt-15 pb-3">
-          {loading && messages.length === 0 ? (
-            <div className="grid flex-1 place-items-center text-ink3">
-              <Spinner label="Loading messages" />
-            </div>
-          ) : null}
-          {shown.map((message, index) => {
-            const before = shown[index - 1];
-            const standing = standings.get(message.id);
-            return (
-              <div key={message.id}>
-                {!before || !sameDay(before.created_at, message.created_at) ? (
-                  <p className="mt-4 mb-1.5 text-center text-sm font-medium text-ink2" data-testid="day">
-                    {dayLabel(message.created_at, today)}
-                  </p>
-                ) : null}
-                {standing ? (
-                  <ExchangeRow agentId={agent.id} asked={message} state={standing} flashing={flashing === message.id} />
-                ) : (
-                  <MessageRow
-                    message={message}
-                    quoted={message.reply_to ? byId.get(message.reply_to) : undefined}
-                    // An ask another agent raised while working for this one says whose it is.
-                    from={message.agent_id === agent.id ? undefined : message.agent_id}
-                    receipt={message.id === newestMine}
-                    arrival={arrival(message)}
-                    flashing={flashing === message.id}
-                    onReply={onReply}
-                  />
-                )}
-              </div>
-            );
-          })}
-          {/* A new agent's chat says what to do first. Its instructions have it ask what it's for. */}
-          {empty ? (
-            <p className="mb-2 animate-fade-in px-6 text-center text-message text-ink2" data-testid="new-agent-hint">
-              {agent.name} is new. Tell it what it's for.
-            </p>
-          ) : null}
-          {sending ? <OutgoingRow outgoing={sending} /> : null}
-          {working ? <WorkingLine /> : null}
-        </div>
-      </div>
+        ListHeaderComponent={UNDER_BAR}
+        ListEmptyComponent={<div className="grid flex-1 place-items-center text-ink3">{loading ? <Spinner label="Loading messages" /> : null}</div>}
+        ListFooterComponent={
+          <div className="px-4 pb-3">
+            {/* A new agent's chat says what to do first. Its instructions have it ask what it's for. */}
+            {empty ? (
+              <p className="mb-2 animate-fade-in px-6 text-center text-message text-ink2" data-testid="new-agent-hint">
+                {agent.name} is new. Tell it what it's for.
+              </p>
+            ) : null}
+            {working ? <WorkingLine /> : null}
+          </div>
+        }
+      />
       <button
         type="button"
-        onClick={() => toEnd(true)}
+        onClick={() => void toEnd(true)}
         tabIndex={behind ? 0 : -1}
         aria-hidden={!behind}
         className={cn(

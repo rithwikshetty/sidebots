@@ -720,7 +720,7 @@ test.describe("the panel's frame", () => {
     const atlas = await agentNamed(server, "Atlas");
     await openAgentPage(page, atlas.id);
     const photo = page.getByTestId("message-photos").last().getByRole("button").first();
-    await photo.scrollIntoViewIfNeeded();
+    await scrollChatTo(page, photo);
     await photo.click();
     await expect(page.getByTestId("images")).toBeVisible();
     await expect(page.getByTestId("agent-page")).toHaveCount(0);
@@ -792,8 +792,8 @@ test.describe("pictures for review @shots", () => {
         "images",
         async () => {
           await openChat(page, atlas.id);
-          const photos = page.getByTestId("message-photos").nth(-2).getByRole("button");
-          await photos.first().scrollIntoViewIfNeeded();
+          const photos = page.getByTestId("message-theirs").filter({ hasText: "Here are three from the trip" }).getByTestId("message-photos").getByRole("button");
+          await scrollChatTo(page, photos.first());
           await photos.first().click();
           await expect.poll(() => page.getByTestId("image").evaluate((drawn: HTMLImageElement) => drawn.complete && drawn.naturalWidth > 0)).toBe(true);
         },
@@ -803,7 +803,7 @@ test.describe("pictures for review @shots", () => {
         async () => {
           await openChat(page, atlas.id);
           const open = page.getByTestId("open-page").last();
-          await open.scrollIntoViewIfNeeded();
+          await scrollChatTo(page, open);
           await open.click();
           await pageFrame(page, "Grocery");
         },

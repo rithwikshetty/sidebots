@@ -198,22 +198,18 @@ export async function allMessages(server: TestServer, agentId: string): Promise<
   }
 }
 
-/** Scrolls the open chat up with the wheel, as a person does, until `target` is in it, fetching older messages on the way. */
-export async function scrollChatTo(page: Page, target: Locator): Promise<void> {
-  const timeline = page.getByTestId("timeline");
-  const box = (await timeline.boundingBox())!;
-  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
-  await expect
-    .poll(
-      async () => {
-        if ((await target.count()) > 0) return true;
-        await page.mouse.wheel(0, -4000);
-        return false;
-      },
-      { timeout: 30_000, intervals: [200] },
-    )
-    .toBe(true);
-  await target.scrollIntoViewIfNeeded();
+/**
+ * Scrolls the open chat with the wheel, as a person does, until `target` is
+ * drawn, and brings it on screen: back towards the chat's beginning, fetching
+ * older messages on the way, or `on` towards its end. The chat draws only the
+ * rows near the screen, so it goes a little under a screen at a time.
+ */
+export async function scrollChatTo(page: Page, target: Locator, towards: "back" | "on" = "back"): Promise<void> {
+  await page.getByTestId("timeline").hover();
+  await expect(async () => {
+    if ((await target.count()) === 0) await page.mouse.wheel(0, towards === "back" ? -500 : 500);
+    await target.scrollIntoViewIfNeeded({ timeout: 250 });
+  }).toPass({ intervals: [0], timeout: 60_000 });
 }
 
 /** The colour a CSS colour value draws as, as `rgb(r, g, b)`, read in the window. */
