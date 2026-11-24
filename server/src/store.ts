@@ -6,7 +6,7 @@ import { basename, join, resolve } from "node:path";
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
 
-import { COLOR, PROVIDERS, USAGE_DAYS, betweenAgents, readableColor, selectionOf } from "./contract.ts";
+import { COLOR, PAGE, PROVIDERS, USAGE_DAYS, betweenAgents, readableColor, selectionOf } from "./contract.ts";
 import type { About, Agent, AgentWithLatest, Ask, Avatar, Connection, Day, Found, Job, Limit, Memory, Message, Provider, PushToken, Question, Schedule, Selection, Sender, Status, Switched, TurnKind, Usage, Used } from "./contract.ts";
 
 export type Person = { id: string; name: string };
@@ -198,7 +198,6 @@ create index if not exists messages_peer on messages (peer_id) where peer_id is 
 create index if not exists messages_unfinished on messages (status) where status = 'queued' or status = 'running';
 `;
 
-const PAGE = 50;
 const SEARCH_LIMIT = 20;
 const AVATAR_ID = /^[a-z0-9-]+$/;
 // A stored attachment's file name: no folders, and never a dot first.
