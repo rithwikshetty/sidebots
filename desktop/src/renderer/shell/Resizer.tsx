@@ -1,4 +1,4 @@
-import type { KeyboardEvent, PointerEvent } from "react";
+import { useRef, type KeyboardEvent, type PointerEvent } from "react";
 import { cn } from "../lib/cn.ts";
 
 // How far an arrow key moves the edge, in pixels.
@@ -32,30 +32,35 @@ export function Resizer({
 }) {
   const clamp = (value: number) => Math.round(Math.min(Math.max(value, least), Math.max(most, least)));
 
-  function drag(event: PointerEvent<HTMLDivElement>) {
+  // A drag, from the press on the edge: where the pointer was, the width the column had, and the width the drag has reached.
+  const drag = useRef<{ from: number; width: number; reached: number } | null>(null);
+
+  function press(event: PointerEvent<HTMLDivElement>) {
     if (event.button !== 0) return;
     event.preventDefault();
-    const handle = event.currentTarget;
-    const from = event.clientX;
-    // Where the drag has got to, which is where it ends.
-    let reached = width;
-    handle.setPointerCapture(event.pointerId);
-    document.documentElement.dataset.resizing = "";
-    const move = (moved: globalThis.PointerEvent) => {
-      reached = clamp(width + (side === "right" ? moved.clientX - from : from - moved.clientX));
-      onResize(reached, false);
-    };
-    // The handle loses the pointer as the button is let go, and when the pointer is taken from it with the button still down, as when the system swallows the release.
-    const end = () => {
-      handle.removeEventListener("pointermove", move);
-      handle.removeEventListener("pointerup", move);
-      handle.removeEventListener("lostpointercapture", end);
-      delete document.documentElement.dataset.resizing;
-      onResize(reached, true);
-    };
-    handle.addEventListener("pointermove", move);
-    handle.addEventListener("pointerup", move);
-    handle.addEventListener("lostpointercapture", end);
+    drag.current = { from: event.clientX, width, reached: width };
+    event.currentTarget.setPointerCapture(event.pointerId);
+  }
+
+  /** The width the drag reaches with the pointer where `event` has it, while the edge has the pointer. */
+  function reach(event: PointerEvent<HTMLDivElement>): number | undefined {
+    const under = drag.current;
+    if (!under || !event.currentTarget.hasPointerCapture(event.pointerId)) return undefined;
+    return (under.reached = clamp(under.width + (side === "right" ? event.clientX - under.from : under.from - event.clientX)));
+  }
+
+  function move(event: PointerEvent<HTMLDivElement>) {
+    const reached = reach(event);
+    if (reached !== undefined) onResize(reached, false);
+  }
+
+  // The edge loses the pointer when the button is let go, or when the system takes it with the button still down.
+  function end() {
+    const ended = drag.current;
+    if (!ended) return;
+    drag.current = null;
+    delete document.documentElement.dataset.resizing;
+    onResize(ended.reached, true);
   }
 
   function key(event: KeyboardEvent<HTMLDivElement>) {
@@ -74,7 +79,11 @@ export function Resizer({
       aria-valuemin={least}
       aria-valuemax={most}
       tabIndex={0}
-      onPointerDown={drag}
+      onPointerDown={press}
+      onGotPointerCapture={() => (document.documentElement.dataset.resizing = "")}
+      onPointerMove={move}
+      onPointerUp={reach}
+      onLostPointerCapture={end}
       onDoubleClick={() => onResize(clamp(initial), true)}
       onKeyDown={key}
       className={cn(
