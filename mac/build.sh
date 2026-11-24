@@ -9,6 +9,10 @@
 #                          notarise it and staples the ticket to it, as Apple's "Packaging Mac software for
 #                          distribution" sets out. Then signs it with the update key in the keychain and writes
 #                          site/public/appcast.xml for it.
+#   mac/build.sh dev       Makes build/Sidebots Dev.app, an app of its own beside the Sidebots in /Applications,
+#                          as the phone's Sidebots Dev is beside the published app: its own identifier and name,
+#                          the phone's dev icon, its data in ~/.sidebots-dev, its server on port 4318, and no
+#                          updates. Signed with SIDEBOTS_IDENTITY, for use on this Mac.
 #
 # SIDEBOTS_IDENTITY is a code signing identity in the keychain: "Apple Development" unless set, or "-"
 # to sign for this Mac only, and for a release "Developer ID Application" unless set. A release sends
@@ -26,7 +30,9 @@ DMGBUILD_VERSION=1.6.7
 mac=$(cd "$(dirname "$0")" && pwd)
 root=$(dirname "$mac")
 build=$mac/build
-app=$build/Sidebots.app
+name=Sidebots
+[ "${1:-}" = dev ] && name="Sidebots Dev"
+app=$build/$name.app
 resources=$app/Contents/Resources
 identity=${SIDEBOTS_IDENTITY:-Apple Development}
 [ "${1:-}" = release ] && identity=${SIDEBOTS_IDENTITY:-Developer ID Application}
@@ -44,6 +50,13 @@ download() {
   echo "$file"
 }
 
+# Has the app whose Info.plist is $1 keep its data and listen where the dev copy does, beside whatever else it is opened with.
+dev_environment() {
+  plutil -extract LSEnvironment json -o /dev/null "$1" 2>/dev/null || plutil -insert LSEnvironment -json '{}' "$1"
+  plutil -replace LSEnvironment.SIDEBOTS_HOME -string "$HOME/.sidebots-dev" "$1"
+  plutil -replace LSEnvironment.PORT -string 4318 "$1"
+}
+
 echo "Building the menu bar app"
 swift build -c release --arch arm64 --package-path "$mac"
 products=$(swift build -c release --arch arm64 --package-path "$mac" --show-bin-path)
@@ -54,6 +67,24 @@ ditto "$products/Sparkle.framework" "$app/Contents/Frameworks/Sparkle.framework"
 cp "$mac/Info.plist" "$app/Contents/Info.plist"
 plutil -replace CFBundleVersion -string "$(git -C "$root" rev-list --count HEAD)" "$app/Contents/Info.plist"
 cp "$mac/AppIcon.icns" "$resources/"
+if [ "${1:-}" = dev ]; then
+  info=$app/Contents/Info.plist
+  plutil -replace CFBundleIdentifier -string app.sidebots.mac.dev "$info"
+  plutil -replace CFBundleName -string "$name" "$info"
+  plutil -replace CFBundleDisplayName -string "$name" "$info"
+  plutil -replace SUEnableAutomaticChecks -bool false "$info"
+  plutil -replace SUAutomaticallyUpdate -bool false "$info"
+  # The app gives these to its server and its window however it is opened, unless whoever opens it sets others.
+  dev_environment "$info"
+  # The phone's dev icon, at the sizes an app's icon has.
+  iconset=$build/AppIcon.iconset
+  rm -rf "$iconset" && mkdir -p "$iconset"
+  for size in 16 32 128 256 512; do
+    sips -z $size $size "$root/mobile/assets/icon-dev.png" --out "$iconset/icon_${size}x${size}.png" >/dev/null
+    sips -z $((size * 2)) $((size * 2)) "$root/mobile/assets/icon-dev.png" --out "$iconset/icon_${size}x${size}@2x.png" >/dev/null
+  done
+  iconutil -c icns -o "$resources/AppIcon.icns" "$iconset"
+fi
 
 echo "Adding Node $NODE_VERSION and cloudflared $CLOUDFLARED_VERSION"
 node=$(download "https://nodejs.org/dist/v$NODE_VERSION/node-v$NODE_VERSION-darwin-arm64.tar.gz" "$NODE_SHA256")
@@ -75,6 +106,13 @@ SIDEBOTS_VERSION=$(plutil -extract CFBundleShortVersionString raw "$app/Contents
   SIDEBOTS_BUILD=$(plutil -extract CFBundleVersion raw "$app/Contents/Info.plist") \
   pnpm --dir "$root/desktop" package
 ditto "$root/desktop/out/Sidebots-darwin-arm64/Sidebots.app" "$app/Contents/Helpers/Sidebots.app"
+if [ "${1:-}" = dev ]; then
+  # The window's app shows the dev name and icon in the Dock, and keeps the files' names, which the signing goes by. Opened by itself, as from the Dock, it reaches the dev server too.
+  plutil -replace CFBundleName -string "$name" "$app/Contents/Helpers/Sidebots.app/Contents/Info.plist"
+  plutil -replace CFBundleDisplayName -string "$name" "$app/Contents/Helpers/Sidebots.app/Contents/Info.plist"
+  dev_environment "$app/Contents/Helpers/Sidebots.app/Contents/Info.plist"
+  cp "$resources/AppIcon.icns" "$app/Contents/Helpers/Sidebots.app/Contents/Resources/electron.icns"
+fi
 
 echo "Signing with $identity"
 # Every program in the bundle, then the app around them. Node compiles
@@ -95,6 +133,10 @@ sign_desktop "$app/Contents/Helpers/Sidebots.app"
 sign "$app"
 codesign --verify --strict --deep "$app"
 
+if [ "${1:-}" = dev ]; then
+  echo "Built $app"
+  exit 0
+fi
 if [ "${1:-}" != release ]; then
   rm -f "$build/Sidebots.zip"
   ditto -c -k --keepParent "$app" "$build/Sidebots.zip"

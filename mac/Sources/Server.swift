@@ -106,8 +106,10 @@ enum SignIn {
   nonisolated private static let resources = Bundle.main.resourceURL!
   nonisolated static let node = resources.appending(path: "bin/node")
   nonisolated static let folder = resources.appending(path: "server")
-  /// The server's output, where Console shows it.
-  private static let log = FileManager.default.homeDirectoryForCurrentUser.appending(path: "Library/Logs/Sidebots/server.log")
+  /// The app's name, which a dev build has apart from the published app's.
+  nonisolated static let name = Bundle.main.infoDictionary?["CFBundleName"] as? String ?? "Sidebots"
+  /// The server's output, where Console shows it, in a folder named for the app.
+  private static let log = FileManager.default.homeDirectoryForCurrentUser.appending(path: "Library/Logs/\(name)/server.log")
 
   /// The person the app sets up, named as the computer knows its user.
   static let personName = NSFullUserName().isEmpty ? NSUserName() : NSFullUserName()
@@ -124,9 +126,13 @@ enum SignIn {
   /// What the server and its commands run with: the app's own
   /// environment, so that `SIDEBOTS_HOME`, `PORT` and `SIDEBOTS_RELAY` pass
   /// through, with the bundled Node first on the PATH, the bundled
-  /// cloudflared for the tunnel, and the app's version.
+  /// cloudflared for the tunnel, and the app's version. What the app's
+  /// Info.plist sets under `LSEnvironment`, as a dev build's does for its
+  /// data folder and port, holds however the app was started, unless the
+  /// app's own environment says otherwise.
   nonisolated static var environment: [String: String] {
-    var environment = ProcessInfo.processInfo.environment
+    let built = Bundle.main.infoDictionary?["LSEnvironment"] as? [String: String] ?? [:]
+    var environment = built.merging(ProcessInfo.processInfo.environment) { _, given in given }
     environment["PATH"] = node.deletingLastPathComponent().path + ":" + (environment["PATH"] ?? "/usr/bin:/bin:/usr/sbin:/sbin")
     environment["SIDEBOTS_CLOUDFLARED"] = resources.appending(path: "bin/cloudflared").path
     environment["SIDEBOTS_VERSION"] = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String

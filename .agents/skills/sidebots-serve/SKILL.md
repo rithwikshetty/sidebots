@@ -42,6 +42,23 @@ Every command for the dev copy, the server's and the desktop app's, runs with `S
    It is up once `lsof -tiTCP:4318 -sTCP:LISTEN` returns a process and the log says `Sidebots is listening on http://127.0.0.1:4318`.
 6. Run `node src/main.ts status` in `server/`. It must say `Phones reach it at <address>`, which is the dev copy's own address and not the real server's. The server starts the tunnel itself, with `cloudflared`, so give it a few seconds after it starts.
 
+### The dev Mac app
+
+Sidebots Dev is the whole Mac app built from this checkout: the menu bar app with this checkout's server and window inside it. It is an app of its own beside the Sidebots in `/Applications`, with its own name, identifier and icon, and it keeps its data in `~/.sidebots-dev` and runs its server on port 4318 by itself. Serve the dev copy this way when the change is to the menu bar app in `mac/`, or when the user asks for the Mac app or its menu bar panel. It takes the place of steps 4, 5 and 7.
+
+- Do step 3 first, since the app sets up a new person on `~/.claude` or `~/.codex` when the dev copy has nobody.
+- Stop what holds the dev copy: step 4's `kill`, step 7's `pkill`, and a Sidebots Dev that is already open, with `osascript -e 'quit app id "app.sidebots.mac.dev"'`.
+- Build it in the background and keep the task ID. It takes a few minutes. It packages the desktop app into `desktop/out`, which the desktop's end-to-end tests share, so take their lock around it:
+
+  ```sh
+  until mkdir /tmp/sidebots-desktop-build.lock 2>/dev/null; do sleep 5; done
+  mac/build.sh dev; rmdir /tmp/sidebots-desktop-build.lock
+  ```
+
+- Open it with `open "mac/build/Sidebots Dev.app"`. It is up once `lsof -tiTCP:4318 -sTCP:LISTEN` returns its server, and "Open Sidebots" in its menu bar panel opens the window. Then do step 6.
+
+Any later change needs the build again, since the app carries a copy of the code.
+
 ## As the real server
 
 3. If this checkout adds to `TABLE_CHANGES` in `server/src/store.ts` against main (`git diff main -- server/src/store.ts`), ask before starting. The server makes those changes to `~/.sidebots/sidebots.sqlite` when it starts, and main's server can't undo them.
@@ -103,6 +120,6 @@ For a dev copy, say that the real server was left running, and that the agents o
 
 After a later change, serve again. A server change needs steps 4 and 5. A phone app change needs step 10.
 
-A dev copy keeps running until it is stopped. When the user is done with the branch, stop its server with `kill $(lsof -tiTCP:4318 -sTCP:LISTEN)` and its desktop app with the `pkill` in step 7.
+A dev copy keeps running until it is stopped. When the user is done with the branch, stop its server with `kill $(lsof -tiTCP:4318 -sTCP:LISTEN)` and its desktop app with the `pkill` in step 7. Quit Sidebots Dev from its menu bar panel, or with the `osascript` line above.
 
 The real server keeps running for the household's agents after the user finishes testing. When they are done with a branch served as the real server, serve main again by running this procedure from the main checkout. Leave the server off only when the user asks.

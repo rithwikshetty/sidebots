@@ -1,20 +1,11 @@
 import { ContextMenu as BaseContext } from "@base-ui/react/context-menu";
 import { Menu as Base } from "@base-ui/react/menu";
-import { Check } from "lucide-react";
 import type { ComponentType, KeyboardEvent, ReactElement, ReactNode } from "react";
 import { cn } from "../lib/cn.ts";
 import { Kbd } from "./Kbd.tsx";
 
-/** One thing a menu does: its words, its icon, and what it does once chosen, with a `note` under its words when it needs saying what it does. A `danger` one can't be undone. A line between groups is `"separator"`. Choices under a heading, where one is in effect, come from `choice`. */
-export type MenuEntry =
-  | { label: string; note?: string; icon?: ComponentType<{ className?: string; strokeWidth?: number }>; onSelect: () => void; danger?: boolean; shortcut?: string[] }
-  | { heading: string; options: Partial<Record<string, string>>; value: string; onChange: (value: string) => void }
-  | "separator";
-
-/** Choices in a menu under `heading` where one is in effect, as for an agent's model: the one in effect wears a check, and choosing another changes it. */
-export function choice<Id extends string>(heading: string, options: Partial<Record<Id, string>>, value: Id, onChange: (value: Id) => void): MenuEntry {
-  return { heading, options, value, onChange: onChange as (value: string) => void };
-}
+/** One thing a menu does: its words, its icon, and what it does once chosen, with a `note` under its words when it needs saying what it does. A `danger` one can't be undone. A line between groups is `"separator"`. */
+export type MenuEntry = { label: string; note?: string; icon?: ComponentType<{ className?: string; strokeWidth?: number }>; onSelect: () => void; danger?: boolean; shortcut?: string[] } | "separator";
 
 const POPUP =
   "min-w-44 origin-(--transform-origin) rounded-lg bg-raised p-1 text-ink shadow-menu outline-none transition-[opacity,scale] duration-150 ease-out data-ending-style:scale-[0.97] data-ending-style:opacity-0 data-starting-style:scale-[0.97] data-starting-style:opacity-0";
@@ -26,19 +17,6 @@ function Entries({ entries }: { entries: MenuEntry[] }) {
   return entries.map((entry, index) =>
     entry === "separator" ? (
       <Base.Separator key={`separator-${index}`} className="mx-2 my-1 h-px bg-line" />
-    ) : "heading" in entry ? (
-      // As with any entry, a choice takes effect once the menu has let focus go.
-      <Base.RadioGroup key={entry.heading} value={entry.value} onValueChange={(next: string) => next !== entry.value && requestAnimationFrame(() => entry.onChange(next))}>
-        <Base.GroupLabel className="flex h-6 items-center px-2 text-xs font-semibold text-ink2">{entry.heading}</Base.GroupLabel>
-        {Object.entries(entry.options).map(([id, label]) => (
-          <Base.RadioItem key={id} value={id} closeOnClick className={ITEM}>
-            <span className="flex-1 truncate">{label}</span>
-            <Base.RadioItemIndicator className="flex">
-              <Check strokeWidth={2.5} />
-            </Base.RadioItemIndicator>
-          </Base.RadioItem>
-        ))}
-      </Base.RadioGroup>
     ) : (
       <Base.Item
         key={entry.label}
