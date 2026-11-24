@@ -35,8 +35,7 @@ test.describe("against the seeded world", () => {
     await page.mouse.down();
     await page.mouse.move(x + 30, y, { steps: 4 });
     await expect(edge).toHaveAttribute("aria-valuenow", "310");
-    // The move is answered for only once the page has taken it, which it never does, so the test doesn't wait for the answer.
-    void pointer.send("Input.dispatchMouseEvent", { type: "mouseMoved", x: 40, y: 300, button: "none", buttons: 0 }).catch(() => undefined);
+    await pointer.send("Input.dispatchMouseEvent", { type: "mouseMoved", x: 40, y: 300, button: "none", buttons: 0 });
     await page.mouse.move(x + 60, y, { steps: 4 });
     await page.mouse.up();
     await expect(edge).toHaveAttribute("aria-valuenow", "340");
