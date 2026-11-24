@@ -66,7 +66,11 @@ async function local(item: Shown): Promise<string> {
   if (!item.uri.startsWith("http")) return item.uri;
   const folder = new Directory(Paths.cache, "sent");
   folder.create({ idempotent: true, intermediates: true });
-  const file = await File.downloadFileAsync(item.uri, new File(folder, item.uri.split("/").pop() ?? item.name), { idempotent: true, headers: item.headers });
+  // A sent file never changes, and the computer gives each its own name, so one the phone has is the one asked for.
+  const kept = new File(folder, item.uri.split("/").pop() ?? item.name);
+  if (kept.exists) return kept.uri;
+  // Two fetches of one file at once both land, the second in the first's place.
+  const file = await File.downloadFileAsync(item.uri, kept, { idempotent: true, headers: item.headers });
   return file.uri;
 }
 
