@@ -22,24 +22,21 @@ const dayWords = (page: Page, offset: number) =>
 
 test.describe("every kind of message in history", () => {
   test("day markers name each day of the week the chat covers", async ({ page, server }) => {
-    await openChat(page, server, "Atlas");
-    // Back to the chat's first message, so the window has the whole week, and on through it to the end. The chat draws only the rows near the screen, so each marker is read as it passes, with the message under it, which tells a day marked twice from one read twice.
+    const id = await openChat(page, server, "Atlas");
+    // Back to the chat's first message, so the window has the whole week, and on through it to the end. The chat draws only the rows near the screen, so each marker is read as it passes. A marker is told from the next by the message it stands over, so a day marked twice is two.
     await scrollChatTo(page, mine(page).filter({ hasText: ATLAS_FIRST }));
     const days = new Map<string, string>();
-    const drawn = () =>
-      timeline(page).evaluate((element) => {
-        const rows = [...element.querySelectorAll<HTMLElement>("[data-message-id]")].map((row) => ({ id: row.dataset.messageId!, top: row.getBoundingClientRect().top })).sort((a, b) => a.top - b.top);
-        const markers = [...element.querySelectorAll<HTMLElement>('[data-testid="day"]')].map((marker) => ({ words: marker.innerText, top: marker.getBoundingClientRect().top })).sort((a, b) => a.top - b.top);
-        return markers.map(({ words, top }) => ({ words, under: rows.find((row) => row.top > top)?.id }));
-      });
     for (;;) {
-      for (const { words, under } of await drawn()) if (under && !days.has(under)) days.set(under, words);
+      const drawn = await page.getByTestId("day").evaluateAll((markers) => markers.map((marker) => ({ over: (marker as HTMLElement).dataset.day!.slice("day:".length), words: (marker as HTMLElement).innerText })));
+      for (const { over, words } of drawn) days.set(over, words);
       if ((await fromEnd(page)) <= 2) break;
       await page.mouse.wheel(0, 500);
       await page.evaluate(() => new Promise(requestAnimationFrame));
     }
-    const expected = [...(await Promise.all([-6, -5, -4, -3, -2].map((offset) => dayWords(page, offset)))), "Yesterday", "Today"];
-    expect([...days.values()]).toEqual(expected);
+    // In the order of the messages they stand over.
+    const order = (await wholeChat(server, id)).map((message) => message.id);
+    const marked = [...days].sort(([a], [b]) => order.indexOf(a) - order.indexOf(b)).map(([, words]) => words);
+    expect(marked).toEqual([...(await Promise.all([-6, -5, -4, -3, -2].map((offset) => dayWords(page, offset)))), "Yesterday", "Today"]);
   });
 
   test("Sidebots' notices are drawn as notes, not bubbles", async ({ page, server }) => {

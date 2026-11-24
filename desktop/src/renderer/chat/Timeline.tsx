@@ -24,7 +24,7 @@ const CLOCK_SLACK_MS = 2000;
 // How long a message the chat was opened at flashes.
 const FLASH_MS = 1600;
 // How many frames a glide to the end is given to land on it.
-const SETTLE_FRAMES = 60;
+const LANDING_FRAMES = 60;
 
 // The messages that have come in with motion, so a row drawn again, as when it is scrolled back to or its chat is opened again, shows as it is.
 const arrived = new Set<string>();
@@ -70,7 +70,7 @@ function drawRow({ item: row, extraData }: LegendListRenderItemProps<Row>) {
   const { agentId, standings, byId, newestMine, flashing, today, openedAt, onReply, onPageShown } = extraData as Around;
   if (isDay(row)) {
     return (
-      <p className="mt-4 px-4 text-center text-sm font-medium text-ink2" data-testid="day">
+      <p className="mt-4 px-4 text-center text-sm font-medium text-ink2" data-testid="day" data-day={row.id}>
         {dayLabel(row.day, today)}
       </p>
     );
@@ -112,7 +112,7 @@ async function landAtEnd(list: LegendListRef, glide: Promise<void>, over: () => 
   const stopped = new AbortController();
   await Promise.race([glide, new Promise((resolve) => list.getScrollableNode()?.addEventListener("scrollend", resolve, { once: true, signal: stopped.signal }))]);
   stopped.abort();
-  for (let frames = 0, still = 0; frames < SETTLE_FRAMES && still < 2 && !over(); frames++) {
+  for (let frames = 0, still = 0; frames < LANDING_FRAMES && still < 2 && !over(); frames++) {
     const scroller = list.getScrollableNode();
     if (!scroller) return;
     const end = scroller.scrollHeight - scroller.clientHeight;
