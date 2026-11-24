@@ -250,8 +250,9 @@ export const Timeline = memo(function Timeline({
     handle.current = { toEnd: () => void toEnd() };
   }, [handle, toEnd]);
 
+  // The page before the oldest message the window holds. With none yet, as while the first page is on its way, there is nothing to fetch before.
   const fetchOlder = useCallback(() => {
-    if (older.current) return loadOlder(agent.id).then((more) => void (older.current = more), () => undefined);
+    if (older.current && held.current.messages.length > 0) return loadOlder(agent.id).then((more) => void (older.current = more), () => undefined);
   }, [agent.id]);
 
   // Something new at the end while the person reads further up shows the button that jumps to it, until they are back at the end.
