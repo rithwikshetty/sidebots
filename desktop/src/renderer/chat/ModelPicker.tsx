@@ -6,8 +6,8 @@ import { PROVIDERS, runsFast, type AgentWithLatest, type Logo, type Offered, typ
 import { cn } from "../lib/cn.ts";
 import { loadUsage, useUsage, type AgentChanges } from "../lib/store.ts";
 import { BrandLogo } from "../ui/BrandLogo.tsx";
-import { Button } from "../ui/Button.tsx";
 import { Segmented } from "../ui/Segmented.tsx";
+import { Tooltip } from "../ui/Tooltip.tsx";
 
 const SPEEDS = {
   standard: (
@@ -26,8 +26,8 @@ const SPEEDS = {
 
 /**
  * What the agent answers with, in the message field: a button with its
- * provider's logo, its model and its effort, and a bolt when it answers in
- * fast mode. It opens a panel above it. At the panel's start is a rail of
+ * provider's logo, whose tooltip names its model, its effort, and "Fast"
+ * when it answers in fast mode. It opens a panel above it. At the panel's start is a rail of
  * the providers, by logo, with a mark beside the one whose models are listed
  * next to it. A provider the person hasn't set up is faded, and says where to
  * set it up in place of its models. Beside the models are the efforts the
@@ -60,16 +60,15 @@ export function ModelPicker({ agent, onSet, returnTo }: { agent: AgentWithLatest
         loadUsage().catch(() => {});
       }}
     >
-      <Popover.Trigger
-        render={
-          <Button variant="ghost" aria-label={`Model: ${label}`} className="gap-1.5 px-2 text-ink2 data-[popup-open]:bg-press" data-testid="model">
-            <BrandLogo logo={own.logo} size={16} />
-            <span className="text-ink">{own.models[agent.model]}</span>
-            <span>{own.efforts[agent.effort]}</span>
-            {fast ? <Zap aria-hidden className="size-3 shrink-0 fill-current" /> : null}
-          </Button>
-        }
-      />
+      <Tooltip label={label} side="top">
+        <Popover.Trigger
+          aria-label={`Model: ${label}`}
+          className="grid size-8 shrink-0 place-items-center rounded-md transition-colors duration-150 hover:bg-hover data-[popup-open]:bg-press"
+          data-testid="model"
+        >
+          <BrandLogo logo={own.logo} size={18} />
+        </Popover.Trigger>
+      </Tooltip>
       <Popover.Portal>
         <Popover.Positioner side="top" align="end" sideOffset={8} className="z-50 outline-none">
           <Popover.Popup

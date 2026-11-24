@@ -426,7 +426,7 @@ test.describe("the model", () => {
     await expect(efforts(page).getByRole("radio")).toHaveText(Object.values(PROVIDERS.codex.efforts));
   });
 
-  test("only a model with a fast mode can answer fast, and the button wears a bolt while it does", async ({ page, server }) => {
+  test("only a model with a fast mode can answer fast, and the button says so while it does", async ({ page, server }) => {
     const id = await chatWith(page, server);
     const model = page.getByTestId("model");
     await model.click();
@@ -437,7 +437,6 @@ test.describe("the model", () => {
     await speed.getByRole("radio", { name: "Fast" }).click();
     await expect(picker).toContainText("Fast uses more of your plan");
     await expect(model).toHaveAccessibleName("Model: Claude Opus 5.5 · Medium effort · Fast");
-    await expect(model.locator("svg.lucide-zap")).toBeVisible();
     await until(() => agentOf(server, id), (agent) => agent.fast === true);
     // Sonnet has none, so it answers at its usual speed and the choice is out of reach.
     await models(page, "claude").getByRole("radio", { name: "Claude Sonnet 5.5" }).click();
