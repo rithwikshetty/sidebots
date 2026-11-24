@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type RefObject } from "react";
+import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type RefObject } from "react";
 import { ArrowDown } from "lucide-react";
 import { betweenAgents, exchanges, type AgentWithLatest, type Message } from "@server/contract.ts";
 import { standingOf } from "@client/exchanges.ts";
@@ -38,9 +38,11 @@ export type TimelineHandle = { toEnd: () => void };
  * that jumps to the newest shows once something comes. Near the top, it
  * fetches the page before, keeping the place on screen. Opened at a message,
  * it fetches back until it has it, then scrolls to it and flashes it, or the
- * message drawn nearest to it when it draws nothing itself.
+ * message drawn nearest to it when it draws nothing itself. It draws again
+ * only when what it is given or its messages change, so typing in the field
+ * under it draws none of it.
  */
-export function Timeline({
+export const Timeline = memo(function Timeline({
   agent,
   outgoing,
   onReply,
@@ -293,4 +295,4 @@ export function Timeline({
       </button>
     </div>
   );
-}
+});

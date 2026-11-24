@@ -64,8 +64,8 @@ export function agentActions(agent: AgentWithLatest): MenuEntry[] {
  */
 export function RowBody({ agent, online, found, search = "" }: { agent: AgentWithLatest; online: boolean; found?: Found; search?: string }) {
   const state = found ? "resting" : avatarStateOf(agent);
-  const line = useWorkingLine();
   const working = online && state === "working";
+  const line = useWorkingLine(working);
   // The agent it asked something and hasn't heard back from.
   const waitingOn = useAgent(agent.waiting_on ?? "");
   const unread = !found && agent.unread > 0;

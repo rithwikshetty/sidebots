@@ -1,6 +1,7 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { AVATAR_SHEET, AVATAR_STATES, avatarFrame, type AvatarState } from "@server/contract.ts";
 import { cn } from "../lib/cn.ts";
+import { useBeat } from "../lib/motion.ts";
 import { useReducedMotion, useVisible } from "../lib/window.ts";
 
 const { columns, cellWidth, cellHeight } = AVATAR_SHEET;
@@ -32,16 +33,13 @@ export function Sprite({ sheet, state, size, dimmed = false, label, className }:
   const visible = useVisible();
   const reduced = useReducedMotion();
   const moving = visible && !reduced;
-  const [frame, setFrame] = useState(0);
-  useEffect(() => {
-    setFrame(0);
-    if (!moving) return;
-    const timer = setInterval(() => setFrame((current) => (current + 1) % frames), frameMs);
-    return () => clearInterval(timer);
-  }, [state, frames, frameMs, moving]);
+  const beat = useBeat(frameMs, moving);
+  // A state plays from its first frame, from the beat the avatar took it up on.
+  const [began, setBegan] = useState({ state, beat });
+  if (began.state !== state) setBegan({ state, beat });
 
   // The element is a window onto the sheet, the size of one frame.
-  const shown = avatarFrame(state, moving ? frame % frames : still);
+  const shown = avatarFrame(state, moving ? (began.state === state ? (beat - began.beat) % frames : 0) : still);
   const scale = size / shown.width;
   return (
     <span
