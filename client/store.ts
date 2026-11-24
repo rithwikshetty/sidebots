@@ -3,7 +3,7 @@
 // instantly and can be read offline. Each app makes one store, and gives it
 // the few things a phone and a desktop do differently.
 
-import { KEEPALIVE_MS } from "../server/src/contract.ts";
+import { KEEPALIVE_MS, PAGE } from "../server/src/contract.ts";
 import type { About, Agent, AgentWithLatest, Avatar, Connected, Connection, Effort, Found, Message, Model, Provider, SignIn, StreamEvent, Usage } from "../server/src/contract.ts";
 import { ApiError, behind, type Behind } from "./api.ts";
 
@@ -39,8 +39,12 @@ export type Platform<Picked> = {
   events(signal: AbortSignal): Promise<Pick<Response, "status" | "ok" | "headers" | "body">>;
   /** Where the store's copy is saved, as text under a key. */
   storage: { getItem(key: string): string | null; setItem(key: string, value: string): void };
-  /** Calls `listener` each time the app comes back to the front, when the store looks whether the stream is still open. Returns a function that stops it. */
-  onFront(listener: () => void): () => void;
+  /**
+   * Calls `listener` each time the app comes back to the front, with whether
+   * the system may have dropped the stream while it was away, as iOS does in
+   * the background. Returns a function that stops it.
+   */
+  onFront(listener: (dropped: boolean) => void): () => void;
   /** Adds a picked file to the form a message is sent as, under `files`. */
   attach(form: FormData, file: Picked): void;
   /** Opens a connection's sign-in at `url`, and resolves to the address it ended on, which starts with `redirect`, or to null when the person closed it. */
@@ -56,12 +60,16 @@ export type Platform<Picked> = {
 // The number changes when the shape of what is saved does.
 const CACHE_KEY = "cache-6";
 const SAVE_DELAY_MS = 300;
-// As many of a chat's newest messages as are saved. The ones before them page back from the computer.
-const SAVED_MESSAGES = 50;
 // The computer says something on the stream within every keepalive, and a slow connection may bring it late. A stream quiet for longer than this has dropped.
 const QUIET_MS = KEEPALIVE_MS + 10_000;
 const NO_MESSAGES: Message[] = [];
 const EMPTY = { agents: [], messages: {}, avatars: [], about: {}, usage: null, connections: null, pending: {} };
+
+/** The chats, with only the newest page of each that isn't `open`. The messages before it page back from the computer. */
+function newestOf(messages: State["messages"], open: (agentId: string) => boolean): State["messages"] {
+  const long = Object.keys(messages).filter((agentId) => messages[agentId].length > PAGE && !open(agentId));
+  return long.length ? { ...messages, ...Object.fromEntries(long.map((agentId) => [agentId, messages[agentId].slice(-PAGE)])) } : messages;
+}
 
 /** Makes an app's store, which starts from the copy the app saved. */
 export function createStore<Picked>(platform: Platform<Picked>) {
@@ -77,16 +85,23 @@ export function createStore<Picked>(platform: Platform<Picked>) {
 
   let state: State = { ...EMPTY, ...saved(), online: true, behind: null };
   const listeners = new Set<() => void>();
+  // The chats on screen, each with how many parts of the app show it.
+  const shown = new Map<string, number>();
   let saveTimer: ReturnType<typeof setTimeout> | null = null;
 
+  /**
+   * Changes what the store holds, tells whoever shows it, and saves it. A
+   * chat keeps everything fetched and said of it while it is on screen. Of
+   * every other chat, and of each chat in what is saved, the store keeps the
+   * newest page.
+   */
   function set(patch: Partial<State>): void {
-    state = { ...state, ...patch };
+    state = { ...state, ...patch, ...(patch.messages && { messages: newestOf(patch.messages, (agentId) => shown.has(agentId)) }) };
     listeners.forEach((listener) => listener());
     if (saveTimer) clearTimeout(saveTimer);
     saveTimer = setTimeout(() => {
       const { online: _online, behind: _behind, ...rest } = state;
-      const messages = Object.fromEntries(Object.entries(rest.messages).map(([agentId, chat]) => [agentId, chat.slice(-SAVED_MESSAGES)]));
-      storage.setItem(CACHE_KEY, JSON.stringify({ ...rest, messages }));
+      storage.setItem(CACHE_KEY, JSON.stringify({ ...rest, messages: newestOf(rest.messages, () => false) }));
     }, SAVE_DELAY_MS);
   }
 
@@ -103,8 +118,33 @@ export function createStore<Picked>(platform: Platform<Picked>) {
     return useSyncExternalStore(subscribe, () => state.agents.find((agent) => agent.id === id));
   }
 
+  const watches = new Map<string, typeof subscribe>();
+
+  /**
+   * `subscribe` for a part of the app that shows a chat, which is how the
+   * store knows the chat is on screen. When the last part showing it leaves,
+   * the chat goes back to its newest page.
+   */
+  function watch(agentId: string): typeof subscribe {
+    const known = watches.get(agentId);
+    if (known) return known;
+    const watching = (listener: () => void) => {
+      const stop = subscribe(listener);
+      shown.set(agentId, (shown.get(agentId) ?? 0) + 1);
+      return () => {
+        stop();
+        const left = shown.get(agentId)! - 1;
+        if (left > 0) return void shown.set(agentId, left);
+        shown.delete(agentId);
+        if ((state.messages[agentId]?.length ?? 0) > PAGE) set({ messages: state.messages });
+      };
+    };
+    watches.set(agentId, watching);
+    return watching;
+  }
+
   function useMessages(agentId: string): Message[] {
-    return useSyncExternalStore(subscribe, () => state.messages[agentId] ?? NO_MESSAGES);
+    return useSyncExternalStore(watch(agentId), () => state.messages[agentId] ?? NO_MESSAGES);
   }
 
   function useAvatars(): Avatar[] {
@@ -192,7 +232,7 @@ export function createStore<Picked>(platform: Platform<Picked>) {
    * doesn't spell out, so each chat is fetched again when it is next opened.
    */
   function forget(agentId: string): void {
-    if (live) live.current = new Set();
+    if (live) live.caughtUp = new Set();
     const { [agentId]: _messages, ...messages } = state.messages;
     const { [agentId]: _about, ...about } = state.about;
     const { [agentId]: _pending, ...pending } = state.pending;
@@ -202,25 +242,29 @@ export function createStore<Picked>(platform: Platform<Picked>) {
   /**
    * Fetches the newest page of a chat, which the app holds from here on, an
    * empty one too, so what the event stream says of it lands in it. A chat
-   * fetched while the stream is open is as the computer has it for as long as
-   * the stream stays open, and isn't fetched again. The page
-   * joins onto the older messages already saved when they run up to it. When
-   * the chat has moved on by more than a page, the page stands alone and the
-   * chat pages back from there. A message that reached the chat while the page
-   * was fetched, which the page was made too soon to hold, goes after it, and
-   * an older page fetched meanwhile stays before it or goes with the rest. An
-   * ask never goes back to waiting, so one the app knows has closed stays
-   * closed when the page was fetched before it did.
+   * fetched while the stream is open, with nothing reaching it while its page
+   * was on its way, is as the computer has it for as long as the stream stays
+   * open, and isn't fetched again. The page joins onto the older messages
+   * already saved when they run up to it. When the chat has moved on by more
+   * than a page, the page stands alone and the chat pages back from there. A
+   * message that reached the chat while the page was fetched, which the page
+   * was made too soon to hold, goes after it, and an older page fetched
+   * meanwhile stays before it or goes with the rest. An ask never goes back
+   * to waiting, so one the app knows has closed stays closed when the page
+   * was fetched before it did.
    */
   async function loadMessages(agentId: string): Promise<void> {
-    const current = live?.current;
-    if (current?.has(agentId)) return;
+    const caughtUp = live?.caughtUp;
+    if (caughtUp?.has(agentId)) return;
     const before = state.messages[agentId] ?? [];
     if (!state.messages[agentId]) set({ messages: { ...state.messages, [agentId]: before } });
     const fetched = await request<Message[]>(`/agents/${agentId}/messages`);
-    current?.add(agentId);
-    if (fetched.length === 0) return;
+    // Another fetch caught the chat up while this page was on its way, and the stream has kept it so, so the page holds nothing newer.
+    if (live?.caughtUp.has(agentId)) return;
     const known = state.messages[agentId] ?? NO_MESSAGES;
+    // A page that something reached the chat ahead of may be older than what the chat holds, so the chat is fetched again when it is next opened.
+    if (known === before) caughtUp?.add(agentId);
+    if (fetched.length === 0) return;
     const closed = (message: Message) => known.find((had) => had.id === message.id && had.ask && had.ask !== "waiting");
     const page = fetched.map((message) => (message.ask === "waiting" ? (closed(message) ?? message) : message));
     const joins = Math.max(known.findIndex((message) => message.id === page[0].id), 0);
@@ -234,23 +278,24 @@ export function createStore<Picked>(platform: Platform<Picked>) {
 
   /**
    * Fetches the page before the oldest message the app has of a chat. False
-   * once the chat's beginning is reached. Whoever asks while the page is on
-   * its way waits for the same one, and whoever asks once it has come, as a
-   * screen does on seeing it, fetches the one before it.
+   * once the chat's beginning is reached. Whoever asks for the same page
+   * while it is on its way waits for that one, and whoever asks once it has
+   * come, as a screen does on seeing it, fetches the one before it.
    */
   function loadOlder(agentId: string): Promise<boolean> {
-    const running = paging.get(agentId);
-    if (running) return running;
     const oldest = state.messages[agentId]?.[0];
     if (!oldest) return Promise.resolve(false);
-    const done = request<Message[]>(`/agents/${agentId}/messages?before=${oldest.id}`)
-      .finally(() => paging.delete(agentId))
+    const path = `/agents/${agentId}/messages?before=${oldest.id}`;
+    const running = paging.get(path);
+    if (running) return running;
+    const done = request<Message[]>(path)
+      .finally(() => paging.delete(path))
       .then((page) => {
         const known = state.messages[agentId] ?? NO_MESSAGES;
         if (page.length && known[0]?.id === oldest.id) set({ messages: { ...state.messages, [agentId]: [...page, ...known] } });
         return page.length > 0;
       });
-    paging.set(agentId, done);
+    paging.set(path, done);
     return done;
   }
 
@@ -447,19 +492,19 @@ export function createStore<Picked>(platform: Platform<Picked>) {
    * on it, and the chats whose newest page was fetched since it opened. The
    * stream brings what is said in those from then on.
    */
-  let live: { heard: number; current: Set<string> } | null = null;
+  let live: { heard: number; caughtUp: Set<string> } | null = null;
 
   /**
    * Keeps the app's copy current: listens to the server's event stream, and
    * opens it again when it drops. The app coming back to the front opens it
-   * again too, unless the computer spoke on it lately, which an open stream
-   * shows.
+   * again too, unless the system left it alone meanwhile and the computer
+   * spoke on it lately, which an open stream shows.
    */
   function startSync(): void {
     if (syncing) return;
     const abort = new AbortController();
-    const front = platform.onFront(() => {
-      if (live && Date.now() - live.heard < QUIET_MS) return;
+    const front = platform.onFront((dropped) => {
+      if (!dropped && live && Date.now() - live.heard < QUIET_MS) return;
       stopSync();
       startSync();
     });
@@ -495,7 +540,7 @@ export function createStore<Picked>(platform: Platform<Picked>) {
           return platform.onRefused();
         }
         if (!response.ok || !response.body) throw new Error(`events answered ${response.status}`);
-        const opened = (live = { heard: Date.now(), current: new Set() });
+        const opened = (live = { heard: Date.now(), caughtUp: new Set() });
         await refresh();
         set({ online: true });
         wait = 1000;

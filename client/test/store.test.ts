@@ -1,6 +1,6 @@
 import { test, type TestContext } from "node:test";
 import assert from "node:assert/strict";
-import { CONTRACT_HEADER, CONTRACT_VERSION, KEEPALIVE_MS, type AgentWithLatest, type Connected, type Message, type StreamEvent } from "../../server/src/contract.ts";
+import { CONTRACT_HEADER, CONTRACT_VERSION, KEEPALIVE_MS, PAGE, type AgentWithLatest, type Connected, type Message, type StreamEvent } from "../../server/src/contract.ts";
 import { ApiError } from "../api.ts";
 import { createStore } from "../store.ts";
 
@@ -77,7 +77,8 @@ async function settle(): Promise<void> {
  * `streams` are what it answers the event stream with, one for each time the
  * stream is opened. `saved` is the copy a store before this one left.
  * `heard.changed` calls a listener each time the store changes, as a screen
- * that shows something of it is called, once a test has read something of it.
+ * showing what the test last read of the store is called, until the function
+ * it returns is called, as when the screen closes.
  */
 function app(t: TestContext, saved: object = {}) {
   t.mock.timers.enable({ apis: ["setTimeout", "Date"] });
@@ -89,7 +90,7 @@ function app(t: TestContext, saved: object = {}) {
   const streams: (() => Promise<Response> | Response)[] = [];
   const opened: AbortSignal[] = [];
   const kept: Record<string, string> = { "cache-6": JSON.stringify(saved) };
-  const heard = { front: () => {}, refused: 0, signIn: null as string | null, changed: (_listener: () => void) => {} };
+  const heard = { front: (_dropped = false) => {}, refused: 0, signIn: null as string | null, changed: (_listener: () => void) => () => {} };
   const store = createStore<string>({
     async request<T>(path: string, init: { method?: string; body?: unknown } = {}) {
       const call = { method: init.method ?? "GET", path, body: init.body };
@@ -106,7 +107,7 @@ function app(t: TestContext, saved: object = {}) {
     },
     storage: { getItem: (key) => kept[key] ?? null, setItem: (key, value) => void (kept[key] = value) },
     onFront(listener) {
-      heard.front = listener;
+      heard.front = (dropped = false) => listener(dropped);
       return () => void (heard.front = () => {});
     },
     attach: (form, file) => form.append("files", file),
@@ -232,7 +233,7 @@ test("a chat is held from the moment it is opened, an empty one too, so a messag
 });
 
 test("a message that reaches a chat while its newest page is fetched goes after the page", async (t) => {
-  const { store, answers, streams } = app(t, { messages: { cog: [row("one", { agent_id: "cog" }), row("two", { agent_id: "cog" })] } });
+  const { store, answers, streams, asked } = app(t, { messages: { cog: [row("one", { agent_id: "cog" }), row("two", { agent_id: "cog" })] } });
   answers["GET /agents"] = () => [agent("mochi"), agent("cog")];
   answers["GET /agents/cog/messages"] = () => [row("one", { agent_id: "cog" }), row("two", { agent_id: "cog" })];
   const events = stream();
@@ -251,16 +252,17 @@ test("a message that reaches a chat while its newest page is fetched goes after 
   await opening;
   assert.deepEqual(store.useMessages("mochi").map((message) => message.id), ["one", "two", "three"]);
 
-  // With the stream closed a chat is fetched each time it is opened. A page that holds the message takes its place, and a message the person sends meanwhile is kept as the stream's is.
-  store.stopSync();
+  // The page may be older than what the stream brought ahead of it, so the chat is fetched again when it is next opened. A page that holds the message takes its place, and a message the person sends meanwhile is kept as the stream's is.
   answers["POST /agents/mochi/messages"] = () => row("four", { sender: "person", status: "queued" });
   const again = store.loadMessages("mochi");
   await store.send("mochi", "four");
   fetched([row("two"), row("three")]);
   await again;
   assert.deepEqual(store.useMessages("mochi").map((message) => message.id), ["one", "two", "three", "four"]);
+  assert.equal(asked().filter((call) => call === "GET /agents/mochi/messages").length, 2);
 
   // A chat that has moved on by more than a page lets go of what the app had before, and of nothing that came since.
+  store.stopSync();
   answers["GET /agents/cog/messages"] = () => new Promise<Message[]>((resolve) => (fetched = resolve));
   answers["POST /agents/cog/messages"] = () => row("ten", { agent_id: "cog", sender: "person", status: "queued" });
   const moved = store.loadMessages("cog");
@@ -341,15 +343,19 @@ test("an older page asked for twice at once is fetched once, and both askers get
 });
 
 test("an older page is dropped when the chat was replaced while it was fetched", async (t) => {
-  const { store, answers } = app(t, { messages: { mochi: [row("three"), row("four")] } });
+  const { store, answers, asked } = app(t, { messages: { mochi: [row("three"), row("four")] } });
   let older!: (page: Message[]) => void;
   answers["GET /agents/mochi/messages?before=three"] = () => new Promise<Message[]>((resolve) => (older = resolve));
   answers["GET /agents/mochi/messages"] = () => [row("eight"), row("nine")];
   const loading = store.loadOlder("mochi");
   await store.loadMessages("mochi");
+  // Whoever pages back from the chat as it now is fetches the page before its new oldest message, not the one on its way.
+  answers["GET /agents/mochi/messages?before=eight"] = () => [row("seven")];
+  const next = store.loadOlder("mochi");
+  assert.equal(asked().at(-1), "GET /agents/mochi/messages?before=eight");
   older([row("one"), row("two")]);
-  assert.equal(await loading, true);
-  assert.deepEqual(store.useMessages("mochi").map((message) => message.id), ["eight", "nine"]);
+  assert.deepEqual(await Promise.all([loading, next]), [true, true]);
+  assert.deepEqual(store.useMessages("mochi").map((message) => message.id), ["seven", "eight", "nine"]);
 });
 
 test("an older page that reaches a chat while its newest page is fetched stays before the newest page, or goes with what the app had", async (t) => {
@@ -580,12 +586,12 @@ test("a computer that doesn't know the device ends the sync and tells the app, w
   store.stopSync();
 });
 
-test("the app coming back to the front leaves a stream the computer spoke on lately, and opens another in place of one gone quiet", async (t) => {
+test("the app coming back to the front leaves a stream the computer spoke on lately, and opens another in place of one gone quiet or one the system may have dropped", async (t) => {
   const { store, answers, streams, opened, heard, asked, tick } = app(t, { messages: { mochi: [row("hello")] } });
   answers["GET /agents"] = () => [agent("mochi")];
   answers["GET /agents/mochi/messages"] = () => [row("hello")];
   const events = stream();
-  streams.push(() => events.response, () => stream().response);
+  streams.push(() => events.response, () => stream().response, () => stream().response);
   store.startSync();
   store.startSync();
   await settle();
@@ -593,7 +599,7 @@ test("the app coming back to the front leaves a stream the computer spoke on lat
   const caughtUp = ["GET /agents", "GET /avatars", "GET /connections", "GET /agents/mochi/messages"];
   assert.deepEqual(asked(), caughtUp);
 
-  // The computer says something within every keepalive, so a stream it spoke on since then is open, and nothing is asked again.
+  // The computer pings the stream every keepalive, so a stream it spoke on since then is open, and nothing is asked again.
   tick(KEEPALIVE_MS);
   events.write("event: ping\ndata: \n\n");
   await settle();
@@ -602,7 +608,7 @@ test("the app coming back to the front leaves a stream the computer spoke on lat
   await settle();
   assert.deepEqual([opened.length, asked()], [1, caughtUp]);
 
-  // A stream quiet for longer has dropped without a word, as iOS drops it in the background.
+  // A stream quiet for longer has dropped without a word.
   tick(KEEPALIVE_MS);
   heard.front();
   await settle();
@@ -610,11 +616,37 @@ test("the app coming back to the front leaves a stream the computer spoke on lat
   assert.deepEqual(asked(), [...caughtUp, ...caughtUp]);
   assert.equal(store.useOnline(), true);
 
+  // One the system may have dropped, as iOS does in the background, is opened again however lately it was heard.
+  heard.front(true);
+  await settle();
+  assert.deepEqual(opened.map((signal) => signal.aborted), [true, true, false]);
+
   store.stopSync();
   heard.front();
   tick(60_000);
   await settle();
-  assert.deepEqual(opened.map((signal) => signal.aborted), [true, true]);
+  assert.deepEqual(opened.map((signal) => signal.aborted), [true, true, true]);
+});
+
+test("a page that comes after a later one caught the chat up is dropped", async (t) => {
+  const { store, answers, streams } = app(t, { messages: { mochi: [row("hello", { sender: "person", status: "queued" })] } });
+  answers["GET /agents"] = () => [agent("mochi")];
+  // The app opens on the chat before the stream is up, and that page is slow.
+  let early!: (page: Message[]) => void;
+  answers["GET /agents/mochi/messages"] = () => new Promise<Message[]>((resolve) => (early = resolve));
+  const opening = store.loadMessages("mochi");
+  answers["GET /agents/mochi/messages"] = () => [row("hello", { sender: "person", status: "running" })];
+  const events = stream();
+  streams.push(() => events.response);
+  store.startSync();
+  await settle();
+  events.say({ message: row("hello", { sender: "person" }), agent: agent("mochi") });
+  await settle();
+
+  early([row("hello", { sender: "person", status: "queued" })]);
+  await opening;
+  assert.deepEqual(store.useMessages("mochi"), [row("hello", { sender: "person" })]);
+  store.stopSync();
 });
 
 test("a chat fetched while the stream is open isn't fetched again until the stream opens again", async (t) => {
@@ -666,14 +698,36 @@ test("a chat fetched while the stream is open isn't fetched again until the stre
   assert.equal(pages().length, 8);
 });
 
-test("only the newest messages of each chat are saved", async (t) => {
-  const chat = Array.from({ length: 60 }, (_, index) => row(`m${index}`));
-  const { store, answers, savedNow } = app(t, { messages: { mochi: chat } });
-  answers["POST /agents/mochi/messages"] = () => row("newest", { sender: "person", status: "queued" });
-  await store.send("mochi", "newest");
-  assert.equal(store.useMessages("mochi").length, 61);
-  const kept = savedNow().messages.mochi.map((message: Message) => message.id);
-  assert.deepEqual([kept.length, kept[0], kept.at(-1)], [50, "m11", "newest"]);
+test("a chat holds what was fetched and said of it only while it is on screen, and its newest page is what is saved", async (t) => {
+  const { store, answers, streams, heard, savedNow } = app(t);
+  const said = (from: number, to: number) => Array.from({ length: to - from }, (_, index) => row(`m${from + index}`));
+  const ids = (messages: Message[]) => messages.map((message) => message.id);
+  answers["GET /agents"] = () => [agent("mochi")];
+  answers["GET /agents/mochi/messages"] = () => said(250, 300);
+  for (const oldest of [250, 200, 150, 100, 50]) answers[`GET /agents/mochi/messages?before=m${oldest}`] = () => said(oldest - PAGE, oldest);
+  const events = stream();
+  streams.push(() => events.response);
+  store.startSync();
+  await settle();
+
+  // A chat is opened and paged back to its beginning, and a long turn's messages come over the stream.
+  store.useMessages("mochi");
+  const close = heard.changed(() => {});
+  await store.loadMessages("mochi");
+  for (let page = 0; page < 5; page++) assert.equal(await store.loadOlder("mochi"), true);
+  for (const message of said(300, 400)) events.say({ message, agent: agent("mochi") });
+  await settle();
+  assert.deepEqual(ids(store.useMessages("mochi")), ids(said(0, 400)));
+  assert.deepEqual(ids(savedNow().messages.mochi), ids(said(350, 400)));
+
+  // Closed, it goes back to its newest page, and what comes then takes the place of the oldest.
+  close();
+  assert.deepEqual(ids(store.useMessages("mochi")), ids(said(350, 400)));
+  events.say({ message: row("m400"), agent: agent("mochi") });
+  await settle();
+  assert.deepEqual(ids(store.useMessages("mochi")), ids(said(351, 401)));
+  assert.deepEqual(ids(savedNow().messages.mochi), ids(said(351, 401)));
+  store.stopSync();
 });
 
 test("clearing the store lets go of everything it kept", async (t) => {

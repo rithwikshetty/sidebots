@@ -6,7 +6,7 @@ import { basename, join, resolve } from "node:path";
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
 
-import { COLOR, PROVIDERS, USAGE_DAYS, betweenAgents, readableColor, selectionOf } from "./contract.ts";
+import { COLOR, PAGE, PROVIDERS, USAGE_DAYS, betweenAgents, readableColor, selectionOf } from "./contract.ts";
 import type { About, Agent, AgentWithLatest, Ask, Avatar, Connection, Day, Found, Job, Limit, Memory, Message, Provider, PushToken, Question, Schedule, Selection, Sender, Status, Switched, TurnKind, Usage, Used } from "./contract.ts";
 
 export type Person = { id: string; name: string };
@@ -177,7 +177,6 @@ create table if not exists settings (
 );
 `;
 
-const PAGE = 50;
 const SEARCH_LIMIT = 20;
 const AVATAR_ID = /^[a-z0-9-]+$/;
 // A stored attachment's file name: no folders, and never a dot first.

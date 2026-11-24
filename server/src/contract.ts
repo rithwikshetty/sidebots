@@ -420,8 +420,10 @@ export function oneLine(message: Pick<Message, "body" | "question">): string {
  * deleted agent comes as its id.
  */
 export type StreamEvent = { message: Message | null; agent: AgentWithLatest } | { deleted: string };
-/** How often the computer says something on the event stream when it has nothing else to say, in milliseconds, so a device can tell an open stream from one that dropped without a word. */
+/** How often the computer pings the event stream, in milliseconds, so a device can tell an open stream from one that dropped without a word. */
 export const KEEPALIVE_MS = 25_000;
+/** How many of a chat's messages the computer answers with at a time, which is as many as a device keeps of a chat that isn't on screen. */
+export const PAGE = 50;
 /**
  * What a device gets when it pairs: the key it sends with every request from
  * then on, the key a phone's notifications are encrypted with, in base64, and
