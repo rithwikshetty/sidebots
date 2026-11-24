@@ -592,6 +592,36 @@ test("a run that comes after the chat asked for another, or went back to its new
   assert.equal(store.useHole("mochi"), undefined);
 });
 
+test("a run keeps the chat's own copy of the message it runs from, and a hole whose message has gone from the chat lets its stretch go", async (t) => {
+  const { store, answers } = app(t, { messages: { mochi: [row("nine"), row("ten")] } });
+  const ids = () => store.useMessages("mochi").map((message) => message.id);
+  store.useMessages("mochi");
+  answers["GET /agents/mochi/messages?before=nine&through=one"] = () => [row("one"), row("two", { ask: "waiting" })];
+  await store.loadOlder("mochi", "one");
+  assert.equal(store.useHole("mochi"), "two");
+
+  // The person answers the ask that ends the stretch while the run after it is on its way, and the run's copy of it is from before.
+  let fill!: (page: Message[]) => void;
+  answers["GET /agents/mochi/messages?before=nine&through=two"] = () => new Promise<Message[]>((resolve) => (fill = resolve));
+  answers["POST /agents/mochi/asks/two"] = () => row("two", { ask: "allowed" });
+  const filling = store.loadOlder("mochi", "two");
+  await store.answerAsk(row("two", { ask: "waiting" }), true);
+  fill([row("two", { ask: "waiting" }), row("three"), row("nine")]);
+  await filling;
+  assert.deepEqual(ids(), ["one", "two", "three", "nine", "ten"]);
+  assert.equal(store.useMessages("mochi")[1].ask, "allowed");
+  assert.equal(store.useHole("mochi"), undefined);
+
+  // The message a hole comes after has gone from the chat on the computer, so the run from it is empty.
+  answers["GET /agents/mochi/messages?before=one&through=zero"] = () => [row("zero")];
+  await store.loadOlder("mochi", "zero");
+  assert.equal(store.useHole("mochi"), "zero");
+  answers["GET /agents/mochi/messages?before=one&through=zero"] = () => [];
+  assert.equal(await store.loadOlder("mochi", "zero"), false);
+  assert.deepEqual(ids(), ["one", "two", "three", "nine", "ten"]);
+  assert.equal(store.useHole("mochi"), undefined);
+});
+
 test("a change to an agent shows at once over what the server says, and changes go one at a time in the order they were made", async (t) => {
   const { store, calls, answers, streams, savedNow } = app(t, { agents: [agent("mochi", { name: "Mochi" }), agent("cog")] });
   const taken: (() => void)[] = [];

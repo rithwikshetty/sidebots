@@ -395,14 +395,19 @@ export function createStore<Picked>(platform: Platform<Picked>) {
           return page.length > 0;
         }
         const newest = known.findIndex((message) => message.id === oldest.id);
-        if (runs.get(agentId) !== run || !page.length || newest < 0) return page.length > 0;
-        // A run from the last message before the hole keeps the stretch it ends.
+        if (runs.get(agentId) !== run || newest < 0) return page.length > 0;
+        // A run comes back empty when the message it runs from has gone from the chat, as one between two agents goes when either is deleted. A hole after that message can't be filled, so the chat lets its stretch go.
+        if (!page.length) {
+          if (through === state.holes[agentId]) backToNewest(agentId);
+          return false;
+        }
+        // A run from the last message before the hole keeps the stretch it ends, with the chat's own copy of that message, which the stream keeps current.
         const start = known.findIndex((message) => message.id === page[0].id);
-        const kept = start >= 0 && start < newest ? known.slice(0, start) : [];
+        const kept = start >= 0 && start < newest ? known.slice(0, start + 1) : [];
         const joins = page.at(-1)!.id === oldest.id;
         const { [agentId]: _hole, ...holes } = state.holes;
         set({
-          messages: { ...state.messages, [agentId]: [...kept, ...(joins ? page.slice(0, -1) : page), ...known.slice(newest)] },
+          messages: { ...state.messages, [agentId]: [...kept, ...page.slice(kept.length ? 1 : 0, joins ? -1 : undefined), ...known.slice(newest)] },
           holes: joins ? holes : { ...holes, [agentId]: page.at(-1)!.id },
         });
         return true;
