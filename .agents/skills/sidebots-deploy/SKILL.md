@@ -30,6 +30,14 @@ Every step runs each time. The user asking for a deploy is the approval for all 
 
 The secrets the relay holds stay as they are. Wrangler is signed in to the Cloudflare account that holds `sidebots.app`. `npx wrangler whoami` says so when a deploy is refused.
 
+Then count the machines that hold an address:
+
+```sh
+(cd relay && npx wrangler d1 execute sidebots-relay --remote --command "select count(*) as machines from machines where tunnel_id is not null")
+```
+
+Each takes one DNS record of the zone and one tunnel of the account. `relay/README.md` says how many of each Cloudflare allows, and issue #157 what each limit costs to lift.
+
 ## 2. The Mac app
 
 1. Set the new version in `mac/Info.plist` by editing the string under `CFBundleShortVersionString`. Edit the text, because `plutil` writes the whole file back with its keys sorted.
@@ -88,6 +96,6 @@ A turn cut off by the restart is queued again when the server starts. It is up o
 
 ## Handing over
 
-Report the version and the link to its GitHub release, the phone app's build number with the two states TestFlight gave it, and what the last release didn't have, in plain words. Say what is left for the user: update Sidebots from TestFlight. Name any step that failed and what it needs.
+Report the version and the link to its GitHub release, the phone app's build number with the two states TestFlight gave it, how many machines the relay holds, and what the last release didn't have, in plain words. With 150 machines or more, start the report with this: the zone must be on Cloudflare's Pro plan before the count reaches 190, or new computers stop getting an address. With 800 or more, start it with this: the account runs out of tunnels at 1,000, and issue #157 has the decision to make. Say what is left for the user: update Sidebots from TestFlight. Name any step that failed and what it needs.
 
 Say a place is updated only when its own check in the step above passed: the download's length, the live feed's version, the script's `TestFlight has build` line, and the server's status.
