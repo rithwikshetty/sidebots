@@ -54,9 +54,9 @@ function follow(agents: AgentWithLatest[]): Promise<void> {
   return dismiss((agentId) => agentId !== "" && !unread.has(agentId));
 }
 
-// iOS wakes the app for that push, in the background and unseen, and the app asks the computer how the agents stand, and sets its icon's count.
+// iOS wakes the app for that push, in the background and unseen, and the app asks the computer how the agents stand, and sets its icon's count. In front, the app follows the computer's stream already.
 TaskManager.defineTask(READ_ELSEWHERE, async () => {
-  if (!isPaired()) return;
+  if (!isPaired() || AppState.currentState === "active") return;
   const agents = await request<AgentWithLatest[]>("/agents").catch(() => null);
   if (agents) await Promise.all([follow(agents), Notifications.setBadgeCountAsync(unreadIn(agents))]).catch(() => undefined);
 });
