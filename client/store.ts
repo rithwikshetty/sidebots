@@ -310,8 +310,9 @@ export function createStore<Picked>(platform: Platform<Picked>) {
     set({ messages: { ...state.messages, [agentId]: [...known.slice(0, joins), ...page, ...since] } });
   }
 
-  const paging = new Map<string, Promise<boolean>>();
-  // How many runs each chat has asked for or let go of. A chat takes only the run it asked for last, so one that comes after another jump, or after Jump to latest, is dropped.
+  // The pages and runs on their way, each with the run of its chat it is.
+  const paging = new Map<string, { done: Promise<boolean>; run: number }>();
+  // How many runs each chat has asked for or let go of. A chat takes only the run it asked for last, so one that comes after another jump, or after Jump to latest, is dropped, and isn't waited for again.
   const runs = new Map<string, number>();
 
   /**
@@ -335,11 +336,11 @@ export function createStore<Picked>(platform: Platform<Picked>) {
     if (!oldest) return Promise.resolve(false);
     const path = `/agents/${agentId}/messages?before=${oldest.id}${through === undefined ? "" : `&through=${through}`}`;
     const running = paging.get(path);
-    if (running) return running;
+    if (running && (through === undefined || running.run === runs.get(agentId))) return running.done;
     const run = (runs.get(agentId) ?? 0) + 1;
     if (through !== undefined) runs.set(agentId, run);
-    const done = request<Message[]>(path)
-      .finally(() => paging.delete(path))
+    const done: Promise<boolean> = request<Message[]>(path)
+      .finally(() => paging.get(path)?.done === done && paging.delete(path))
       .then((page) => {
         const known = state.messages[agentId] ?? NO_MESSAGES;
         if (through === undefined) {
@@ -359,7 +360,7 @@ export function createStore<Picked>(platform: Platform<Picked>) {
         });
         return true;
       });
-    paging.set(path, done);
+    paging.set(path, { done, run });
     return done;
   }
 

@@ -479,21 +479,24 @@ test("a run that comes after the chat asked for another, or went back to its new
   for (const from of ["one", "five"]) answers[`GET /agents/mochi/messages?before=nine&through=${from}`] = () => new Promise<Message[]>((resolve) => (waiting[from] = resolve));
   store.useMessages("mochi");
 
-  // Opened at one message and then at another, the chat takes the second run whichever comes first.
+  // Opened at one message, then at another, then at the first again before either has come, the chat asks for the first run again and takes only that one, whichever comes first.
   const first = store.loadOlder("mochi", "one");
+  const stale = waiting.one;
   const second = store.loadOlder("mochi", "five");
+  const third = store.loadOlder("mochi", "one");
+  assert.notEqual(waiting.one, stale);
   waiting.five([row("five"), row("six")]);
-  await second;
   waiting.one([row("one"), row("two")]);
-  await first;
-  assert.deepEqual(ids(), ["five", "six", "nine", "ten"]);
-  assert.equal(store.useHole("mochi"), "six");
+  stale([row("one"), row("two"), row("three")]);
+  await Promise.all([first, second, third]);
+  assert.deepEqual(ids(), ["one", "two", "nine", "ten"]);
+  assert.equal(store.useHole("mochi"), "two");
 
   // Back at the newest messages, the run fetched for the hole that was there doesn't bring it back.
-  answers["GET /agents/mochi/messages?before=nine&through=six"] = () => new Promise<Message[]>((resolve) => (waiting.six = resolve));
-  const filling = store.loadOlder("mochi", "six");
+  answers["GET /agents/mochi/messages?before=nine&through=two"] = () => new Promise<Message[]>((resolve) => (waiting.two = resolve));
+  const filling = store.loadOlder("mochi", "two");
   store.backToNewest("mochi");
-  waiting.six([row("six"), row("seven")]);
+  waiting.two([row("two"), row("three")]);
   await filling;
   assert.deepEqual(ids(), ["nine", "ten"]);
   assert.equal(store.useHole("mochi"), undefined);
