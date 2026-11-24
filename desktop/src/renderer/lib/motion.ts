@@ -29,8 +29,8 @@ const REST = () => () => {};
 /**
  * A count that goes up by one every `ms`, for a drawing that steps through
  * its frames or a line that changes. Everything on one pace follows one
- * timer, so it all steps in the same render. The count holds still while
- * `running` is false.
+ * timer, so it all steps in the same render. With `running` false the caller
+ * follows no timer, and draws again for none of its beats.
  */
 export function useBeat(ms: number, running = true): number {
   let followed = paces.get(ms);

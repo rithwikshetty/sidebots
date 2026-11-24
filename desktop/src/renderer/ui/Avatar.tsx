@@ -34,12 +34,12 @@ export function Sprite({ sheet, state, size, dimmed = false, label, className }:
   const reduced = useReducedMotion();
   const moving = visible && !reduced;
   const beat = useBeat(frameMs, moving);
-  // A state plays from its first frame, from the beat the avatar took it up on.
-  const [began, setBegan] = useState({ state, beat });
-  if (began.state !== state) setBegan({ state, beat });
+  // A state plays from its first frame, from the beat the avatar took it up on or began to move again.
+  const [began, setBegan] = useState({ state, moving, beat });
+  if (began.state !== state || began.moving !== moving) setBegan({ state, moving, beat });
 
   // The element is a window onto the sheet, the size of one frame.
-  const shown = avatarFrame(state, moving ? (began.state === state ? (beat - began.beat) % frames : 0) : still);
+  const shown = avatarFrame(state, moving ? (beat - began.beat) % frames : still);
   const scale = size / shown.width;
   return (
     <span

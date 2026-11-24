@@ -25,8 +25,7 @@ const BEHIND_NOTE: Record<Behind, string> = {
  * app speak different versions of the contract, a few words saying which to
  * update take the agents' place. At its foot are the computer and whether the
  * app reaches it, and Settings, with why and Retry above them while the main
- * process can't reach the server. It draws again only for what it follows
- * itself, so dragging a column's edge draws none of its rows.
+ * process can't reach the server.
  */
 export const Sidebar = memo(function Sidebar() {
   const agents = useAgents();

@@ -6,6 +6,7 @@ import { dayLabel, sameDay } from "@client/time.ts";
 import { cn } from "../lib/cn.ts";
 import { loadMessages, loadOlder, useMessages, useOnline } from "../lib/store.ts";
 import { useOpenChat } from "../lib/view.ts";
+import { useToday } from "../lib/window.ts";
 import { Spinner } from "../ui/Spinner.tsx";
 import { ExchangeRow } from "./Exchange.tsx";
 import { MessageRow, OutgoingRow, type Arrival, type Outgoing } from "./MessageRow.tsx";
@@ -38,9 +39,7 @@ export type TimelineHandle = { toEnd: () => void };
  * that jumps to the newest shows once something comes. Near the top, it
  * fetches the page before, keeping the place on screen. Opened at a message,
  * it fetches back until it has it, then scrolls to it and flashes it, or the
- * message drawn nearest to it when it draws nothing itself. It draws again
- * only when what it is given or its messages change, so typing in the field
- * under it draws none of it.
+ * message drawn nearest to it when it draws nothing itself.
  */
 export const Timeline = memo(function Timeline({
   agent,
@@ -59,6 +58,7 @@ export const Timeline = memo(function Timeline({
   const online = useOnline();
   const messages = useMessages(agent.id);
   const opened = useOpenChat();
+  const today = useToday();
   const scroller = useRef<HTMLDivElement>(null);
   const content = useRef<HTMLDivElement>(null);
   const atEnd = useRef(true);
@@ -249,7 +249,7 @@ export const Timeline = memo(function Timeline({
               <div key={message.id}>
                 {!before || !sameDay(before.created_at, message.created_at) ? (
                   <p className="mt-4 mb-1.5 text-center text-sm font-medium text-ink2" data-testid="day">
-                    {dayLabel(message.created_at)}
+                    {dayLabel(message.created_at, today)}
                   </p>
                 ) : null}
                 {standing ? (

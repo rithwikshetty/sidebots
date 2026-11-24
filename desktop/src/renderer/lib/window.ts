@@ -1,6 +1,6 @@
 // What the window knows about itself and the computer: the system it runs
-// on, its width, whether it can be seen or fills the screen, and the keys the
-// system's shortcuts are made with.
+// on, its width, whether it can be seen or fills the screen, the day it is,
+// and the keys the system's shortcuts are made with.
 
 import { useSyncExternalStore, type KeyboardEvent as ReactKeyboardEvent } from "react";
 
@@ -41,6 +41,24 @@ export function onFocusChange(listener: () => void): () => void {
 /** Whether the window fills the screen, when a Mac shows no traffic lights over it. */
 export function useFullScreen(): boolean {
   return useSyncExternalStore(window.desktop.onFullScreen, window.desktop.fullScreen);
+}
+
+/** Calls `listener` at each midnight on the computer's clock. Returns a function that stops it. */
+function onMidnight(listener: () => void): () => void {
+  let timer: ReturnType<typeof setTimeout>;
+  const wait = () => {
+    timer = setTimeout(() => {
+      listener();
+      wait();
+    }, new Date().setHours(24, 0, 0, 0) - Date.now());
+  };
+  wait();
+  return () => clearTimeout(timer);
+}
+
+/** When today began on the computer's clock, kept up as the day changes, for a time told by it, as "Yesterday" is. */
+export function useToday(): number {
+  return useSyncExternalStore(onMidnight, () => new Date().setHours(0, 0, 0, 0));
 }
 
 const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
