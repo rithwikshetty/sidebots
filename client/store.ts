@@ -311,6 +311,8 @@ export function createStore<Picked>(platform: Platform<Picked>) {
 
   // The fetch of each chat's newest page that was asked for last.
   const fetching = new Map<string, Promise<void>>();
+  // The catch-up as the stream last opened.
+  let catchingUp: Promise<void> = Promise.resolve();
 
   /** Where a chat's newest page joins onto what the chat holds: the place of the page's first message among them. A page short of a full one is the whole chat and joins onto nothing, and neither does one whose first message the chat doesn't hold. */
   const joinsAt = (held: Message[], page: Message[]) => (page.length < PAGE ? 0 : Math.max(held.findIndex((message) => message.id === page[0].id), 0));
@@ -413,6 +415,12 @@ export function createStore<Picked>(platform: Platform<Picked>) {
       });
     fetching.set(agentId, fetch);
     return fetch;
+  }
+
+  /** Settles once a catch-up on its way, then the newest page of a chat that was asked for last, have come or failed to: at once when neither is on its way. */
+  async function newestPage(agentId: string): Promise<void> {
+    await catchingUp.catch(() => undefined);
+    await fetching.get(agentId)?.catch(() => undefined);
   }
 
   // The pages and runs on their way, each with the run of its chat it is.
@@ -754,7 +762,7 @@ export function createStore<Picked>(platform: Platform<Picked>) {
         }
         if (!response.ok || !response.body) throw new Error(`events answered ${response.status}`);
         const opened = (live = { heard: Date.now(), changes: {} });
-        await refresh(opened);
+        await (catchingUp = refresh(opened));
         set({ online: true });
         wait = 1000;
         const reader = response.body.getReader();
@@ -803,6 +811,7 @@ export function createStore<Picked>(platform: Platform<Picked>) {
     useBehind,
     onAgents,
     loadMessages,
+    newestPage,
     loadOlder,
     backToNewest,
     send,
