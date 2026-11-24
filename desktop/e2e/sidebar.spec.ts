@@ -510,6 +510,36 @@ test.describe("search", () => {
     await expect(row).toHaveClass(/animate-flash/);
   });
 
+  test("a found message opened in a chat on screen while the chat's newest page is fetched again on reconnecting is still there once that page comes", async ({ page, server }) => {
+    const atlas = await agentNamed(server, "Atlas");
+    // Atlas's chat stays on screen while the app hears nothing and the chat moves on by more than a page.
+    await rowOf(page, atlas.id).click();
+    await expect(page.getByTestId("chat-name")).toHaveText("Atlas");
+    await expect(theirs(page).first()).toBeVisible();
+    await server.control("drop-events", { ms: 60_000 });
+    for (let index = 0; index < PAGE + 10; index++) await server.control("deliver", { agent: atlas.id, text: `Reminder ${index}.` });
+    const [first] = await found(server, "keep track of the errands");
+    const release = await holdRequests(server, new RegExp(`^/agents/${atlas.id}/messages$`));
+    const runs: string[] = [];
+    page.on("request", (request) => void (request.url().includes("through=") && runs.push(request.url())));
+    // The stream opens again, and the app fetches the chat's newest page to catch up.
+    await server.control("drop-events", { ms: 0 });
+    await expect.poll(async () => (await requestsHeld(server)).held, { timeout: 30_000 }).toBe(1);
+
+    await page.getByTestId("search-button").click();
+    await page.getByTestId("search").fill("keep track of the errands");
+    await page.getByTestId(`found-${first.id}`).click();
+    // The chat fetches no run from the message while its newest page is on its way.
+    await drawn(page);
+    await drawn(page);
+    expect(runs).toEqual([]);
+
+    await release();
+    const row = page.locator(`[data-message-id="${first.id}"]`);
+    await expect(row).toBeInViewport({ timeout: 15_000 });
+    await expect(row).toHaveClass(/animate-flash/);
+  });
+
   test("a found message between two agents opens the chat at their exchange's line, which flashes", async ({ page, server }) => {
     // What Atlas asked Ledger shows in Atlas's chat as the one line for that exchange, not as a bubble of its own.
     const words = "check what's left in Home for November";

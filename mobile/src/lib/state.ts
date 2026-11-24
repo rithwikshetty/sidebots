@@ -63,6 +63,7 @@ export const {
   useBehind,
   onAgents,
   loadMessages,
+  newestPage,
   loadOlder,
   backToNewest,
   send,

@@ -415,6 +415,11 @@ export function createStore<Picked>(platform: Platform<Picked>) {
     return fetch;
   }
 
+  /** Settles once the newest page of a chat that was asked for last has come, or failed to: at once when none is on its way. */
+  function newestPage(agentId: string): Promise<void> {
+    return (fetching.get(agentId) ?? Promise.resolve()).catch(() => undefined);
+  }
+
   // The pages and runs on their way, each with the run of its chat it is.
   const paging = new Map<string, { done: Promise<boolean>; run: number }>();
   // How many runs each chat has asked for or let go of. A chat takes only the run it asked for last, so one that comes after another jump, or after Jump to latest, is dropped, and isn't waited for again.
@@ -803,6 +808,7 @@ export function createStore<Picked>(platform: Platform<Picked>) {
     useBehind,
     onAgents,
     loadMessages,
+    newestPage,
     loadOlder,
     backToNewest,
     send,

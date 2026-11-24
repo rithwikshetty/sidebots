@@ -5,7 +5,7 @@ import { betweenAgents, exchanges, type AgentWithLatest, type Message } from "@s
 import { standingOf, type Standing } from "@client/exchanges.ts";
 import { dayLabel, sameDay } from "@client/time.ts";
 import { cn } from "../lib/cn.ts";
-import { backToNewest, loadMessages, loadOlder, useHole, useMessages, useOnline } from "../lib/store.ts";
+import { backToNewest, loadMessages, loadOlder, newestPage, useHole, useMessages, useOnline } from "../lib/store.ts";
 import { useOpenChat } from "../lib/view.ts";
 import { useToday } from "../lib/window.ts";
 import { Spinner } from "../ui/Spinner.tsx";
@@ -201,8 +201,7 @@ export const Timeline = memo(function Timeline({
   const today = useToday();
   const list = useRef<LegendListRef>(null);
   const [behind, setBehind] = useState(false);
-  // The chat lands on a message it was opened at once its newest page has come: a newest page that doesn't join what the app had saved takes the place of all of it, a run fetched before it too.
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(messages.length === 0 && agent.latest !== null);
   const [flashing, setFlashing] = useState<string | null>(null);
   // Whether the chat is on its way to a message it was opened at.
   const [landing, setLanding] = useState(false);
@@ -304,14 +303,15 @@ export const Timeline = memo(function Timeline({
   held.current = { chat, messages, shown, hole };
   useEffect(() => {
     const id = opened?.agentId === agent.id ? opened.messageId : undefined;
-    if (!id || loading) return;
+    if (!id) return;
     let going = true;
     let fetching = false;
     const frame = () => new Promise((resolve) => requestAnimationFrame(resolve));
     const isIt = (message: Message) => message.id === id;
     setLanding(true);
     void (async () => {
-      // What the chat holds is read a frame on, once a run the last landing let go of has gone from it.
+      // The chat lands once its newest page has come, as when it opens or catches up on reconnecting: a newest page that doesn't join what the chat held takes the place of all of it, a run fetched before it too. What it holds is read a frame on, once a run the last landing let go of has gone from it.
+      await newestPage(agent.id);
       await frame();
       if (!going) return;
       if (!held.current.messages.some(isIt)) {
@@ -346,7 +346,7 @@ export const Timeline = memo(function Timeline({
       if (fetching) backToNewest(agent.id);
       setLanding(false);
     };
-  }, [opened, agent.id, loading, fetchOlder]);
+  }, [opened, agent.id, fetchOlder]);
 
   // The arrow keys move focus from message to message, the first time to the newest one on screen, so the keyboard reaches each message's Reply and menu.
   const stepFocus = (event: KeyboardEvent<HTMLDivElement>) => {
@@ -411,7 +411,7 @@ export const Timeline = memo(function Timeline({
         aria-label="Messages"
         role="log"
         ListHeaderComponent={UNDER_BAR}
-        ListEmptyComponent={<div className="grid flex-1 place-items-center text-ink3">{loading && agent.latest !== null ? <Spinner label="Loading messages" /> : null}</div>}
+        ListEmptyComponent={<div className="grid flex-1 place-items-center text-ink3">{loading ? <Spinner label="Loading messages" /> : null}</div>}
         ListFooterComponent={
           <div className="px-4 pb-3">
             {/* A new agent's chat says what to do first. Its instructions have it ask what it's for. */}

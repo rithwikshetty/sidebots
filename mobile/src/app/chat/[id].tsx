@@ -31,7 +31,7 @@ import { useAppActive, useReadingMargin, useSplit, useToday } from "@/lib/layout
 import { useWorkingLine } from "@/lib/lines";
 import { HIDE, MOVE, SHOW, arrive } from "@/lib/motion";
 import { askForPush, showChatOnScreen, useOpenChat } from "@/lib/push";
-import { answerAsk, backToNewest, connect, freshStart, loadMessages, loadOlder, markRead, resend, send, stop, useAgent, useChatColor, useHole, useMessages, useOnline } from "@/lib/state";
+import { answerAsk, backToNewest, connect, freshStart, loadMessages, loadOlder, markRead, newestPage, resend, send, stop, useAgent, useChatColor, useHole, useMessages, useOnline } from "@/lib/state";
 import { ChatColor, type Theme, useTheme } from "@/lib/theme";
 
 export default function Chat() {
@@ -86,12 +86,8 @@ function ChatWith({ agent }: { agent: AgentWithLatest }) {
   // Messages made from here on came in while the chat was open, so they arrive with motion.
   const [openedAt] = useState(() => Date.now() - CLOCK_SLACK_MS);
 
-  // The chat lands on a message it was opened at once its newest page has come: a newest page that doesn't join what the app had saved takes the place of all of it, a run fetched before it too.
-  const [loading, setLoading] = useState(true);
   useEffect(() => {
-    loadMessages(agent.id)
-      .catch(() => {})
-      .finally(() => setLoading(false));
+    loadMessages(agent.id).catch(() => {});
   }, [agent.id]);
 
   // While the chat is open with the app in front, everything in it counts as read. What comes after the person leaves the app waits, unread, and notifies them.
@@ -140,14 +136,15 @@ function ChatWith({ agent }: { agent: AgentWithLatest }) {
   held.current = { chat, messages, newestFirst };
   useEffect(() => {
     const id = opened?.agentId === agent.id ? opened.messageId : undefined;
-    if (!id || loading) return;
+    if (!id) return;
     let going = true;
     let fetching = false;
     const frame = () => new Promise((resolve) => requestAnimationFrame(resolve));
     const isIt = (message: Message) => message.id === id;
     setLanding(true);
     void (async () => {
-      // What the chat holds is read a frame on, once a run the last landing let go of has gone from it.
+      // The chat lands once its newest page has come, as when it opens or catches up on reconnecting: a newest page that doesn't join what the chat held takes the place of all of it, a run fetched before it too. What it holds is read a frame on, once a run the last landing let go of has gone from it.
+      await newestPage(agent.id);
       await frame();
       if (!going) return;
       if (!held.current.messages.some(isIt)) {
@@ -184,7 +181,7 @@ function ChatWith({ agent }: { agent: AgentWithLatest }) {
       setLanding(false);
       setFlashing(null);
     };
-  }, [opened, agent.id, loading]);
+  }, [opened, agent.id]);
 
   // The end of a stretch from further back fetches the run of the chat after it while it is on screen, and again when the computer is back in reach. While the chat lands on a message it was opened at, the list can be at that end for a moment on its way.
   const newestDrawn = newestFirst[0]?.id;
