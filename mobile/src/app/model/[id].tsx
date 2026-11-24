@@ -1,5 +1,6 @@
 import { Fragment, useEffect, useState } from "react";
 import { Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
+import Animated from "react-native-reanimated";
 import { useLocalSearchParams } from "expo-router";
 import { Check } from "lucide-react-native";
 import { PROVIDERS, runsFast, type AgentWithLatest, type Offered, type Provider } from "@server/contract";
@@ -8,6 +9,7 @@ import { Choices } from "@/components/Choices";
 import { Rule, Section } from "@/components/Section";
 import { problem } from "@/lib/alerts";
 import { changeAgent, loadUsage, useAgent, useUsage, type AgentChanges } from "@/lib/state";
+import { MOVE, SHOW } from "@/lib/motion";
 import { useTheme } from "@/lib/theme";
 
 const SPEEDS = { standard: "Standard", fast: "Fast" };
@@ -21,7 +23,8 @@ export default function ModelDrawer() {
 /**
  * The drawer the model's button in the message field opens: a provider's
  * logo and name over its models, a row to each. A person who has set up more
- * than one provider picks between them above the models, and a model of
+ * than one provider picks between them above the models, which fade in once
+ * the computer has said which it has set up, and a model of
  * another provider moves the agent there, with its effort when that provider
  * has it. Under the models of the agent's own provider are how hard it can
  * think before it answers, and its speed when its model has a fast mode. A
@@ -51,9 +54,9 @@ function Model({ agent }: { agent: AgentWithLatest }) {
         </Text>
       </View>
       {providers.length > 1 ? (
-        <View style={[styles.providers, { backgroundColor: theme.field }]}>
+        <Animated.View entering={SHOW} layout={MOVE} style={[styles.providers, { backgroundColor: theme.field }]}>
           <Choices options={Object.fromEntries(providers.map((each) => [each, PROVIDERS[each].name])) as Partial<Record<Provider, string>>} value={listed} onChange={setListed} plain />
-        </View>
+        </Animated.View>
       ) : null}
       <Section title="Model">
         <Options options={provider.models} value={own ? agent.model : undefined} onChange={pick} />
