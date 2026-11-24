@@ -8,7 +8,7 @@
 import { PAGE, RUN, type Avatar, type Found } from "../../server/src/contract.ts";
 import { LINES } from "../../client/lines.ts";
 import { TOP_BAR } from "../src/bridge.ts";
-import { jumpOffered, said, scrollChatTo, wholeChat } from "./chat-helpers.ts";
+import { jumpOffered, said, scrollChatTo, theirs, wholeChat } from "./chat-helpers.ts";
 import { expect, test, type TestServer } from "./fixtures.ts";
 import { agentNamed, agentsOf, avatarRowOffset, avatarShown, changeOnPhone, chooseMenu, faintIn, listedIds, onDatabase, rowOf, settled } from "./shell.ts";
 import type { Page } from "@playwright/test";
@@ -17,6 +17,22 @@ import type { Page } from "@playwright/test";
 async function found(server: TestServer, text: string): Promise<Found[]> {
   return (await server.api(`/search?text=${encodeURIComponent(text)}`)).json() as Promise<Found[]>;
 }
+
+/** Has the server hold its answers to the requests whose path and query match `match`, until the returned call lets them go on. That call resolves once the server has answered them. */
+async function holdRequests(server: TestServer, match: RegExp): Promise<() => Promise<void>> {
+  await server.control("hold-requests", { match: match.source });
+  return async () => {
+    const { waiting } = await heldRequests(server);
+    await server.control("hold-requests", { match: null });
+    await expect.poll(async () => (await heldRequests(server)).answered, { message: "the held requests answered" }).toBeGreaterThanOrEqual(waiting);
+  };
+}
+
+/** How many requests the server holds, and how many it has answered since it let them go on. */
+const heldRequests = async (server: TestServer) => (await server.control<{ held: { waiting: number; answered: number } }>("state")).held;
+
+/** Resolves once the app has drawn two frames, so what came has landed in the chat. */
+const drawn = (page: Page) => page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
 
 /** Opens a row's own menu from the button that shows as the pointer rests on it. */
 async function moreFor(page: Page, agentId: string, name: string) {
@@ -436,6 +452,60 @@ test.describe("search", () => {
     expect(runs(fetched.slice(opened)), fetched.join(" ")).toHaveLength(2);
     expect(fetched.slice(opened), fetched.join(" ")).toHaveLength(2);
     await expect.poll(() => jumpOffered(page)).toBe(false);
+  });
+
+  test("a found message opened while the run for another is on its way stays on screen when that run comes", async ({ page, server }) => {
+    test.setTimeout(120_000);
+    const atlas = await agentNamed(server, "Atlas");
+    // Atlas's chat is made longer than its newest page and a run together, so the run from its first message leaves a hole.
+    const more = Math.max(0, PAGE + RUN + 20 - (await wholeChat(server, atlas.id)).length);
+    for (let index = 0; index < more; index++) await server.control("deliver", { agent: atlas.id, text: `Reminder ${index}.` });
+    await server.control("deliver", { agent: atlas.id, text: "Ring the dentist about Thursday." });
+    const [first] = await found(server, "keep track of the errands");
+    const [recent] = await found(server, "Ring the dentist");
+    const release = await holdRequests(server, new RegExp(`through=${first.id}`));
+
+    await page.getByTestId("search-button").click();
+    await page.getByTestId("search").fill("keep track of the errands");
+    await page.getByTestId(`found-${first.id}`).click();
+    await expect.poll(async () => (await heldRequests(server)).waiting).toBe(1);
+    // While the run from the first message is on its way, the newest message is opened from the search.
+    await page.getByTestId("search").fill("Ring the dentist");
+    await page.getByTestId(`found-${recent.id}`).click();
+    const row = page.locator(`[data-message-id="${recent.id}"]`);
+    await expect(row).toBeInViewport({ timeout: 15_000 });
+
+    await release();
+    await drawn(page);
+    await expect(row).toBeInViewport();
+    expect(await jumpOffered(page)).toBe(false);
+  });
+
+  test("a found message opened while the chat's newest page is on its way is still there once that page comes, when what the app saved of the chat is older than the page", async ({ page, server }) => {
+    const [atlas, ledger] = await Promise.all([agentNamed(server, "Atlas"), agentNamed(server, "Ledger")]);
+    // The app holds Atlas's newest page, then hears nothing while the chat moves on by more than a page.
+    await rowOf(page, atlas.id).click();
+    await expect(page.getByTestId("chat-name")).toHaveText("Atlas");
+    await expect(theirs(page).first()).toBeVisible();
+    await rowOf(page, ledger.id).click();
+    await expect(page.getByTestId("chat-name")).toHaveText("Ledger");
+    await server.control("drop-events", { ms: 60_000 });
+    for (let index = 0; index < PAGE + 10; index++) await server.control("deliver", { agent: atlas.id, text: `Reminder ${index}.` });
+    const [first] = await found(server, "keep track of the errands");
+    const release = await holdRequests(server, new RegExp(`^/agents/${atlas.id}/messages$`));
+
+    await page.getByTestId("search-button").click();
+    await page.getByTestId("search").fill("keep track of the errands");
+    await page.getByTestId(`found-${first.id}`).click();
+    await expect.poll(async () => (await heldRequests(server)).waiting).toBe(1);
+    const row = page.locator(`[data-message-id="${first.id}"]`);
+    // A chat that lands on the message before its newest page has come lands on it against what it had saved. Given the time to, it would show it now.
+    await expect(row).toBeInViewport({ timeout: 3_000 }).catch(() => undefined);
+
+    await release();
+    await drawn(page);
+    await expect(row).toBeInViewport({ timeout: 15_000 });
+    await expect(row).toHaveClass(/animate-flash/);
   });
 
   test("a found message between two agents opens the chat at their exchange's line, which flashes", async ({ page, server }) => {

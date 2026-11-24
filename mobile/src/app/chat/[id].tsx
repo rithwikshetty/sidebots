@@ -86,8 +86,8 @@ function ChatWith({ agent }: { agent: AgentWithLatest }) {
   // Messages made from here on came in while the chat was open, so they arrive with motion.
   const [openedAt] = useState(() => Date.now() - CLOCK_SLACK_MS);
 
-  // The chat lands on a message it was opened at once its newest page has come: a newest page that doesn't join what the phone had saved takes the place of all of it, a run fetched before it too.
-  const [loading, setLoading] = useState(true);
+  // A chat with messages lands on a message it was opened at once its newest page has come: a newest page that doesn't join what the app had saved takes the place of all of it, a run fetched before it too.
+  const [loading, setLoading] = useState(agent.latest !== null);
   useEffect(() => {
     loadMessages(agent.id)
       .catch(() => {})
@@ -183,6 +183,9 @@ function ChatWith({ agent }: { agent: AgentWithLatest }) {
       setFlashing(null);
     };
   }, [opened, agent.id, loading]);
+
+  // The end of a stretch from further back fetches the run of the chat after it while it is on screen, and again when the computer is back in reach. While the chat lands on a message it was opened at, the list can be at that end for a moment on its way.
+  useEffect(() => void (online && atEnd && !landing && hole !== undefined && loadOlder(agent.id, hole).catch(() => undefined)), [agent.id, online, atEnd, landing, hole]);
 
   // Scrolling up to the oldest message the app has fetches the page before it, until the chat's beginning: the oldest message, once a page fetched before it came back empty.
   const first = useRef<string | null>(null);
@@ -282,9 +285,6 @@ function ChatWith({ agent }: { agent: AgentWithLatest }) {
         keyboardShouldPersistTaps="never"
         onEndReached={onOldestReached}
         onEndReachedThreshold={1.5}
-        // Scrolling down to the end of a stretch from further back fetches the run of the chat after it. While the chat lands on a message it was opened at, the list can be at that end for a moment on its way.
-        onStartReached={hole === undefined || landing ? undefined : () => void loadOlder(agent.id, hole).catch(() => undefined)}
-        onStartReachedThreshold={1.5}
         onViewableItemsChanged={onRowsShown}
         onScrollToIndexFailed={({ index, averageItemLength }) => {
           list.current?.scrollToOffset({ offset: index * averageItemLength, animated: false });

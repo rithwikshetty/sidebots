@@ -201,7 +201,8 @@ export const Timeline = memo(function Timeline({
   const today = useToday();
   const list = useRef<LegendListRef>(null);
   const [behind, setBehind] = useState(false);
-  const [loading, setLoading] = useState(messages.length === 0 && agent.latest !== null);
+  // A chat with messages lands on a message it was opened at once its newest page has come: a newest page that doesn't join what the app had saved takes the place of all of it, a run fetched before it too.
+  const [loading, setLoading] = useState(agent.latest !== null);
   const [flashing, setFlashing] = useState<string | null>(null);
   // Whether the chat is on its way to a message it was opened at.
   const [landing, setLanding] = useState(false);
@@ -298,20 +299,28 @@ export const Timeline = memo(function Timeline({
   }, [newest]);
   useEffect(() => list.current?.getState().listen("isWithinMaintainScrollAtEndThreshold", (atEnd) => atEnd && setBehind(false)), []);
 
-  // Opened at a message it doesn't draw, the chat fetches the run of the chat from it, or, when it is among the newest messages past a hole, goes back to them. Opened at the oldest message it draws, it fetches the page before too, so the message has rows above it. A message that draws no row, as a turn that ended without a reply, is opened at the nearest row to it, the one before it first.
+  // Opened at a message it doesn't draw, the chat fetches the run of the chat from it, or, when it is among the newest messages past a hole, goes back to them. Opened at the oldest message it draws, it fetches the page before too, so the message has rows above it. A message that draws no row, as a turn that ended without a reply, is opened at the nearest row to it, the one before it first. Opened again before a run has come, the chat lets that run go, so it can't land over the chat as it is opened now.
   const held = useRef({ chat, messages, shown, hole });
   held.current = { chat, messages, shown, hole };
   useEffect(() => {
     const id = opened?.agentId === agent.id ? opened.messageId : undefined;
     if (!id || loading) return;
     let going = true;
+    let fetching = false;
     const frame = () => new Promise((resolve) => requestAnimationFrame(resolve));
     const isIt = (message: Message) => message.id === id;
     setLanding(true);
     void (async () => {
+      // What the chat holds is read a frame on, once a run the last landing let go of has gone from it.
+      await frame();
+      if (!going) return;
       if (!held.current.messages.some(isIt)) {
         if (held.current.chat.some(isIt)) backToNewest(agent.id);
-        else await loadOlder(agent.id, id).catch(() => false);
+        else {
+          fetching = true;
+          await loadOlder(agent.id, id).catch(() => false);
+          fetching = false;
+        }
         await frame();
       }
       if (going && held.current.messages[0]?.id === id) {
@@ -334,6 +343,7 @@ export const Timeline = memo(function Timeline({
     })().finally(() => going && setLanding(false));
     return () => {
       going = false;
+      if (fetching) backToNewest(agent.id);
       setLanding(false);
     };
   }, [opened, agent.id, loading, fetchOlder]);
