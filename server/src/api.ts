@@ -5,7 +5,7 @@ import { extname } from "node:path";
 import { Hono } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import { streamSSE } from "hono/streaming";
-import { COLOR, CONNECTIONS, CONTRACT_HEADER, CONTRACT_VERSION, MESSAGE_BYTES, PROVIDERS } from "./contract.ts";
+import { COLOR, CONNECTIONS, CONTRACT_HEADER, CONTRACT_VERSION, MESSAGE_BYTES, PROVIDERS, effortMoved } from "./contract.ts";
 import type { Connection, Effort, Model, Paired, Provider, PushToken, StreamEvent } from "./contract.ts";
 import type { Connections } from "./connections.ts";
 import type { AgentChanges, Device, Person, Store } from "./store.ts";
@@ -137,7 +137,7 @@ export function createApi(store: Store, queue: Queue, connections: Connections, 
       if (!Object.hasOwn(PROVIDERS, provider) || !store.account(c.var.person.id, provider as Provider)) return c.json({ error: "That isn't set up on your computer." }, 400);
       changes.provider = provider as Provider;
       changes.model = PROVIDERS[changes.provider].model;
-      if (!Object.hasOwn(PROVIDERS[changes.provider].efforts, agent.effort)) changes.effort = PROVIDERS[changes.provider].effort;
+      changes.effort = effortMoved(changes.provider, agent.effort);
     }
     const offered = PROVIDERS[changes.provider ?? agent.provider];
     if (model !== undefined) {

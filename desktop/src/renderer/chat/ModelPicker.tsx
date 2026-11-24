@@ -1,8 +1,10 @@
 import { Popover } from "@base-ui/react/popover";
+import { Radio } from "@base-ui/react/radio";
+import { RadioGroup } from "@base-ui/react/radio-group";
 import { Tabs } from "@base-ui/react/tabs";
 import { Check, Gauge, Zap } from "lucide-react";
-import { useState, type KeyboardEvent, type RefObject } from "react";
-import { PROVIDERS, runsFast, type AgentWithLatest, type Logo, type Offered, type Provider } from "@server/contract.ts";
+import { useState, type RefObject } from "react";
+import { PROVIDERS, effortMoved, runsFast, type AgentWithLatest, type Logo, type Offered, type Provider } from "@server/contract.ts";
 import { cn } from "../lib/cn.ts";
 import { loadUsage, useUsage, type AgentChanges } from "../lib/store.ts";
 import { BrandLogo } from "../ui/BrandLogo.tsx";
@@ -27,17 +29,17 @@ const SPEEDS = {
 /**
  * What the agent answers with, in the message field: a button with its
  * provider's logo, whose tooltip names its model, its effort, and "Fast"
- * when it answers in fast mode. It opens a panel above it. At the panel's start is a rail of
- * the providers, by logo, with a mark beside the one whose models are listed
- * next to it. A provider the person hasn't set up is faded, and says where to
- * set it up in place of its models. Beside the models are the efforts the
- * agent's own provider has, and across the foot is its speed, which only a
- * model with a fast mode can change, and which says while it is fast that
- * fast uses more of the plan. A check marks what is in effect. A
- * choice takes effect from the agent's next turn and leaves the panel open
- * for another, and a model of another provider moves the agent there, with
- * its effort when that provider has it. Up and Down move through a list.
- * Closed, the panel leaves the person at `returnTo`, where they write.
+ * when it answers in fast mode. It opens a panel above it. At the panel's
+ * start is a rail of the providers, by logo, with a mark beside the one whose
+ * models are listed next to it. A provider the person hasn't set up is
+ * faded, and says where to set it up in place of its models. Beside the
+ * models are the efforts the agent's own provider has, and across the foot
+ * is its speed, which only a model with a fast mode can change, and which
+ * says while it is fast that fast uses more of the plan. A check marks what
+ * is in effect. A choice takes effect from the agent's next turn and leaves
+ * the panel open for another, and a model of another provider moves the
+ * agent there, with its effort when that provider has it. Closed, the panel
+ * leaves the person at `returnTo`, where they write.
  */
 export function ModelPicker({ agent, onSet, returnTo }: { agent: AgentWithLatest; onSet: (changes: AgentChanges) => void; returnTo: RefObject<HTMLElement | null> }) {
   const own: Offered = PROVIDERS[agent.provider];
@@ -50,7 +52,7 @@ export function ModelPicker({ agent, onSet, returnTo }: { agent: AgentWithLatest
   const label = [own.models[agent.model], `${own.efforts[agent.effort]} effort`, ...(fast ? ["Fast"] : [])].join(" · ");
 
   const pick = (provider: Provider, model: AgentChanges["model"]) =>
-    onSet(provider === agent.provider ? { model } : { provider, model, effort: Object.hasOwn(PROVIDERS[provider].efforts, agent.effort) ? agent.effort : PROVIDERS[provider].effort });
+    onSet(provider === agent.provider ? { model } : { provider, model, effort: effortMoved(provider, agent.effort) });
 
   return (
     <Popover.Root
@@ -137,31 +139,17 @@ function Heading({ title, detail }: { title: string; detail?: string }) {
   );
 }
 
-/** A column of choices where one may be in effect, which wears a check. Up and Down move between them, and Enter or a click picks one. Models wear their maker's `logo`. */
+/** A column of choices where one may be in effect, which wears a check. Models wear their maker's `logo`. */
 function Options<Id extends string>({ label, options, value, onPick, logo }: { label: string; options: Partial<Record<Id, string>>; value: Id | undefined; onPick: (id: Id) => void; logo?: Logo }) {
-  const move = (event: KeyboardEvent<HTMLDivElement>) => {
-    if (event.key !== "ArrowDown" && event.key !== "ArrowUp") return;
-    event.preventDefault();
-    const rows = [...event.currentTarget.querySelectorAll<HTMLElement>("[role=radio]")];
-    const at = rows.indexOf(document.activeElement as HTMLElement);
-    rows[(at + (event.key === "ArrowDown" ? 1 : -1) + rows.length) % rows.length]?.focus();
-  };
   return (
-    <div role="radiogroup" aria-label={label} onKeyDown={move} className="flex min-h-0 flex-1 flex-col gap-0.5 overflow-y-auto px-2 py-2">
+    <RadioGroup value={value ?? null} onValueChange={(id) => onPick(id as Id)} aria-label={label} className="flex min-h-0 flex-1 flex-col gap-0.5 overflow-y-auto px-2 py-2">
       {(Object.keys(options) as Id[]).map((id) => (
-        <button
-          key={id}
-          type="button"
-          role="radio"
-          aria-checked={id === value}
-          onClick={() => id !== value && onPick(id)}
-          className="flex h-8 shrink-0 items-center gap-2.5 rounded-md px-2.5 text-left text-sm outline-none select-none hover:bg-hover focus-visible:bg-hover active:bg-press"
-        >
+        <Radio.Root key={id} value={id} className="flex h-8 shrink-0 items-center gap-2.5 rounded-md px-2.5 text-left text-sm outline-none select-none hover:bg-hover focus-visible:bg-hover active:bg-press">
           {logo ? <BrandLogo logo={logo} size={16} /> : null}
           <span className="min-w-0 flex-1 truncate">{options[id]}</span>
           {id === value ? <Check aria-hidden className="size-3.5 shrink-0 text-ink2" strokeWidth={2.5} /> : null}
-        </button>
+        </Radio.Root>
       ))}
-    </div>
+    </RadioGroup>
   );
 }

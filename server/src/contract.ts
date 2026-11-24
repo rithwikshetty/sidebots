@@ -226,6 +226,14 @@ export type Selection = Pick<Agent, "provider" | "model" | "effort" | "fast">;
 /** A change of what an agent answers with. */
 export type Switched = { from: Selection; to: Selection };
 
+/** What an agent answers with, apart from the rest of it. */
+export const selectionOf = ({ provider, model, effort, fast }: Selection): Selection => ({ provider, model, effort, fast });
+
+/** The effort an agent moved to `provider` keeps: its own, when that provider has it, and otherwise the provider's default. */
+export function effortMoved(provider: Provider, effort: Effort): Effort {
+  return Object.hasOwn(PROVIDERS[provider].efforts, effort) ? effort : PROVIDERS[provider].effort;
+}
+
 /** Whether a selection answers in its provider's fast mode, which only a model that has one does. */
 export function runsFast({ provider, model, fast }: Selection): boolean {
   return fast && (PROVIDERS[provider] as Offered).fast.includes(model);

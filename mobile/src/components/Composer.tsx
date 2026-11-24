@@ -69,7 +69,7 @@ export function Composer({
   attachDisabled = false,
 }: {
   agent: AgentWithLatest;
-  /** Opens the drawer the agent's model and effort are chosen in. */
+  /** Opens the drawer where what the agent answers with is chosen. */
   onModel: () => void;
   value: string;
   onChangeText: (text: string) => void;

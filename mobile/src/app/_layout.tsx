@@ -110,7 +110,7 @@ export default function Layout() {
                           <Stack.Screen name="index" />
                           <Stack.Screen name="chat/[id]" options={split ? CHAT_BESIDE_AGENTS : undefined} />
                           <Stack.Screen name="new-agent" options={{ presentation: "formSheet", sheetAllowedDetents: [0.62], sheetGrabberVisible: true }} />
-                          {/* The drawer an agent's model and effort are chosen in, which comes up over its chat and pulls up to show all of a long list. */}
+                          {/* The drawer where what an agent answers with is chosen, which comes up over its chat and pulls up to show all of a long list. */}
                           <Stack.Screen name="model/[id]" options={{ presentation: "formSheet", sheetAllowedDetents: [0.75, 1], sheetGrabberVisible: true }} />
                           {/* An agent's page, a note opened from it, an exchange between two agents, usage and connections, each a sheet over what is behind. */}
                           <Stack.Screen name="agent/[id]" options={{ presentation: "modal" }} />

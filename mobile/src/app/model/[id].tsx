@@ -3,7 +3,7 @@ import { Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import Animated from "react-native-reanimated";
 import { useLocalSearchParams } from "expo-router";
 import { Check } from "lucide-react-native";
-import { PROVIDERS, runsFast, type AgentWithLatest, type Offered, type Provider } from "@server/contract";
+import { PROVIDERS, effortMoved, runsFast, type AgentWithLatest, type Offered, type Provider } from "@server/contract";
 import { BrandLogo } from "@/components/BrandLogo";
 import { Choices } from "@/components/Choices";
 import { Rule, Section } from "@/components/Section";
@@ -45,7 +45,7 @@ function Model({ agent }: { agent: AgentWithLatest }) {
   const provider: Offered = PROVIDERS[listed];
   const own = listed === agent.provider;
   const change = (changes: AgentChanges) => void changeAgent(agent.id, changes).catch((failure) => problem("Couldn't change that", failure));
-  const pick = (model: AgentWithLatest["model"]) => change(own ? { model } : { provider: listed, model, effort: Object.hasOwn(provider.efforts, agent.effort) ? agent.effort : PROVIDERS[listed].effort });
+  const pick = (model: AgentWithLatest["model"]) => change(own ? { model } : { provider: listed, model, effort: effortMoved(listed, agent.effort) });
   return (
     <ScrollView style={{ backgroundColor: theme.bg }} contentContainerStyle={styles.page}>
       <View style={styles.provider}>

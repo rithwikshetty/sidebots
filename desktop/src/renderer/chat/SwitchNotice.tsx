@@ -1,4 +1,4 @@
-import { PROVIDERS, selectionWords, type Message, type Selection } from "@server/contract.ts";
+import { PROVIDERS, selectionWords, type Message, type Selection, type Switched } from "@server/contract.ts";
 import { cn } from "../lib/cn.ts";
 import { BrandLogo } from "../ui/BrandLogo.tsx";
 import { FlowDots } from "./WorkingLine.tsx";
@@ -11,8 +11,7 @@ import { FlowDots } from "./WorkingLine.tsx";
  * provider's logo, and while it hands over to the new one the dots light in
  * turn.
  */
-export function SwitchNotice({ message, className }: { message: Message & { switched: NonNullable<Message["switched"]> }; className?: string }) {
-  const { from, to } = message.switched;
+export function SwitchNotice({ message, switched: { from, to }, className }: { message: Message; switched: Switched; className?: string }) {
   return (
     <div data-message-id={message.id} data-testid="notice" data-status={message.status} role="note" aria-label={message.body} className={cn("mt-3 mb-1.5 flex items-center gap-3 text-sm", className)}>
       <span aria-hidden className="h-px flex-1 bg-line" />

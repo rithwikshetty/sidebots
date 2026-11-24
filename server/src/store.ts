@@ -6,7 +6,7 @@ import { basename, join, resolve } from "node:path";
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
 
-import { COLOR, PROVIDERS, USAGE_DAYS, betweenAgents, readableColor } from "./contract.ts";
+import { COLOR, PROVIDERS, USAGE_DAYS, betweenAgents, readableColor, selectionOf } from "./contract.ts";
 import type { About, Agent, AgentWithLatest, Ask, Avatar, Connection, Day, Found, Job, Limit, Memory, Message, Provider, PushToken, Question, Schedule, Selection, Sender, Status, Switched, TurnKind, Usage, Used } from "./contract.ts";
 
 export type Person = { id: string; name: string };
@@ -218,8 +218,6 @@ const toAgent = (row: AgentRow): Agent => ({
   hidden: row.hidden === 1,
   ran_on: row.ran_on === null ? null : (JSON.parse(row.ran_on) as Selection),
 });
-/** What an agent answers with, apart from the rest of it. */
-export const selectionOf = ({ provider, model, effort, fast }: Selection): Selection => ({ provider, model, effort, fast });
 type JobRow = Omit<Job, "schedule"> & { schedule: string };
 const toJob = (row: JobRow): Job => ({ ...row, schedule: JSON.parse(row.schedule) as Schedule });
 

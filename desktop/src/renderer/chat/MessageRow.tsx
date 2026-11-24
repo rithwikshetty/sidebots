@@ -56,7 +56,7 @@ export const MessageRow = memo(function MessageRow({
   const row = useRef<HTMLDivElement>(null);
   // The Reply button is there only while the pointer or focus is on the message, so a long chat holds one, not one for each message.
   const [near, setNear] = useState(false);
-  if (message.switched) return <SwitchNotice message={{ ...message, switched: message.switched }} className={cn(arrival !== "none" && "animate-rise-in", flashing && "animate-flash")} />;
+  if (message.switched) return <SwitchNotice message={message} switched={message.switched} className={cn(arrival !== "none" && "animate-rise-in", flashing && "animate-flash")} />;
   if (message.sender === "sidebots") {
     return (
       <p

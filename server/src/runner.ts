@@ -3,10 +3,10 @@
 
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
-import { CONNECTIONS, MESSAGE_BYTES, PROVIDERS, fenced, runsFast, sameSelection, scheduleWords, selectionWords } from "./contract.ts";
+import { CONNECTIONS, MESSAGE_BYTES, PROVIDERS, fenced, runsFast, sameSelection, scheduleWords, selectionOf, selectionWords } from "./contract.ts";
 import type { Agent, Ask, Connection, Effort, Found, Job, Limit, Message, Model, Provider, Question, Schedule, Selection, Switched, TurnKind } from "./contract.ts";
 import { CONNECTION_TOOLS, type Connections, type Servers } from "./connections.ts";
-import { selectionOf, type Person, type Store, type Upload } from "./store.ts";
+import type { Person, Store, Upload } from "./store.ts";
 
 /** A job as an agent asks for one: what to do on each run, and one of three ways to say when. */
 export type JobRequest = { what: string; every_minutes?: number; daily_at?: string; weekdays?: number[]; once_at?: string };
@@ -363,9 +363,10 @@ function fromAgent(message: Message, person: Person, { recent, quoted }: { recen
  *
  * A turn runs on what the agent answers with as the turn starts, which the
  * agent keeps as `ran_on`. When the person has picked something else since
- * the agent's last turn, the chat says so first. A session doesn't cross to another provider, so an agent moved to
- * one is handed over as for a fresh start: it saves what is worth keeping to
- * its memory in the session it had, and starts a new one on the new provider
+ * the agent's last turn, the chat says so first. A session doesn't cross to
+ * another provider, so an agent moved to one is handed over as for a fresh
+ * start: it saves what is worth keeping to its memory in the session it had,
+ * and starts a new one on the new provider
  * with the latest of the chat.
  *
  * An agent can ask another of the person's agents something. What it asks
@@ -528,7 +529,8 @@ export function createQueue(store: Store, drivers: Drivers, connections: Connect
       const startsTurn = job !== undefined || (message !== undefined && message.sender !== "sidebots");
       if (startsTurn && !sameSelection(ranOn, agent)) {
         const handsOver = ranOn.provider !== agent.provider && agent.session_id !== null;
-        const notice = store.addMessage(agent.id, "sidebots", switchedWords({ from: ranOn, to: selectionOf(agent) }), handsOver ? "running" : "done", { switched: { from: ranOn, to: selectionOf(agent) } });
+        const switched = { from: ranOn, to: selectionOf(agent) };
+        const notice = store.addMessage(agent.id, "sidebots", switchedWords(switched), handsOver ? "running" : "done", { switched });
         if (handsOver) {
           // The session goes even when the agent couldn't save first, as for a fresh start.
           await turn(remember(person), { kind: "memory", seen: () => undefined, replied: () => undefined }, ranOn).catch(() => undefined);
