@@ -198,7 +198,10 @@ export type SignIn = { url: string; redirect: string };
  * screen until it next has something to say. `color` fills the person's
  * messages in the agent's chat, as `#RRGGBB`; null takes the colour of its
  * avatar. `ran_on` is what the agent's last turn ran on, which its session
- * is on, and null before its first turn.
+ * is on, and null before its first turn. `chat_changes` counts each time a
+ * message in its chat was added, changed or removed, so a device that kept
+ * the chat at one count knows it is as the computer has it while the count
+ * stays.
  */
 export type Agent = {
   id: string;
@@ -215,6 +218,7 @@ export type Agent = {
   color: string | null;
   session_id: string | null;
   read_at: number;
+  chat_changes: number;
   created_at: number;
 };
 /**
@@ -421,9 +425,11 @@ export function oneLine(message: Pick<Message, "body" | "question">): string {
  * What the event stream sends. A message that was added, changed status or
  * had its ask closed comes with its agent as the home screen shows it. An
  * agent that was added or changed comes the same way, with no message. A
- * deleted agent comes as its id. How the person signs in to a provider comes
- * as `Usage` lists it, each time the provider says where the plan's limits
- * stand or that the login is an API key.
+ * deleted agent comes as its id, and each agent it had talked with comes
+ * after it, since that agent's chat lost what the two said to each other. How
+ * the person signs in to a provider comes as `Usage` lists it, each time the
+ * provider says where the plan's limits stand or that the login is an API
+ * key.
  */
 export type StreamEvent = { message: Message | null; agent: AgentWithLatest } | { deleted: string } | { plan: Plan };
 /** How often the computer pings the event stream, in milliseconds, so a device can tell an open stream from one that dropped without a word. */

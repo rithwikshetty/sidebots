@@ -2197,6 +2197,42 @@ test("an agent that can't finish what another asked tells it why, and a deleted 
   assert.deepEqual((await chat(mochi.id)).map((message) => message.body), ["book my bike in", "I've asked Cog.", "Cog couldn't book it."]);
 });
 
+test("each message the stream brings carries its chat's count of changes, one more than the last, and the agent a deleted one talked with comes after it", async () => {
+  const { queue, call, say, app, phoneOf, mochi, cog, rows } = await twoAgents(async (turn, cogs) => {
+    if (cogs) return reply("£85, ready Friday.");
+    if (turn.prompt.text === "is my bike sorted?") turn.askAgent("Cog", "What did the shop quote?");
+    return reply(turn.prompt.text === "is my bike sorted?" ? "I've asked Cog." : "It's sorted: £85.");
+  });
+  const response = await app.request("/events", { headers: phoneOf(ME) });
+  const reader = response.body!.pipeThrough(new TextDecoderStream()).getReader();
+  await say(ME, mochi.id, "is my bike sorted?");
+  await queue.kick(mochi.id);
+  await queue.kick(cog.id);
+  await queue.kick(mochi.id);
+  const stood = await rows();
+  assert.equal((await call(ME, "DELETE", `/agents/${cog.id}`)).status, 200);
+
+  let text = "";
+  while (!/event: deleted[^]*event: agent/.test(text)) text += (await reader.read()).value;
+  await reader.cancel();
+  const events = text
+    .split("\n")
+    .filter((line) => line.startsWith("data: {"))
+    .map((line) => JSON.parse(line.slice(6)) as { message: Message | null; agent: AgentWithLatest } | { deleted: string });
+  const counts = (agentId: string) => events.flatMap((event) => ("agent" in event && event.message && event.agent.id === agentId ? [event.agent.chat_changes] : []));
+  // What the two said to each other is in both chats, so it counts in both.
+  for (const agent of [stood.Mochi, stood.Cog]) {
+    assert.deepEqual(counts(agent.id), Array.from({ length: agent.chat_changes }, (_, index) => index + 1));
+    assert.ok(agent.chat_changes > 0);
+  }
+  assert.ok(stood.Cog.chat_changes < stood.Mochi.chat_changes);
+  // Cog goes, and what it and Mochi said to each other goes from Mochi's chat, so Mochi comes after it with a new count.
+  const now = (await rows()).Mochi;
+  assert.ok(now.chat_changes > stood.Mochi.chat_changes);
+  assert.equal(now.waiting_on, null);
+  assert.deepEqual(events.slice(-2), [{ deleted: cog.id }, { message: null, agent: now }]);
+});
+
 const GMAIL_SCOPES = "openid https://www.googleapis.com/auth/userinfo.email https://www.googleapis.com/auth/gmail.readonly https://www.googleapis.com/auth/gmail.send";
 
 /**
