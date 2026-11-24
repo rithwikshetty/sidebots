@@ -1,10 +1,12 @@
 // Tests of the harness itself, with no app: the scripted server answers each
 // command as server.ts says, the seed makes the world seed.ts describes, and
 // the test controls do what they say. Each drives the server over HTTP as a
-// phone of Tester's would.
+// phone of Tester's would, but for one that seeds a store at a set time.
 
 import { CONTRACT_VERSION, type About, type AgentWithLatest, type Connected, type Message, type Usage } from "../../server/src/contract.ts";
+import { openStore } from "../../server/src/store.ts";
 import { expect, test, type TestServer } from "./fixtures.ts";
+import { seed } from "./scripted/seed.ts";
 
 /** Reads `read` until `done` holds, and resolves to what it read last. */
 async function until<T>(read: () => Promise<T>, done: (value: T) => boolean, timeout = 15_000): Promise<T> {
@@ -314,6 +316,21 @@ test.describe("the seeded world", () => {
     const asked = messages.filter((message) => message.agent_id === atlas.id && message.peer_id && !message.ask);
     expect(asked.map((message) => message.status).sort()).toEqual(["done", "failed"]);
     expect(messages.some((message) => message.reply_to === asked.find((each) => each.status === "done")!.id)).toBe(true);
+  });
+
+  test("seeded just after midnight, has what the tests read as today", ({ home }) => {
+    const store = openStore(home);
+    const person = store.addPerson({ name: "Tester", provider: "claude", configDir: home });
+    const midnight = new Date().setHours(0, 0, 0, 0);
+    const now = midnight + 5 * 60_000;
+    seed(store, person, now);
+    const all = store.agentsFor(person.id);
+    const named = (name: string) => all.find((agent) => agent.name === name)!;
+    expect(named("Pip").created_at).toBeGreaterThanOrEqual(midnight);
+    expect(named("Ledger").latest!.created_at).toBeGreaterThanOrEqual(midnight);
+    expect(store.messages(named("Atlas").id).at(-1)!.created_at).toBeGreaterThanOrEqual(midnight);
+    expect(Math.max(...all.map((agent) => agent.latest?.created_at ?? 0))).toBeLessThanOrEqual(now);
+    store.close();
   });
 
   test("has a week of usage, the plan's limits, a connection and a phone", async ({ server }) => {
