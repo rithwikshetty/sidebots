@@ -65,7 +65,7 @@ export function createPairing({ file, port, name, command, fetch }: { file: stri
   /** Whether the server knows the key the app holds. It fails when the server can't be reached or speaks another version of the contract. */
   const known = async (): Promise<boolean> => {
     if (!key) return false;
-    const answer = await call("/agents", { method: "HEAD", headers: { Authorization: `Bearer ${key}` } });
+    const answer = await call("/status", { headers: { Authorization: `Bearer ${key}` } });
     sameContract(answer);
     return answer.status !== 401;
   };

@@ -42,8 +42,9 @@ function fakeServer(port: number, version = CONTRACT_VERSION) {
         keys.add(key);
         return Response.json({ key, notificationKey: "n", machine: "Test computer" }, { status: 201, headers });
       }
+      if (pathname !== "/status") return Response.json({ error: "No such route." }, { status: 404, headers });
       const known = keys.has(sent.get("Authorization")?.replace("Bearer ", "") ?? "");
-      return new Response(null, { status: known ? 200 : 401, headers });
+      return new Response(null, { status: known ? 204 : 401, headers });
     },
   };
 }
