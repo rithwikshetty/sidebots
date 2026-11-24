@@ -72,7 +72,7 @@ export type Platform<Picked> = {
 };
 
 // The number changes when the shape of what is saved does.
-const CACHE_KEY = "cache-6";
+const CACHE_KEY = "cache-7";
 const SAVE_DELAY_MS = 300;
 // The computer says something on the stream within every keepalive, and a slow connection may bring it late. A stream quiet for longer than this has dropped.
 const QUIET_MS = KEEPALIVE_MS + 10_000;
@@ -233,16 +233,20 @@ export function createStore<Picked>(platform: Platform<Picked>) {
   }
 
   /**
-   * A chat with `message` in the place of the copy it holds, or at its end
-   * when the message is new. One from before the newest messages the chat
-   * holds without a break, as an old message that changed, is on a page the
-   * chat doesn't hold or in its hole, and comes with that page.
+   * A chat with `message` in the place of the copy it holds, or, when the
+   * chat doesn't hold it, where it comes among the chat's newest messages,
+   * which is their end for a new one. One that came before the newest
+   * messages the chat holds without a break, as an old message that changed,
+   * is on a page the chat doesn't hold or in its hole, and comes with that
+   * page.
    */
   function upsert(list: Message[], message: Message, hole: string | undefined): Message[] {
     const at = list.findIndex((item) => item.id === message.id);
     if (at >= 0) return list.map((item, index) => (index === at ? message : item));
     const newest = list[hole === undefined ? 0 : list.findIndex((item) => item.id === hole) + 1];
-    return newest && message.created_at < newest.created_at ? list : [...list, message];
+    if (newest && message.order < newest.order) return list;
+    const after = list.findLastIndex((item) => item.order <= message.order) + 1;
+    return [...list.slice(0, after), message, ...list.slice(after)];
   }
 
   /**
@@ -257,11 +261,12 @@ export function createStore<Picked>(platform: Platform<Picked>) {
    * that caught the chat up, which may be newer than the event, so the chat
    * keeps it as the page has it. Any other change to a chat's count leaves
    * the chat behind it, so the chat is fetched when it is next opened: a
-   * message the chat had no place for, which may be new when the computer's
-   * clock went back, and an agent that comes with a new count and no message,
-   * as when an agent it had talked with was deleted. A provider's plan takes
-   * the place of the one in the usage the app has. An event of a kind the app
-   * doesn't know is passed over.
+   * message the chat had no place for, which may yet be a new one when all
+   * the chat holds is what this device sent after it, and an agent that
+   * comes with a new count and no message, as when an agent it had talked
+   * with was deleted. A provider's plan takes the place of the one in the
+   * usage the app has. An event of a kind the app doesn't know is passed
+   * over.
    */
   function apply(event: StreamEvent): void {
     if ("plan" in event) {

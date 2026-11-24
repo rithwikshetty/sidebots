@@ -48,12 +48,13 @@ const row = (body: string, more: Partial<Message> = {}): Message => ({
   question: null,
   peer_id: null,
   switched: null,
+  order: 0,
   created_at: 0,
   ...more,
 });
 
 /** Messages of Mochi's chat in the order they came, named `m` and their place in it. A page of the chat is fifty of them. */
-const said = (from: number, to: number) => Array.from({ length: to - from }, (_, index) => row(`m${from + index}`, { created_at: from + index }));
+const said = (from: number, to: number) => Array.from({ length: to - from }, (_, index) => row(`m${from + index}`, { order: from + index, created_at: from + index }));
 
 const gmail: Connected = { connection: "gmail", name: "Gmail", allows: "Read and send your mail", logo: { path: "", color: null }, account: null };
 
@@ -118,7 +119,7 @@ function app(t: TestContext, saved: object = {}) {
   };
   const streams: (() => Promise<Response> | Response)[] = [];
   const opened: AbortSignal[] = [];
-  const kept: Record<string, string> = { "cache-6": JSON.stringify(saved) };
+  const kept: Record<string, string> = { "cache-7": JSON.stringify(saved) };
   const heard = { front: (_dropped = false) => {}, refused: 0, signIn: null as string | null, changed: (_listener: () => void) => () => {} };
   const store = createStore<string>({
     async request<T>(path: string, init: { method?: string; body?: unknown } = {}) {
@@ -152,7 +153,7 @@ function app(t: TestContext, saved: object = {}) {
   /** What the store has saved, once the wait before a save has passed. */
   const savedNow = () => {
     t.mock.timers.tick(300);
-    return JSON.parse(kept["cache-6"]);
+    return JSON.parse(kept["cache-7"]);
   };
   const asked = () => calls.map((call) => `${call.method} ${call.path}`);
   return { store, calls, asked, answers, streams, opened, heard, savedNow, tick: (ms: number) => t.mock.timers.tick(ms) };
@@ -379,7 +380,7 @@ test("catching up with the computer lets go of what the app kept of agents that 
 });
 
 test("a full newest page joins onto the messages the app has when they run up to it and stands alone when the chat has moved on by more, and a page short of a full one is the whole chat", async (t) => {
-  const { store, answers, heard, asked } = app(t, { messages: { mochi: [...said(0, 49), row("m49", { created_at: 49, status: "running" })] } });
+  const { store, answers, heard, asked } = app(t, { messages: { mochi: [...said(0, 49), row("m49", { order: 49, created_at: 49, status: "running" })] } });
   const ids = () => store.useMessages("mochi").map((message) => message.id);
   // The chat is on screen, where it keeps what it had from before a page, and fetches it again with the page.
   store.useMessages("mochi");
@@ -505,7 +506,7 @@ test("what a chat holds from before a page is dropped with the page when another
   const { store, answers, asked, heard } = app(t, { messages: { mochi: said(0, 50) } });
   store.useMessages("mochi");
   heard.changed(() => {});
-  const third = (status: Message["status"]) => [...said(0, 3), row("m3", { created_at: 3, status }), ...said(4, 20)];
+  const third = (status: Message["status"]) => [...said(0, 3), row("m3", { order: 3, created_at: 3, status }), ...said(4, 20)];
   const runs: Record<string, { came: (run: Message[]) => void; failed: (failure: Error) => void }> = {};
   const pending = (path: string) => (answers[`GET /agents/mochi/messages?${path}`] = () => new Promise<Message[]>((came, failed) => (runs[path] = { came, failed })));
   const fetch = (from: number, thirtieth: Message["status"] = "done") => {
@@ -1313,6 +1314,41 @@ test("how the agents stood for a stream that has closed since is dropped when it
   store.stopSync();
 });
 
+test("a message that reaches the app after a later one this device sent goes before it, by the order they came in", async (t) => {
+  const { store, answers, streams, asked } = app(t, {
+    agents: [agent("mochi", { chat_changes: 3 }), agent("cog", { chat_changes: 0 })],
+    messages: { mochi: [row("hello", { order: 5 })], cog: [] },
+    caughtUp: { mochi: 3, cog: 0 },
+  });
+  answers["GET /agents"] = () => [agent("mochi", { chat_changes: 3 }), agent("cog", { chat_changes: 0 })];
+  const events = stream();
+  streams.push(() => events.response);
+  store.startSync();
+  await settle();
+  const sent = (agentId: string, body: string, order: number) => row(body, { agent_id: agentId, sender: "person", status: "queued", order });
+
+  // Another device sends Mochi a message a moment before this one does, and the computer's answer to this device comes ahead of what the stream says of the other's.
+  answers["POST /agents/mochi/messages"] = () => sent("mochi", "mine", 11);
+  await store.send("mochi", "mine");
+  events.say({ message: sent("mochi", "theirs", 10), agent: agent("mochi", { chat_changes: 4 }) });
+  events.say({ message: sent("mochi", "mine", 11), agent: agent("mochi", { chat_changes: 5 }) });
+  await settle();
+  assert.deepEqual(store.useMessages("mochi").map((message) => message.id), ["hello", "theirs", "mine"]);
+  await store.loadMessages("mochi");
+  assert.deepEqual(asked().filter((call) => call.endsWith("/messages")), ["POST /agents/mochi/messages"]);
+
+  // The same in a chat that held nothing: what this device sent is all the chat holds, so the other's message looks like one from before it. The chat is left behind its count, and has the message once it is next opened.
+  answers["POST /agents/cog/messages"] = () => sent("cog", "mine", 13);
+  await store.send("cog", "mine");
+  events.say({ message: sent("cog", "theirs", 12), agent: agent("cog", { chat_changes: 1 }) });
+  events.say({ message: sent("cog", "mine", 13), agent: agent("cog", { chat_changes: 2 }) });
+  await settle();
+  answers["GET /agents/cog/messages"] = () => [sent("cog", "theirs", 12), sent("cog", "mine", 13)];
+  await store.loadMessages("cog");
+  assert.deepEqual(store.useMessages("cog").map((message) => message.id), ["theirs", "mine"]);
+  store.stopSync();
+});
+
 test("a chat holds what was fetched and said of it only while it is on screen, and its newest page is what is saved", async (t) => {
   const { store, answers, streams, heard, asked, savedNow } = app(t);
   const ids = (messages: Message[]) => messages.map((message) => message.id);
@@ -1337,17 +1373,22 @@ test("a chat holds what was fetched and said of it only while it is on screen, a
   // Closed, it goes back to its newest page, and what comes then takes the place of the oldest.
   close();
   assert.deepEqual(ids(store.useMessages("mochi")), ids(said(350, 400)));
-  events.say({ message: row("m400", { created_at: 400 }), agent: agent("mochi", { chat_changes: 101 }) });
-  // A message from before that page that changes, as one sent again, is no new message at the chat's end. The chat had no place for it, so it is fetched again when it is next opened.
+  events.say({ message: row("m400", { order: 400, created_at: 400 }), agent: agent("mochi", { chat_changes: 101 }) });
   const fetches = () => asked().filter((call) => call === "GET /agents/mochi/messages").length;
   await settle();
   await store.loadMessages("mochi");
   assert.equal(fetches(), 1);
-  events.say({ message: row("m10", { created_at: 10, status: "queued" }), agent: agent("mochi", { chat_changes: 102 }) });
+  // A message from before that page that changes, as one sent again, is no new message at the chat's end, though it was made in the same millisecond as the oldest message the chat holds. The chat has no place for it.
+  events.say({ message: row("m10", { order: 10, created_at: 351, status: "queued" }), agent: agent("mochi", { chat_changes: 102 }) });
   await settle();
   assert.deepEqual(ids(store.useMessages("mochi")), ids(said(351, 401)));
   assert.deepEqual(ids(savedNow().messages.mochi), ids(said(351, 401)));
-  answers["GET /agents/mochi/messages"] = () => said(351, 401);
+  // A new message goes at the chat's end, though the computer's clock went back before it was made.
+  events.say({ message: row("m401", { order: 401, created_at: 5 }), agent: agent("mochi", { chat_changes: 103 }) });
+  await settle();
+  assert.deepEqual(ids(store.useMessages("mochi")), ids(said(352, 402)));
+  // The message the chat had no place for left it behind its count, so it is fetched again when it is next opened.
+  answers["GET /agents/mochi/messages"] = () => [...said(352, 401), row("m401", { order: 401, created_at: 5 })];
   await store.loadMessages("mochi");
   assert.equal(fetches(), 2);
   store.stopSync();

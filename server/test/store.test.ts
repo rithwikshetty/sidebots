@@ -64,6 +64,34 @@ test("what runs with every message, and with every look at the home screen or a 
   for (const sql of pages) assert.doesNotMatch(plan(sql), /TEMP B-TREE/, sql);
 });
 
+test("each message carries the order it came in, whatever the clock said, as it is added, as it is told of and as it is read back", (t) => {
+  t.mock.timers.enable({ apis: ["Date"], now: 5_000 });
+  const { store, maya, theo } = withAgents();
+  const told: number[] = [];
+  store.onChange((change) => void ("message" in change && told.push(change.message.order)));
+  const first = store.addMessage(maya.id, "person", "Hello.", "queued");
+  // The clock stands still for the second, and has gone back by the third.
+  const second = store.addMessage(theo.id, "agent", "What do you think?", "queued", { peerId: maya.id });
+  t.mock.timers.setTime(1_000);
+  const third = store.addMessage(maya.id, "agent", "Hi.", "done");
+  const orders = [first, second, third].map((message) => message.order);
+  assert.ok(orders[0] < orders[1] && orders[1] < orders[2], String(orders));
+  assert.deepEqual(told, orders);
+  assert.deepEqual(store.messages(maya.id).map((message) => message.order), orders);
+  // A message keeps its order as it changes.
+  store.markSeen([first.id]);
+  assert.deepEqual([store.message(maya.id, first.id)?.order, told.at(-1)], [orders[0], orders[0]]);
+
+  // Theo is deleted, and with him the last messages there are: what he asked Maya, and one of his own. The next message still comes after them all, twice over.
+  const last = store.addMessage(theo.id, "person", "Thanks.", "done").order;
+  store.deleteAgent(theo);
+  assert.ok(store.addMessage(maya.id, "person", "Anyone there?", "queued").order > last);
+  const ruby = store.createAgent(store.personByName("Alex")!, "Ruby", "mochi", "claude");
+  const hers = store.addMessage(ruby.id, "person", "Hello.", "done").order;
+  store.deleteAgent(ruby);
+  assert.ok(store.addMessage(maya.id, "person", "Hello?", "queued").order > hers);
+});
+
 test("a page of a chat holds its own messages and what another agent sent it, in the order they came", () => {
   const { store, maya, theo } = withAgents();
   // Every third message in Maya's chat is one Theo sent her, and Theo's chat has more that never reach hers.
