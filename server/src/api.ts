@@ -90,6 +90,14 @@ export function createApi(store: Store, queue: Queue, connections: Connections, 
     return agent && agent.person_id === person.id ? agent : undefined;
   };
 
+  /**
+   * The cheapest thing to ask the server: it answers a paired device with
+   * nothing. An answer says the server is up and which version of the
+   * contract it speaks, and whether it is a refusal says whether the server
+   * knows the key that asked.
+   */
+  app.get("/status", (c) => c.body(null, 204));
+
   app.get("/agents", (c) => c.json(store.agentsFor(c.var.person.id)));
 
   /** Adds an agent, on one of the providers the person has set up: the one named, or the first they set up. */
