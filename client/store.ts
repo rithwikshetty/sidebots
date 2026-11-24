@@ -536,15 +536,16 @@ export function createStore<Picked>(platform: Platform<Picked>) {
   async function listen(signal: AbortSignal): Promise<void> {
     let wait = 1000;
     while (!signal.aborted) {
+      // Each stream closes with the sync, and when the app stops reading it.
+      const stream = new AbortController();
+      const stop = () => stream.abort();
+      signal.addEventListener("abort", stop);
       try {
-        const response = await platform.events(signal);
+        const response = await platform.events(stream.signal);
         // A computer on another version of the contract is asked again until one side is updated.
         const side = behind(response);
         if (side !== state.behind) set({ behind: side });
-        if (side) {
-          void response.body?.cancel();
-          throw new Error("the computer speaks another version");
-        }
+        if (side) throw new Error("the computer speaks another version");
         // The computer doesn't know this device, so there is nothing to listen to until the app says otherwise.
         if (response.status === 401) {
           stopSync();
@@ -569,6 +570,10 @@ export function createStore<Picked>(platform: Platform<Picked>) {
         }
       } catch {
         // Falls through to the retry below.
+      } finally {
+        // A stream the app has stopped reading, as one it couldn't catch up from or one on another version, is closed, not left open.
+        signal.removeEventListener("abort", stop);
+        stream.abort();
       }
       if (signal.aborted) return;
       live = null;

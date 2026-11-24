@@ -51,18 +51,30 @@ const gmail: Connected = { connection: "gmail", name: "Gmail", allows: "Read and
 
 type Call = { method: string; path: string; body: unknown };
 
+// What closes each stream a test made, as the signal a stream is opened with closes it.
+const closes = new WeakMap<Response, () => void>();
+
 /** An event stream the test speaks through, as a computer on `version` of the contract answers with it. */
 function stream(version = CONTRACT_VERSION) {
   let controller!: ReadableStreamDefaultController<Uint8Array>;
-  let cancelled = false;
-  const body = new ReadableStream<Uint8Array>({ start: (given) => void (controller = given), cancel: () => void (cancelled = true) });
+  let closed = false;
+  const body = new ReadableStream<Uint8Array>({ start: (given) => void (controller = given) });
   const write = (text: string) => controller.enqueue(new TextEncoder().encode(text));
+  const response = new Response(body, { status: 200, headers: { [CONTRACT_HEADER]: String(version) } });
+  closes.set(response, () => {
+    if (!closed) controller.error(new Error("The app stopped listening."));
+    closed = true;
+  });
   return {
-    response: new Response(body, { status: 200, headers: { [CONTRACT_HEADER]: String(version) } }),
+    response,
     write,
     say: (event: StreamEvent) => write(`data: ${JSON.stringify(event)}\n\n`),
-    end: () => controller.close(),
-    cancelled: () => cancelled,
+    end: () => {
+      closed = true;
+      controller.close();
+    },
+    /** Whether the app closed the stream, or the computer ended it. */
+    closed: () => closed,
   };
 }
 
@@ -103,7 +115,9 @@ function app(t: TestContext, saved: object = {}) {
       opened.push(signal);
       const next = streams.shift();
       if (!next) throw new Error("no answer");
-      return next();
+      const response = await next();
+      signal.addEventListener("abort", () => closes.get(response)?.());
+      return response;
     },
     storage: { getItem: (key) => kept[key] ?? null, setItem: (key, value) => void (kept[key] = value) },
     onFront(listener) {
@@ -547,6 +561,26 @@ test("a stream that can't be opened is tried again after a wait that doubles up 
   store.stopSync();
 });
 
+test("a stream the app can't catch up from is closed before another is opened", async (t) => {
+  const { store, answers, streams, opened, tick } = app(t);
+  const first = stream();
+  const second = stream();
+  streams.push(() => first.response, () => second.response);
+  // The stream opens, and then the computer can't be reached for what the app asks next, as on a bad connection.
+  answers["GET /agents"] = () => {
+    throw new ApiError("Can't reach Sidebots.", 0);
+  };
+  store.startSync();
+  await settle();
+  assert.deepEqual([opened.length, first.closed(), store.useOnline()], [1, true, false]);
+
+  answers["GET /agents"] = () => [];
+  tick(1000);
+  await settle();
+  assert.deepEqual([opened.length, second.closed(), store.useOnline()], [2, false, true]);
+  store.stopSync();
+});
+
 test("a computer on another version of the contract is told apart from one out of reach, read nothing of, and asked again", async (t) => {
   const { store, answers, streams, asked, tick } = app(t, { agents: [agent("mochi")] });
   answers["GET /agents"] = () => [];
@@ -557,7 +591,7 @@ test("a computer on another version of the contract is told apart from one out o
   await settle();
   assert.deepEqual([store.useBehind(), store.useOnline()], ["computer", false]);
   // The stream of a computer nothing is read from is closed, not left open.
-  assert.equal(old.cancelled(), true);
+  assert.equal(old.closed(), true);
 
   tick(1000);
   await settle();
