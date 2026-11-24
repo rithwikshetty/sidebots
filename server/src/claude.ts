@@ -80,8 +80,15 @@ export function limitsAnswered({ rate_limits: plan }: Pick<SDKControlGetUsageRes
   );
 }
 
-/** The messages a frame from Claude Code says it has read, by the ids they were sent with. */
-const readIds = (message: SDKMessage): string[] => ("user_message_uuids" in message && message.user_message_uuids) || [];
+/** Where a message sent to Claude Code stands, such as `started` once Claude Code hands it to the model. The SDK's types leave this frame out. */
+type Lifecycle = { type: "command_lifecycle"; command_uuid: string; state: string };
+
+/** The messages a frame from Claude Code says it has read, by the ids they were sent with: the one a lifecycle frame says Claude Code started, or the ones a frame names. */
+export const readIds = (message: SDKMessage): string[] => {
+  const frame = message as SDKMessage | Lifecycle;
+  if (frame.type === "command_lifecycle") return frame.state === "started" ? [frame.command_uuid] : [];
+  return ("user_message_uuids" in frame && frame.user_message_uuids) || [];
+};
 
 /** Whether a result ends a turn that was stopped part way. It carries no reply. */
 const stoppedPartWay = (result: SDKResultMessage) => result.terminal_reason === "aborted_streaming" || result.terminal_reason === "aborted_tools";
