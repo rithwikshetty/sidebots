@@ -18,6 +18,7 @@ const row = (body: string, more: Partial<Message> = {}): Message => ({
   question: null,
   peer_id: null,
   switched: null,
+  order: 0,
   created_at: 0,
   ...more,
 });

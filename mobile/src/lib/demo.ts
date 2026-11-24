@@ -168,6 +168,7 @@ function message(agentId: string, sender: Sender, body: string, at: number, stat
     question: null,
     peer_id: null,
     switched: null,
+    order: made,
     created_at: at,
   };
 }
