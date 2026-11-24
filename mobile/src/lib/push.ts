@@ -58,7 +58,8 @@ function follow(agents: AgentWithLatest[]): Promise<void> {
 TaskManager.defineTask(READ_ELSEWHERE, async () => {
   if (!isPaired() || AppState.currentState === "active") return;
   const agents = await request<AgentWithLatest[]>("/agents").catch(() => null);
-  if (agents) await Promise.all([follow(agents), Notifications.setBadgeCountAsync(unreadIn(agents))]).catch(() => undefined);
+  // The app may have come to the front while it asked, and then the stream knows better.
+  if (agents && AppState.currentState !== "active") await Promise.all([follow(agents), Notifications.setBadgeCountAsync(unreadIn(agents))]).catch(() => undefined);
 });
 
 /**
