@@ -96,7 +96,7 @@ const desktop: Desktop = {
     return true;
   },
   notify: (notice) => record("notify", notice),
-  clearNotices: (agentId) => record("clearNotices", agentId),
+  clearNotices: (unread) => record("clearNotices", unread),
   onOpenChat: (listener) => listen(listeners.openChat, listener),
   setBadge: (count) => record("setBadge", count),
   onMenu: (listener) => listen(listeners.menu, listener),

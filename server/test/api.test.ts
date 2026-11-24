@@ -16,6 +16,9 @@ import { startPush, type Ended, type Notice, type Sealed } from "../src/push.ts"
 /** A turn's reply, as a fake provider gives it. No reply means the fake gave its replies itself. */
 type Answer = TurnResult & { reply?: string };
 
+/** Waits until push has told the phones of what came, which it does a moment after, and at once in these tests. */
+const pushed = () => new Promise((resolve) => setTimeout(resolve, 5));
+
 /**
  * A Sidebots whose turns `answer` runs instead of Claude Code and Codex,
  * which still word the failures. Claude Code forgets the sessions too. The
@@ -24,9 +27,6 @@ type Answer = TurnResult & { reply?: string };
  * takes a moment to start. Asked where a plan's limits stand, either answers
  * as `plan.limits` does. What Sidebots asks Google, `web.request` answers.
  */
-/** Waits until push has told the phones of what came, which it does a moment after, and at once in these tests. */
-const pushed = () => new Promise((resolve) => setTimeout(resolve, 5));
-
 function setup(answer: (turn: Turn) => Promise<Answer>, now: () => number = Date.now, starts?: (turn: Turn) => Promise<void>) {
   const runTurn = async (turn: Turn): Promise<TurnResult> => {
     if (starts) await starts(turn);

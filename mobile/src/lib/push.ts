@@ -48,20 +48,17 @@ async function dismiss(read: (agentId: string) => boolean): Promise<void> {
 /** What the app's icon counts: the unread messages of the agents that aren't muted. */
 const unreadIn = (agents: AgentWithLatest[]): number => agents.reduce((total, agent) => total + (agent.muted ? 0 : agent.unread), 0);
 
-/**
- * Brings the phone in line with the agents as the computer just said they
- * stand: the notifications of an agent with nothing left unread go, as do
- * those of one that is gone, and the app's icon shows the count.
- */
-async function follow(agents: AgentWithLatest[]): Promise<void> {
+/** Takes off the phone the notifications of the agents that, as the computer just said they stand, have nothing left unread, and those of agents that are gone. */
+function follow(agents: AgentWithLatest[]): Promise<void> {
   const unread = new Set(agents.filter((agent) => agent.unread > 0).map((agent) => agent.id));
-  await dismiss((agentId) => agentId !== "" && !unread.has(agentId));
-  await Notifications.setBadgeCountAsync(unreadIn(agents));
+  return dismiss((agentId) => agentId !== "" && !unread.has(agentId));
 }
 
-// iOS wakes the app for that push, in the background and unseen, and the app asks the computer how the agents stand.
+// iOS wakes the app for that push, in the background and unseen, and the app asks the computer how the agents stand, and sets its icon's count.
 TaskManager.defineTask(READ_ELSEWHERE, async () => {
-  if (isPaired()) await follow(await request<AgentWithLatest[]>("/agents")).catch(() => undefined);
+  if (!isPaired()) return;
+  const agents = await request<AgentWithLatest[]>("/agents").catch(() => null);
+  if (agents) await Promise.all([follow(agents), Notifications.setBadgeCountAsync(unreadIn(agents))]).catch(() => undefined);
 });
 
 /**

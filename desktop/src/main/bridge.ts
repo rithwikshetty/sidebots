@@ -16,7 +16,7 @@ import { show } from "./window.ts";
 const SIGN_IN_MS = 10 * 60_000;
 // How long the computer goes unused before its person counts as away from it, in seconds, and how often the main process looks, in milliseconds.
 const AWAY_AFTER_SECONDS = 2 * 60;
-const LOOK_MS = 5_000;
+const LOOK_MS = 1_000;
 
 /** A device as the server's `devices --json` command lists it. */
 type Device = { id: string; name: string; kind: "phone" | "desktop"; paired_at: number };
@@ -159,9 +159,10 @@ export function answerWindow({ window, host, watch, key, fetch, userData }: {
     });
     notification.show();
   });
-  hear(CHANNELS.clearNotices, (agentId) => {
+  hear(CHANNELS.clearNotices, (unread) => {
+    const keep = new Set(unread as string[]);
     for (const [notification, about] of shown) {
-      if (about !== agentId) continue;
+      if (keep.has(about)) continue;
       shown.delete(notification);
       notification.close();
     }

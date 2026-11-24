@@ -16,9 +16,8 @@ const BODY_CHARS = 300;
 
 // The latest message of each agent the window has heard of, by id. Null until the computer first says how the agents stand, which is the chats as they were when the window opened.
 let heard: Set<string> | null = null;
-// The agents as the computer last said they stand, and the ones a notification is shown for.
+// The agents as the computer last said they stand.
 let standing: AgentWithLatest[] = [];
-const notified = new Set<string>();
 
 /**
  * Notifies of each agent's newest message a moment after the computer tells
@@ -38,11 +37,7 @@ export function useNotifications(): void {
         const first = heard === null;
         heard ??= new Set();
         standing = agents;
-        for (const agentId of notified) {
-          if (agents.some((agent) => agent.id === agentId && agent.unread > 0)) continue;
-          notified.delete(agentId);
-          window.desktop.clearNotices(agentId);
-        }
+        window.desktop.clearNotices(agents.filter((agent) => agent.unread > 0).map((agent) => agent.id));
         for (const agent of agents) {
           const latest = agent.latest;
           if (!latest || heard.has(latest.id)) continue;
@@ -76,6 +71,5 @@ function notifyOf(agentId: string, message: Message): void {
   if (!agent || agent.muted || agent.unread === 0 || message.created_at <= agent.read_at || looking(agent.id)) return;
   // An ask answered meanwhile, on another device, is nothing to tell of.
   if (agent.latest?.id === message.id && !notifies(agent.latest)) return;
-  notified.add(agent.id);
   window.desktop.notify({ title: agent.name, body: preview(message).slice(0, BODY_CHARS), agentId: agent.id, messageId: message.id });
 }

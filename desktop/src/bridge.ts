@@ -93,8 +93,8 @@ export type Desktop = {
 
   /** Shows a notification through the system. A click on it shows the window and tells `onOpenChat`. */
   notify(notice: Notice): void;
-  /** Takes away the notifications shown for an agent, as when the person has read its chat on another device. */
-  clearNotices(agentId: string): void;
+  /** Takes away the notifications shown for every agent but those `unread` names, which still have something unread. */
+  clearNotices(unread: string[]): void;
   onOpenChat(listener: (chat: OpenChat) => void): () => void;
   /** Sets the number on the app's icon. Zero takes it off. */
   setBadge(count: number): void;
