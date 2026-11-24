@@ -34,8 +34,11 @@ export type TimelineHandle = { toEnd: () => void };
 
 /** The day above the first message of a day. It is a row of its own, so it comes and goes as pages load without the message under it changing height. */
 type Day = { id: string; day: number };
-type Row = Message | Day;
+/** The person's message on its way. It is the chat's last row until the server's copy takes its place, so the list follows it as it does any message. */
+type Going = { id: string; outgoing: Outgoing };
+type Row = Message | Day | Going;
 const isDay = (row: Row): row is Day => "day" in row;
+const isGoing = (row: Row): row is Going => "outgoing" in row;
 
 /** What a row draws from besides its own message. */
 type Around = {
@@ -58,6 +61,7 @@ const idOf = (row: Row) => row.id;
 /** The kind a row is. The list takes a row it hasn't measured to be as tall as the others of its kind: a message is of a kind with those of its sender, under 2,000 characters or under 4,000, with files or without. A longer message's height says little about another's, so each is a kind of its own. */
 function rowKind(row: Row): string {
   if (isDay(row)) return "day";
+  if (isGoing(row)) return "going";
   if (betweenAgents(row)) return "exchange";
   const drawn = drawnAs(row);
   if (drawn !== "message") return drawn;
@@ -65,7 +69,7 @@ function rowKind(row: Row): string {
   return length < 4000 ? `${row.sender}:${length < 2000 ? "short" : "long"}:${row.attachments.length > 0 ? "files" : "words"}` : row.id;
 }
 
-/** A row as it is drawn: a day, a message, or the exchange a message was last asked in. */
+/** A row as it is drawn: a day, a message, the exchange a message was last asked in, or the person's message on its way. */
 function drawRow({ item: row, extraData }: LegendListRenderItemProps<Row>) {
   const { agentId, standings, byId, newestMine, flashing, today, openedAt, onReply, onPageShown } = extraData as Around;
   if (isDay(row)) {
@@ -73,6 +77,13 @@ function drawRow({ item: row, extraData }: LegendListRenderItemProps<Row>) {
       <p className="mt-4 px-4 text-center text-sm font-medium text-ink2" data-testid="day" data-day={row.id}>
         {dayLabel(row.day, today)}
       </p>
+    );
+  }
+  if (isGoing(row)) {
+    return (
+      <div className="px-4">
+        <OutgoingRow outgoing={row.outgoing} />
+      </div>
     );
   }
   const message = row;
@@ -186,14 +197,17 @@ export const Timeline = memo(function Timeline({
   // What the agent and another said to each other shows as one line for each exchange, where the newest thing in it was asked.
   const standings = useMemo(() => new Map(exchanges(messages).map((exchange) => standingOf(exchange, messages)).map(({ asked, state }) => [asked.id, state])), [messages]);
   const shown = useMemo(() => messages.filter((message) => !betweenAgents(message) || standings.has(message.id)), [messages, standings]);
-  const rows = useMemo(
-    () =>
-      shown.flatMap((message, index): Row[] => {
-        const before = shown[index - 1];
-        return !before || !sameDay(before.created_at, message.created_at) ? [{ id: `day:${message.id}`, day: message.created_at }, message] : [message];
-      }),
-    [shown],
-  );
+  // The person's newest message, which carries the chat's receipt.
+  const newestMine = messages.findLast((message) => message.sender === "person")?.id;
+  // The faded copy goes once the server's copy is in the chat, which may come over the event stream first.
+  const sending = outgoing && outgoing.after === newestMine ? outgoing : null;
+  const rows = useMemo(() => {
+    const rows = shown.flatMap((message, index): Row[] => {
+      const before = shown[index - 1];
+      return !before || !sameDay(before.created_at, message.created_at) ? [{ id: `day:${message.id}`, day: message.created_at }, message] : [message];
+    });
+    return sending ? [...rows, { id: "going", outgoing: sending }] : rows;
+  }, [shown, sending]);
   // The list takes the rows once it has been told what to hold. When rows land above what is on screen, as a page fetched from the top or one the panel fetched, it holds the first message on screen where it is, and moves with each height it measures above it, in the frame it measures it. Left to keep the place by itself, it moves the scroll a frame after the rows, and draws that frame out of place. At the chat's end it follows the end.
   const [listed, setListed] = useState(rows);
   useLayoutEffect(() => {
@@ -206,12 +220,9 @@ export const Timeline = memo(function Timeline({
     setListed(rows);
   }, [rows, listed]);
   const byId = useMemo(() => new Map(messages.map((message) => [message.id, message])), [messages]);
-  const newestMine = messages.findLast((message) => message.sender === "person")?.id;
   // Whether the agent waits on the person's answer to an ask of its own, which is then the last thing in the chat.
   const asksPerson = messages.some((message) => message.ask === "waiting" && message.agent_id === agent.id);
   const working = agent.working && online && !asksPerson;
-  // The faded copy goes once the server's copy is in the chat, which may come over the event stream first.
-  const sending = outgoing && outgoing.after === newestMine ? outgoing : null;
   const around = useMemo<Around>(
     () => ({ agentId: agent.id, standings, byId, newestMine, flashing, today, openedAt, onReply, onPageShown: keep }),
     [agent.id, standings, byId, newestMine, flashing, today, openedAt, onReply, keep],
@@ -242,12 +253,6 @@ export const Timeline = memo(function Timeline({
   const fetchOlder = useCallback(() => {
     if (older.current) return loadOlder(agent.id).then((more) => void (older.current = more), () => undefined);
   }, [agent.id]);
-
-  // A chat with no messages yet gives the list nothing to scroll to, so the copy of a first message on its way, when it is taller than the room, is scrolled to its end here.
-  useLayoutEffect(() => {
-    const scroller = list.current?.getScrollableNode();
-    if (sending && listed.length === 0 && scroller) scroller.scrollTop = scroller.scrollHeight;
-  }, [sending, listed.length]);
 
   // Something new at the end while the person reads further up shows the button that jumps to it, until they are back at the end.
   const newest = shown.at(-1)?.id;
@@ -299,7 +304,7 @@ export const Timeline = memo(function Timeline({
     const target = event.target as HTMLElement;
     const focused = target.dataset.messageRow === undefined ? -1 : listed.findIndex((row) => row.id === target.dataset.messageId);
     if (!at || (focused < 0 && target !== scroller)) return;
-    const takesFocus = (row: Row) => !isDay(row) && !standings.has(row.id) && drawnAs(row) === "message";
+    const takesFocus = (row: Row) => !isDay(row) && !isGoing(row) && !standings.has(row.id) && drawnAs(row) === "message";
     const step = event.key === "ArrowDown" ? 1 : -1;
     let next = focused < 0 ? (at.getState().end ?? -1) : focused + step;
     while (listed[next] && !takesFocus(listed[next])) next += focused < 0 ? -1 : step;
@@ -360,7 +365,6 @@ export const Timeline = memo(function Timeline({
                 {agent.name} is new. Tell it what it's for.
               </p>
             ) : null}
-            {sending ? <OutgoingRow outgoing={sending} /> : null}
             {working ? <WorkingLine /> : null}
           </div>
         }
