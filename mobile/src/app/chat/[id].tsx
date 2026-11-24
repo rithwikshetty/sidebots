@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { FlatList, Pressable, StyleSheet, Text, View } from "react-native";
+import { ActivityIndicator, FlatList, Pressable, StyleSheet, Text, View, type ListViewToken } from "react-native";
 import { Stack, useFocusEffect, useLocalSearchParams, useRouter } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { KeyboardChatScrollView, KeyboardController, KeyboardEvents, KeyboardStickyView } from "react-native-keyboard-controller";
-import Animated, { useSharedValue } from "react-native-reanimated";
+import Animated, { FadeOut, useSharedValue } from "react-native-reanimated";
 import { Reply, X } from "lucide-react-native";
 import { avatarStateOf, betweenAgents, exchanges, type AgentWithLatest, type Ask, type Message, type Question } from "@server/contract";
 import { standingOf } from "@client/exchanges";
@@ -30,8 +30,8 @@ import { haptics } from "@/lib/haptics";
 import { useAppActive, useReadingMargin, useSplit, useToday } from "@/lib/layout";
 import { useWorkingLine } from "@/lib/lines";
 import { HIDE, MOVE, SHOW, arrive } from "@/lib/motion";
-import { askForPush, showChatOnScreen } from "@/lib/push";
-import { answerAsk, connect, freshStart, loadMessages, loadOlder, markRead, resend, send, stop, useAgent, useChatColor, useMessages, useOnline } from "@/lib/state";
+import { askForPush, showChatOnScreen, useOpenChat } from "@/lib/push";
+import { answerAsk, backToNewest, connect, freshStart, loadMessages, loadOlder, markRead, resend, send, stop, useAgent, useChatColor, useHole, useMessages, useOnline } from "@/lib/state";
 import { ChatColor, type Theme, useTheme } from "@/lib/theme";
 
 export default function Chat() {
@@ -63,18 +63,21 @@ function ChatWith({ agent }: { agent: AgentWithLatest }) {
   const margin = useReadingMargin();
   const avatarState = avatarStateOf(agent);
   const today = useToday();
-  const messages = useMessages(agent.id);
+  const chat = useMessages(agent.id);
+  const hole = useHole(agent.id);
+  // With a hole in the chat, the list draws the stretch before it, which fills across the hole as the person scrolls down to it, and the chat's newest messages wait beyond it.
+  const messages = useMemo(() => (hole === undefined ? chat : chat.slice(0, chat.findIndex((message) => message.id === hole) + 1)), [chat, hole]);
   // The agent this one asked something and hasn't heard back from.
   const waitingOn = useAgent(agent.waiting_on ?? "");
   // Whether the agent waits on the person's answer to an ask of its own, which is then the last thing in the chat.
-  const asksPerson = messages.some((message) => message.ask === "waiting" && message.agent_id === agent.id);
+  const asksPerson = chat.some((message) => message.ask === "waiting" && message.agent_id === agent.id);
   // What the agent and another said to each other shows as one line for each exchange, where the newest thing in it was asked.
   const standings = useMemo(() => {
     const each = exchanges(messages).map((exchange) => standingOf(exchange, messages));
     return new Map(each.map(({ asked, state }) => [asked.id, state]));
   }, [messages]);
   // The person's newest message, which carries the chat's receipt.
-  const newestMine = messages.findLast((message) => message.sender === "person")?.id;
+  const newestMine = chat.findLast((message) => message.sender === "person")?.id;
   const [picked, setPicked] = useState<Picked[]>([]);
   // The message the next one answers, set by a swipe on it.
   const [replyTo, setReplyTo] = useState<Message | null>(null);
@@ -83,8 +86,12 @@ function ChatWith({ agent }: { agent: AgentWithLatest }) {
   // Messages made from here on came in while the chat was open, so they arrive with motion.
   const [openedAt] = useState(() => Date.now() - CLOCK_SLACK_MS);
 
+  // The chat lands on a message it was opened at once its newest page has come: a newest page that doesn't join what the phone had saved takes the place of all of it, a run fetched before it too.
+  const [loading, setLoading] = useState(true);
   useEffect(() => {
-    loadMessages(agent.id).catch(() => {});
+    loadMessages(agent.id)
+      .catch(() => {})
+      .finally(() => setLoading(false));
   }, [agent.id]);
 
   // While the chat is open with the app in front, everything in it counts as read. What comes after the person leaves the app waits, unread, and notifies them.
@@ -114,16 +121,74 @@ function ChatWith({ agent }: { agent: AgentWithLatest }) {
   // its way back up and leave the newest message behind the message field,
   // so it holds its place until the keyboard is back.
   const covered = useSharedValue(false);
+  // The message the chat was opened at flashes, and the rows draw again when it does, as they do when the receipt moves to a newer message.
+  const [flashing, setFlashing] = useState<string | null>(null);
+  const drawnWith = useMemo(() => ({ newestMine, flashing }), [newestMine, flashing]);
+  // Whether the chat is on its way to a message it was opened at.
+  const [landing, setLanding] = useState(false);
+  // The rows the list has measured on screen, as it last said.
+  const onScreen = useRef(new Set<string>());
+  const onRowsShown = useRef(({ viewableItems }: { viewableItems: ListViewToken[] }) => {
+    onScreen.current = new Set(viewableItems.map((row) => row.key));
+  }).current;
 
-  // Scrolling up to the oldest message the app has fetches the page before it, until the chat's beginning.
-  const older = useRef<"more" | "loading" | "none">("more");
+  // Opened at a message it doesn't draw, the chat fetches the run of the chat from it, or, when it is among the newest messages past a hole, goes back to them. Then it scrolls to it and flashes it. A message that draws no row, as one between two agents, is opened at the nearest row to it, the one before it first. Opened again before a run has come, the chat lets that run go, so it can't land over the chat as it is opened now.
+  const opened = useOpenChat();
+  const held = useRef({ chat, messages, newestFirst });
+  held.current = { chat, messages, newestFirst };
+  useEffect(() => {
+    const id = opened?.agentId === agent.id ? opened.messageId : undefined;
+    if (!id || loading) return;
+    let going = true;
+    let fetching = false;
+    const frame = () => new Promise((resolve) => requestAnimationFrame(resolve));
+    const isIt = (message: Message) => message.id === id;
+    setLanding(true);
+    void (async () => {
+      // What the chat holds is read a frame on, once a run the last landing let go of has gone from it.
+      await frame();
+      if (!going) return;
+      if (!held.current.messages.some(isIt)) {
+        if (held.current.chat.some(isIt)) backToNewest(agent.id);
+        else {
+          fetching = true;
+          await loadOlder(agent.id, id).catch(() => false);
+          fetching = false;
+        }
+        await frame();
+      }
+      const { messages, newestFirst } = held.current;
+      const index = going ? messages.findIndex(isIt) : -1;
+      if (index < 0) return;
+      const drawn = (message: Message | undefined) => (message && newestFirst.includes(message) ? message : undefined);
+      let nearest: Message | undefined;
+      for (let step = 0; !nearest && step < messages.length; step++) nearest = drawn(messages[index - step]) ?? drawn(messages[index + step]);
+      if (!nearest) return;
+      // The list scrolls exactly only to a row it has measured, and to others by the heights it guesses. Each frame the chat scrolls to the row again, as the list draws and measures the rows where it is, until the row is on screen measured.
+      for (let tries = 0; tries < LANDING_FRAMES; tries++) {
+        const at = held.current.newestFirst.indexOf(nearest);
+        if (!going || at < 0) return;
+        list.current?.scrollToIndex({ index: at, viewPosition: 0.5, animated: false });
+        if (onScreen.current.has(nearest.id)) break;
+        await frame();
+      }
+      if (!going) return;
+      setFlashing(nearest.id);
+      setTimeout(() => going && setFlashing(null), FLASH_HOLD_MS);
+    })().finally(() => going && setLanding(false));
+    return () => {
+      going = false;
+      if (fetching) backToNewest(agent.id);
+      setLanding(false);
+      setFlashing(null);
+    };
+  }, [opened, agent.id, loading]);
+
+  // Scrolling up to the oldest message the app has fetches the page before it, until the chat's beginning: the oldest message, once a page fetched before it came back empty.
+  const first = useRef<string | null>(null);
   function onOldestReached() {
-    if (older.current !== "more" || messages.length === 0) return;
-    older.current = "loading";
-    loadOlder(agent.id).then(
-      (more) => (older.current = more ? "more" : "none"),
-      () => (older.current = "more"),
-    );
+    const oldest = messages[0]?.id;
+    if (oldest && oldest !== first.current) loadOlder(agent.id).then((more) => void (more || (first.current = oldest)), () => undefined);
   }
 
   // Resolves to whether the message went. One that didn't leaves its files and the message it answers as they were.
@@ -135,6 +200,8 @@ function ChatWith({ agent }: { agent: AgentWithLatest }) {
     setReplyTo(null);
     setOutgoing({ body: text, files, quote: answering ? preview(answering) : undefined, after: newestMine });
     haptics.send();
+    // A stretch from further back goes, and the chat is at the end of its newest messages, where the message goes.
+    if (hole !== undefined) backToNewest(agent.id);
     list.current?.scrollToOffset({ offset: -keyboardInset.current, animated: true });
     try {
       await send(agent.id, text, files, answering?.id);
@@ -190,8 +257,7 @@ function ChatWith({ agent }: { agent: AgentWithLatest }) {
         ref={list}
         data={newestFirst}
         inverted
-        // The receipt moves to each newest message, so the rows draw again when it does.
-        extraData={newestMine}
+        extraData={drawnWith}
         keyExtractor={(message) => message.id}
         renderScrollComponent={(props) => (
           <KeyboardChatScrollView
@@ -209,12 +275,20 @@ function ChatWith({ agent }: { agent: AgentWithLatest }) {
         contentInsetAdjustmentBehavior="never"
         automaticallyAdjustsScrollIndicatorInsets={false}
         // At the end the list follows new messages; scrolled up, the person stays where they are reading.
-        maintainVisibleContentPosition={atEnd ? undefined : { minIndexForVisible: 1 }}
+        // So do they at the end of a stretch from further back, while the run after it fills the hole below them.
+        maintainVisibleContentPosition={atEnd && hole === undefined ? undefined : { minIndexForVisible: 1 }}
         // As in Messages: dragging the list pulls the keyboard down with the finger, and a tap anywhere in it lowers the keyboard.
         keyboardDismissMode="interactive"
         keyboardShouldPersistTaps="never"
         onEndReached={onOldestReached}
         onEndReachedThreshold={1.5}
+        // Scrolling down to the end of a stretch from further back fetches the run of the chat after it. While the chat lands on a message it was opened at, the list can be at that end for a moment on its way.
+        onStartReached={hole === undefined || landing ? undefined : () => void loadOlder(agent.id, hole).catch(() => undefined)}
+        onStartReachedThreshold={1.5}
+        onViewableItemsChanged={onRowsShown}
+        onScrollToIndexFailed={({ index, averageItemLength }) => {
+          list.current?.scrollToOffset({ offset: index * averageItemLength, animated: false });
+        }}
         // Upside down, the list's header is its foot, and its bottom padding is the room at the top of the screen for the floating header.
         contentContainerStyle={{ paddingBottom: insets.top + BAR_HEIGHT + HEADER_OVERHANG + HEADER_CLEARANCE, paddingHorizontal: margin }}
         ListHeaderComponent={
@@ -239,7 +313,7 @@ function ChatWith({ agent }: { agent: AgentWithLatest }) {
                   />
                 </Animated.View>
               ) : null}
-              {agent.working && online && !asksPerson ? <WorkingRow /> : null}
+              {hole !== undefined ? <ActivityIndicator accessibilityLabel="Loading messages" color={theme.ink2} style={styles.hole} /> : agent.working && online && !asksPerson ? <WorkingRow /> : null}
             </View>
             <View style={{ height: composerHeight }} />
           </View>
@@ -248,7 +322,7 @@ function ChatWith({ agent }: { agent: AgentWithLatest }) {
           const older = newestFirst[index + 1];
           const standing = standings.get(item.id);
           return (
-            <Row message={item} openedAt={openedAt}>
+            <Row message={item} openedAt={openedAt} flashing={item.id === flashing}>
               {!older || !sameDay(older.created_at, item.created_at) ? (
                 <Text style={[styles.day, { color: theme.ink2 }]}>{dayLabel(item.created_at, today)}</Text>
               ) : null}
@@ -331,15 +405,22 @@ function WorkingRow() {
  * A row of the chat. A message that came in while the chat was open rises
  * into place the first time it shows, and the person's own settles from its
  * faded copy where it already sits. The history the chat opens on, and a row
- * scrolled back into view, show as they are.
+ * scrolled back into view, show as they are. The message the chat was opened
+ * at is washed in the chat's colour, which fades away.
  */
-function Row({ message, openedAt, children }: { message: Message; openedAt: number; children: ReactNode }) {
+function Row({ message, openedAt, flashing, children }: { message: Message; openedAt: number; flashing: boolean; children: ReactNode }) {
+  const theme = useTheme();
   const [entering] = useState(() => (message.created_at < openedAt || arrived.has(message.id) ? undefined : message.sender === "person" ? SETTLE : RISE));
   useEffect(() => {
     arrived.add(message.id);
   }, [message.id]);
   return (
     <Animated.View entering={entering} style={styles.row}>
+      {flashing ? (
+        <Animated.View exiting={WASH_FADES} pointerEvents="none" style={styles.wash}>
+          <View style={[StyleSheet.absoluteFill, styles.washColour, { backgroundColor: theme.tint, opacity: theme.dark ? 0.22 : 0.13 }]} />
+        </Animated.View>
+      ) : null}
       {children}
     </Animated.View>
   );
@@ -511,6 +592,11 @@ const CONNECTED: typeof ASKED = { allowed: "Connected", refused: "Not connected"
 const arrived = new Set<string>();
 // The phone's clock and the server's may disagree by a little.
 const CLOCK_SLACK_MS = 2000;
+// The message the chat was opened at holds its wash for a moment, and the wash then fades.
+const FLASH_HOLD_MS = 560;
+const WASH_FADES = FadeOut.duration(1040);
+// How many frames the chat is given to reach the message it was opened at. The list draws rows in batches, and a run of 200 rows takes it about 40.
+const LANDING_FRAMES = 120;
 
 // The resting composer's height above the home indicator, used until it is measured.
 const COMPOSER_ESTIMATE = 64;
@@ -519,6 +605,9 @@ const styles = StyleSheet.create({
   screen: { flex: 1 },
   row: { paddingHorizontal: 12 },
   foot: { paddingHorizontal: 12, paddingBottom: 10 },
+  hole: { paddingVertical: 20 },
+  wash: { position: "absolute", top: 0, right: 6, bottom: -3, left: 6 },
+  washColour: { borderRadius: 12, borderCurve: "continuous" },
   day: { alignSelf: "center", fontSize: 13, marginTop: 12, marginBottom: 6 },
   mine: { alignItems: "flex-end", marginTop: 6, gap: 4 },
   theirs: { alignItems: "flex-start", marginTop: 6, gap: 4 },
