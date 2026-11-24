@@ -1,4 +1,4 @@
-import { test } from "node:test";
+import { test, type TestContext } from "node:test";
 import { createDecipheriv, createHash } from "node:crypto";
 import assert from "node:assert/strict";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, statSync, truncateSync, writeFileSync } from "node:fs";
@@ -1154,21 +1154,46 @@ test("a plan's limits stand as the provider last said while a turn ran, even one
   assert.deepEqual(await accounts(ME), [{ provider: "claude", apiKey: true, limits: [] }]);
 });
 
-test("asking for usage asks the provider where the plan's limits stand, once a minute at most and once for requests that come together, and one that fails leaves what it last said", async (t) => {
+/** Opens the person's event stream, and returns what reads the next plan it brings. */
+async function plansOn(app: ReturnType<typeof setup>["app"], phone: { Authorization: string }, t: TestContext): Promise<() => Promise<unknown>> {
+  const reader = (await app.request("/events", { headers: phone })).body!.pipeThrough(new TextDecoderStream()).getReader();
+  t.after(() => reader.cancel());
+  let text = "";
+  return async () => {
+    for (;;) {
+      const end = text.indexOf("\n\n");
+      if (end < 0) {
+        text += (await reader.read()).value;
+        continue;
+      }
+      const frame = text.slice(0, end);
+      text = text.slice(end + 2);
+      if (frame.startsWith("event: plan")) return JSON.parse(frame.split("\n").find((line) => line.startsWith("data: "))!.slice(6));
+    }
+  };
+}
+
+test("asking for usage answers at once with what the provider last said, and asks it again once a minute at most, once for requests that come together; what it says reaches the person's devices, and one that fails leaves what it last said", async (t) => {
   const start = new Date(2026, 10, 16, 9, 0).getTime();
   t.mock.timers.enable({ apis: ["Date"], now: start });
-  const { store, call, plan } = setup(async () => reply("ok"), () => Date.now());
+  const { store, call, plan, app, phoneOf } = setup(async () => reply("ok"), () => Date.now());
   let asked = 0;
   const fable = (used: number, at: number) => ({ name: "Fable limit", used, resets_at: start + 48 * 60 * 60_000, at });
   plan.limits = async () => [fable(0.02 * ++asked, Date.now())];
-  const limits = async () => (await call(ME, "GET", "/usage")).json.accounts[0].limits;
+  const limits = async (who = ME) => (await call(who, "GET", "/usage")).json.accounts[0].limits;
+  const mine = await plansOn(app, phoneOf(ME), t);
+  const hers = await plansOn(app, phoneOf(HER), t);
 
-  // Two requests at once share the one ask, and both answer with what it said.
-  assert.deepEqual(await Promise.all([limits(), limits()]), [[fable(0.02, start)], [fable(0.02, start)]]);
+  // Nothing has been said yet. Two requests at once share the one ask, and its answer comes on the stream.
+  assert.deepEqual(await Promise.all([limits(), limits()]), [[], []]);
+  assert.deepEqual(await mine(), { plan: { provider: "claude", apiKey: false, limits: [fable(0.02, start)] } });
+  assert.equal(asked, 1);
   t.mock.timers.tick(59_000);
   assert.deepEqual(await limits(), [fable(0.02, start)]);
+  assert.equal(asked, 1);
   t.mock.timers.tick(1000);
-  assert.deepEqual(await limits(), [fable(0.04, start + 60_000)]);
+  assert.deepEqual(await limits(), [fable(0.02, start)]);
+  assert.deepEqual(await mine(), { plan: { provider: "claude", apiKey: false, limits: [fable(0.04, start + 60_000)] } });
 
   plan.limits = async () => {
     asked++;
@@ -1178,7 +1203,20 @@ test("asking for usage asks the provider where the plan's limits stand, once a m
   assert.deepEqual(await limits(), [fable(0.04, start + 60_000)]);
   assert.equal(asked, 3);
 
+  // What another person's provider says goes to their devices only, so the next plan this stream brings is the next one of the person's own.
+  plan.limits = async () => [fable(0.5, Date.now())];
+  assert.deepEqual(await limits(HER), []);
+  assert.deepEqual(await hers(), { plan: { provider: "claude", apiKey: false, limits: [fable(0.5, start + 120_000)] } });
+  plan.limits = async () => [fable(0.08, Date.now())];
+  t.mock.timers.tick(60_000);
+  await limits();
+  assert.deepEqual(await mine(), { plan: { provider: "claude", apiKey: false, limits: [fable(0.08, start + 180_000)] } });
+
   // An API key has no plan to ask about.
+  plan.limits = async () => {
+    asked++;
+    return [];
+  };
   store.setApiKey(store.personByName(ME)!.id, "claude", "sk-ant-alexs-key");
   t.mock.timers.tick(60_000);
   assert.deepEqual(await limits(), []);
@@ -1188,17 +1226,21 @@ test("asking for usage asks the provider where the plan's limits stand, once a m
 test("a login that is an API key is billed as one, with no plan, until the provider says of a plan again", async (t) => {
   const start = new Date(2026, 10, 16, 9, 0).getTime();
   t.mock.timers.enable({ apis: ["Date"], now: start });
-  const { call, plan } = setup(async () => reply("ok"), () => Date.now());
+  const { call, plan, app, phoneOf } = setup(async () => reply("ok"), () => Date.now());
   const accounts = async () => (await call(ME, "GET", "/usage")).json.accounts;
+  const next = await plansOn(app, phoneOf(ME), t);
   const weekly = { name: "Weekly limit", used: 0.1, resets_at: start + 48 * 60 * 60_000, at: start };
   plan.limits = async () => [weekly];
-  assert.deepEqual(await accounts(), [{ provider: "claude", apiKey: false, limits: [weekly] }]);
+  await accounts();
+  assert.deepEqual(await next(), { plan: { provider: "claude", apiKey: false, limits: [weekly] } });
 
   // The person saves a key as the login. The limits of the plan they left are no longer theirs to see.
   plan.limits = async () => null;
   t.mock.timers.tick(60_000);
+  assert.deepEqual(await accounts(), [{ provider: "claude", apiKey: false, limits: [weekly] }]);
+  assert.deepEqual(await next(), { plan: { provider: "claude", apiKey: true, limits: [] } });
   assert.deepEqual(await accounts(), [{ provider: "claude", apiKey: true, limits: [] }]);
-  // A provider that fails to answer leaves what it last said.
+  // A provider that fails to answer leaves what it last said, and tells nobody.
   plan.limits = async () => {
     throw new Error("Codex stopped without a reply");
   };
@@ -1207,6 +1249,8 @@ test("a login that is an API key is billed as one, with no plan, until the provi
 
   plan.limits = async () => [{ ...weekly, at: Date.now() }];
   t.mock.timers.tick(60_000);
+  await accounts();
+  assert.deepEqual(await next(), { plan: { provider: "claude", apiKey: false, limits: [{ ...weekly, at: start + 180_000 }] } });
   assert.deepEqual(await accounts(), [{ provider: "claude", apiKey: false, limits: [{ ...weekly, at: start + 180_000 }] }]);
 });
 

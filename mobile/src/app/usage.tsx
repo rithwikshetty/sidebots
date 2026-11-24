@@ -24,7 +24,8 @@ import { useTheme } from "@/lib/theme";
  * person picks: what each day used, as bars, and the agents that ran a turn,
  * the one that used most first, each with its share of what all of them used
  * and how that splits between its replies, its jobs and its fresh starts. It
- * opens on what the phone last had, and what the computer then says fades in.
+ * opens on what the phone last had, and what the computer then says fades in,
+ * as a plan's limits do when the provider answers.
  */
 export default function UsagePage() {
   const theme = useTheme();

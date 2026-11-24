@@ -4,7 +4,7 @@
 // the few things a phone and a desktop do differently.
 
 import { KEEPALIVE_MS, PAGE } from "../server/src/contract.ts";
-import type { About, Agent, AgentWithLatest, Avatar, Connected, Connection, Effort, Found, Message, Model, Provider, SignIn, StreamEvent, Usage } from "../server/src/contract.ts";
+import type { About, Agent, AgentWithLatest, Avatar, Connected, Connection, Effort, Found, Message, Model, Plan, Provider, SignIn, StreamEvent, Usage } from "../server/src/contract.ts";
 import { ApiError, behind, type Behind } from "./api.ts";
 
 type State = {
@@ -183,9 +183,9 @@ export function createStore<Picked>(platform: Platform<Picked>) {
 
   /**
    * Calls `listener` with the agents each time the computer has just said how
-   * they are: with every event of its stream, and when the app catches up with
-   * it. What the app saved of them doesn't count. Returns a function that
-   * stops it.
+   * they are: with every event of its stream about an agent or its messages,
+   * and when the app catches up with it. What the app saved of them doesn't
+   * count. Returns a function that stops it.
    */
   function onAgents(listener: (agents: AgentWithLatest[]) => void): () => void {
     told.add(listener);
@@ -214,15 +214,23 @@ export function createStore<Picked>(platform: Platform<Picked>) {
 
   /**
    * Takes in what the event stream says: a message and its agent, an agent
-   * that was added or changed, or an agent that was deleted. A message brings
-   * its agent to the top of the list, as a new agent goes there, and lands in
-   * its chat when the app holds that chat. An agent the app has that comes
-   * with no message, as one renamed or muted on another device, keeps its
-   * place.
+   * that was added or changed, an agent that was deleted, or how the person
+   * signs in to a provider. A message brings its agent to the top of the
+   * list, as a new agent goes there, and lands in its chat when the app holds
+   * that chat. An agent the app has that comes with no message, as one renamed
+   * or muted on another device, keeps its place. A provider's plan takes the
+   * place of the one in the usage the app has. An event of a kind the app
+   * doesn't know is passed over.
    */
   function apply(event: StreamEvent): void {
+    if ("plan" in event) {
+      const { plan } = event;
+      for (const heard of plansHeard) heard.set(plan.provider, plan);
+      if (state.usage) set({ usage: withPlans(state.usage, new Map([[plan.provider, plan]])) });
+      return;
+    }
     if ("deleted" in event) forget(event.deleted);
-    else {
+    else if ("agent" in event) {
       const { message, agent } = event;
       const known = state.messages[agent.id];
       const chat = known && message ? upsert(known, message) : known;
@@ -233,7 +241,7 @@ export function createStore<Picked>(platform: Platform<Picked>) {
         agents: stays ? state.agents.map((item) => (item.id === agent.id ? withPending(agent) : item)) : [withPending(agent), ...state.agents.filter((item) => item.id !== agent.id)],
         messages: chat && chat !== known ? { ...state.messages, [agent.id]: chat } : state.messages,
       });
-    }
+    } else return;
     told.forEach((listener) => listener(state.agents));
   }
 
@@ -445,9 +453,28 @@ export function createStore<Picked>(platform: Platform<Picked>) {
     set({ about: { ...state.about, [agentId]: about } });
   }
 
-  /** Fetches where the person's plan or API credit goes: what their agents used lately, and what is left of their plan. */
+  // For each fetch of usage on its way, the plans the stream brought meanwhile, which are newer than what the fetch answers with.
+  const plansHeard = new Set<Map<Provider, Plan>>();
+
+  /**
+   * Usage with each of `plans` in the place of its provider's account. A plan
+   * that waited, on its way or for a fetch, may name a limit that has reset
+   * since, which is left out, as the computer leaves it out by now.
+   */
+  function withPlans(usage: Usage, plans: Map<Provider, Plan>): Usage {
+    const current = (plan: Plan) => ({ ...plan, limits: plan.limits.filter((limit) => limit.resets_at === null || limit.resets_at > Date.now()) });
+    return { ...usage, accounts: usage.accounts.map((each) => (plans.has(each.provider) ? current(plans.get(each.provider)!) : each)) };
+  }
+
+  /** Fetches where the person's plan or API credit goes: what their agents used lately, and what is left of their plan as its provider last said. What the provider says next comes on the event stream. */
   async function loadUsage(): Promise<void> {
-    set({ usage: await request<Usage>("/usage") });
+    const heard = new Map<Provider, Plan>();
+    plansHeard.add(heard);
+    try {
+      set({ usage: withPlans(await request<Usage>("/usage"), heard) });
+    } finally {
+      plansHeard.delete(heard);
+    }
   }
 
   /** Fetches the apps the person's agents can use as them, and which are connected. */

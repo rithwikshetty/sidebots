@@ -7,7 +7,7 @@ import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
 
 import { COLOR, PAGE, PROVIDERS, USAGE_DAYS, betweenAgents, readableColor, selectionOf } from "./contract.ts";
-import type { About, Agent, AgentWithLatest, Ask, Avatar, Connection, Day, Found, Job, Limit, Memory, Message, Provider, PushToken, Question, Schedule, Selection, Sender, Status, Switched, TurnKind, Usage, Used } from "./contract.ts";
+import type { About, Agent, AgentWithLatest, Ask, Avatar, Connection, Day, Found, Job, Limit, Memory, Message, Plan, Provider, PushToken, Question, Schedule, Selection, Sender, Status, Switched, TurnKind, Usage, Used } from "./contract.ts";
 
 export type Person = { id: string; name: string };
 /** How a person's agents sign in to a provider: the provider's config folder of the person's own, which holds their login, rules, skills and sessions. */
@@ -30,9 +30,14 @@ export type AgentChanges = Partial<Pick<Agent, "name" | "avatar_id" | "provider"
  * What the store tells its listeners about: a message that was added, changed
  * status or had its ask closed, with the agents whose chats it is in, or an
  * agent that was added or changed, each as the home screen now shows it, or an
- * agent that was deleted.
+ * agent that was deleted, or how a person signs in to a provider, as a
+ * provider just said.
  */
-export type Change = { message: Message; agents: AgentWithLatest[] } | { agent: AgentWithLatest; deleted: false } | { agent: Agent; deleted: true };
+export type Change =
+  | { message: Message; agents: AgentWithLatest[] }
+  | { agent: AgentWithLatest; deleted: false }
+  | { agent: Agent; deleted: true }
+  | { person_id: string; plan: Plan };
 /** How this server is known to the relay: its signing key, and the id, the address phones reach it at and the token its tunnel runs with, which the relay gives it once it has registered. */
 export type Machine = { privateKey: string; id?: string; address?: string; tunnelToken?: string };
 /**
@@ -323,6 +328,16 @@ export function openStore(home: string) {
   };
   const listeners = new Set<(change: Change) => void>();
   const changed = (change: Change) => listeners.forEach((listener) => listener(change));
+  // The logins a provider last said are API keys since the server started, each as the person and the provider.
+  const keyLogins = new Set<string>();
+  const limitsOf = db.prepare(
+    "select name, used, resets_at, at from limits where person_id = ? and provider = ? and (resets_at is null or resets_at > ?) order by resets_at, name",
+  );
+  /** How the person signs in to a provider. A limit whose time to reset has passed is left out, since nobody knows where it has stood since. */
+  const planOf = (personId: string, provider: Provider): Plan => {
+    const apiKey = apiKeys()[personId]?.[provider] !== undefined || keyLogins.has(`${personId} ${provider}`);
+    return { provider, apiKey, limits: apiKey ? [] : (limitsOf.all(personId, provider, Date.now()) as Limit[]) };
+  };
 
   const one = (sql: string, ...values: (string | number)[]): Message | undefined => {
     const row = db.prepare(sql).get(...values) as Row | undefined;
@@ -660,21 +675,27 @@ export function openStore(home: string) {
       );
     },
 
-    /** Keeps where limits of the person's plan with a provider stand, as the provider just said. */
-    setLimits(personId: string, provider: Provider, limits: Limit[]): void {
-      const keep = db.prepare("insert or replace into limits (person_id, provider, name, used, resets_at, at) values (?, ?, ?, ?, ?, ?)");
-      for (const limit of limits) keep.run(personId, provider, limit.name, limit.used, limit.resets_at, limit.at);
+    /**
+     * Keeps what a provider just said of the person's login in their config
+     * folder: where the limits of its plan stand, or null when the login is an
+     * API key, which has no plan. Tells the listeners how the person now signs
+     * in to the provider.
+     */
+    setLimits(personId: string, provider: Provider, limits: Limit[] | null): void {
+      if (limits) {
+        keyLogins.delete(`${personId} ${provider}`);
+        const keep = db.prepare("insert or replace into limits (person_id, provider, name, used, resets_at, at) values (?, ?, ?, ?, ?, ?)");
+        for (const limit of limits) keep.run(personId, provider, limit.name, limit.used, limit.resets_at, limit.at);
+      } else keyLogins.add(`${personId} ${provider}`);
+      changed({ person_id: personId, plan: planOf(personId, provider) });
     },
 
     /**
      * Where the person's plan or API credit goes: the turns their agents ran
      * in the last days, added up by agent and by day, and how they sign in to
-     * each provider. `keyLogins` are the providers whose login in the
-     * person's config folder is an API key, as they just said. A limit whose
-     * time to reset has passed is left out, since nobody knows where it has
-     * stood since.
+     * each provider, as the providers last said.
      */
-    usage(personId: string, keyLogins: Provider[]): Usage {
+    usage(personId: string): Usage {
       const now = Date.now();
       const today = new Date(now);
       // Each day's midnight on the computer, and the one that ends today. A change of the clocks makes a day an hour off 24.
@@ -693,15 +714,8 @@ export function openStore(home: string) {
         const { cost = 0, tokens = 0 } = spent.find((each) => each.nth === index) ?? {};
         return { day: `${start.getFullYear()}-${two(start.getMonth() + 1)}-${two(start.getDate())}`, cost, tokens };
       });
-      const limits = db.prepare(
-        "select name, used, resets_at, at from limits where person_id = ? and provider = ? and (resets_at is null or resets_at > ?) order by resets_at, name",
-      );
       const providers = db.prepare("select provider from accounts where person_id = ? order by rowid").all(personId) as Pick<Account, "provider">[];
-      const accounts = providers.map(({ provider }) => {
-        const apiKey = apiKeys()[personId]?.[provider] !== undefined || keyLogins.includes(provider);
-        return { provider, apiKey, limits: apiKey ? [] : (limits.all(personId, provider, now) as Limit[]) };
-      });
-      return { used, days, accounts };
+      return { used, days, accounts: providers.map(({ provider }) => planOf(personId, provider)) };
     },
 
     /**
