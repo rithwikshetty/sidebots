@@ -83,7 +83,8 @@ export function createStore<Picked>(platform: Platform<Picked>) {
     }
   }
 
-  let state: State = { ...EMPTY, ...saved(), online: true, behind: null };
+  const kept = { ...EMPTY, ...saved() };
+  let state: State = { ...kept, messages: newestOf(kept.messages, () => false), online: true, behind: null };
   const listeners = new Set<() => void>();
   // The chats on screen, each with how many parts of the app show it.
   const shown = new Map<string, number>();
@@ -199,9 +200,16 @@ export function createStore<Picked>(platform: Platform<Picked>) {
     return { ...agent, ...rest, avatar_id: avatarId ?? agent.avatar_id };
   }
 
+  /**
+   * A chat with `message` in the place of the copy it holds, or at its end
+   * when the message is new. One from before everything the chat holds, as an
+   * old message that changed, is on a page the chat doesn't hold, and comes
+   * with that page.
+   */
   function upsert(list: Message[], message: Message): Message[] {
     const at = list.findIndex((item) => item.id === message.id);
-    return at < 0 ? [...list, message] : list.map((item, index) => (index === at ? message : item));
+    if (at >= 0) return list.map((item, index) => (index === at ? message : item));
+    return list.length && message.created_at < list[0].created_at ? list : [...list, message];
   }
 
   /**
