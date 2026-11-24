@@ -87,9 +87,9 @@ export async function run({ home, port, world, pause: firstPause }: WorldOptions
   let contract: number | null = null;
   let outageUntil = 0;
   let noEventsUntil = 0;
-  let holding: RegExp | null = null;
-  const waiting = new Set<() => void>();
-  let answeredAfterHold = 0;
+  let holdingRequests: RegExp | null = null;
+  const heldRequests = new Set<() => void>();
+  let answeredRequests = 0;
   const streams = new Set<() => void>();
   const holds = new Map<string, () => void>();
 
@@ -148,7 +148,7 @@ export async function run({ home, port, world, pause: firstPause }: WorldOptions
   async function control(request: Request, path: string): Promise<Response> {
     const body = (request.method === "POST" ? await request.json().catch(() => ({})) : {}) as Record<string, unknown>;
     if (path === "state") {
-      return Response.json({ home, port, person: person?.name ?? null, pause, contract, outage: outageUntil > Date.now(), held: { waiting: waiting.size, answered: answeredAfterHold }, agents: person ? store.agentsFor(person.id).map(({ id, name }) => ({ id, name })) : [] });
+      return Response.json({ home, port, person: person?.name ?? null, pause, contract, outage: outageUntil > Date.now(), requests: { held: heldRequests.size, answered: answeredRequests }, agents: person ? store.agentsFor(person.id).map(({ id, name }) => ({ id, name })) : [] });
     }
     if (path === "pause") {
       pause = Number(body.ms);
@@ -165,12 +165,13 @@ export async function run({ home, port, world, pause: firstPause }: WorldOptions
       return Response.json({ until: ms > 0 ? outageUntil : null });
     }
     if (path === "hold-requests") {
-      holding = typeof body.match === "string" ? new RegExp(body.match) : null;
-      if (holding === null) {
-        waiting.forEach((go) => go());
-        waiting.clear();
+      holdingRequests = typeof body.match === "string" ? new RegExp(body.match) : null;
+      if (holdingRequests === null) {
+        answeredRequests = 0;
+        heldRequests.forEach((go) => go());
+        heldRequests.clear();
       }
-      return Response.json({ match: holding?.source ?? null });
+      return Response.json({ match: holdingRequests?.source ?? null });
     }
     if (path === "drop-events") {
       noEventsUntil = Date.now() + Number(body.ms ?? 0);
@@ -235,10 +236,10 @@ export async function run({ home, port, world, pause: firstPause }: WorldOptions
     const { pathname, search } = new URL(request.url);
     if (pathname.startsWith("/__test/")) return control(request, pathname.slice("/__test/".length));
     if (outageUntil > Date.now() || (pathname === "/events" && noEventsUntil > Date.now())) return refuse();
-    const held = holding?.test(`${pathname}${search}`) ?? false;
-    if (held) await new Promise<void>((go) => waiting.add(go));
+    const holds = holdingRequests?.test(`${pathname}${search}`) ?? false;
+    if (holds) await new Promise<void>((go) => heldRequests.add(go));
     const answer = await api.fetch(request);
-    if (held) answeredAfterHold++;
+    if (holds) answeredRequests++;
     if (contract === null && pathname !== "/events") return answer;
     const headers = new Headers(answer.headers);
     if (contract !== null) headers.set(CONTRACT_HEADER, String(contract));

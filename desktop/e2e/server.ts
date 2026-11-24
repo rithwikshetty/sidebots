@@ -63,7 +63,7 @@
 //   POST /__test/hold-requests { match: string | null }
 //                                              holds the API requests whose path and query match `match`, a
 //                                              regular expression, until null lets them all go on; `state`
-//                                              counts them as `held`
+//                                              counts them as `requests`, held and answered since let go
 //   POST /__test/contract     { version: "older" | "newer" | number | null }
 //                                              answers with another contract version, or its own again with null
 //   POST /__test/address      { address: string | null }

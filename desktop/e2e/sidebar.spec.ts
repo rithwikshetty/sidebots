@@ -22,14 +22,14 @@ async function found(server: TestServer, text: string): Promise<Found[]> {
 async function holdRequests(server: TestServer, match: RegExp): Promise<() => Promise<void>> {
   await server.control("hold-requests", { match: match.source });
   return async () => {
-    const { waiting } = await heldRequests(server);
+    const { held } = await requestsHeld(server);
     await server.control("hold-requests", { match: null });
-    await expect.poll(async () => (await heldRequests(server)).answered, { message: "the held requests answered" }).toBeGreaterThanOrEqual(waiting);
+    await expect.poll(async () => (await requestsHeld(server)).answered, { message: "the held requests answered" }).toBeGreaterThanOrEqual(held);
   };
 }
 
 /** How many requests the server holds, and how many it has answered since it let them go on. */
-const heldRequests = async (server: TestServer) => (await server.control<{ held: { waiting: number; answered: number } }>("state")).held;
+const requestsHeld = async (server: TestServer) => (await server.control<{ requests: { held: number; answered: number } }>("state")).requests;
 
 /** Resolves once the app has drawn two frames, so what came has landed in the chat. */
 const drawn = (page: Page) => page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
@@ -468,7 +468,7 @@ test.describe("search", () => {
     await page.getByTestId("search-button").click();
     await page.getByTestId("search").fill("keep track of the errands");
     await page.getByTestId(`found-${first.id}`).click();
-    await expect.poll(async () => (await heldRequests(server)).waiting).toBe(1);
+    await expect.poll(async () => (await requestsHeld(server)).held).toBe(1);
     // While the run from the first message is on its way, the newest message is opened from the search.
     await page.getByTestId("search").fill("Ring the dentist");
     await page.getByTestId(`found-${recent.id}`).click();
@@ -493,17 +493,19 @@ test.describe("search", () => {
     for (let index = 0; index < PAGE + 10; index++) await server.control("deliver", { agent: atlas.id, text: `Reminder ${index}.` });
     const [first] = await found(server, "keep track of the errands");
     const release = await holdRequests(server, new RegExp(`^/agents/${atlas.id}/messages$`));
+    const runs: string[] = [];
+    page.on("request", (request) => void (request.url().includes("through=") && runs.push(request.url())));
 
     await page.getByTestId("search-button").click();
     await page.getByTestId("search").fill("keep track of the errands");
     await page.getByTestId(`found-${first.id}`).click();
-    await expect.poll(async () => (await heldRequests(server)).waiting).toBe(1);
-    const row = page.locator(`[data-message-id="${first.id}"]`);
-    // A chat that lands on the message before its newest page has come lands on it against what it had saved. Given the time to, it would show it now.
-    await expect(row).toBeInViewport({ timeout: 3_000 }).catch(() => undefined);
+    await expect.poll(async () => (await requestsHeld(server)).held).toBe(1);
+    // The chat fetches no run from the message while its newest page is on its way.
+    await drawn(page);
+    expect(runs).toEqual([]);
 
     await release();
-    await drawn(page);
+    const row = page.locator(`[data-message-id="${first.id}"]`);
     await expect(row).toBeInViewport({ timeout: 15_000 });
     await expect(row).toHaveClass(/animate-flash/);
   });

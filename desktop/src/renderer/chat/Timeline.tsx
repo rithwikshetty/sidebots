@@ -201,8 +201,8 @@ export const Timeline = memo(function Timeline({
   const today = useToday();
   const list = useRef<LegendListRef>(null);
   const [behind, setBehind] = useState(false);
-  // A chat with messages lands on a message it was opened at once its newest page has come: a newest page that doesn't join what the app had saved takes the place of all of it, a run fetched before it too.
-  const [loading, setLoading] = useState(agent.latest !== null);
+  // The chat lands on a message it was opened at once its newest page has come: a newest page that doesn't join what the app had saved takes the place of all of it, a run fetched before it too.
+  const [loading, setLoading] = useState(true);
   const [flashing, setFlashing] = useState<string | null>(null);
   // Whether the chat is on its way to a message it was opened at.
   const [landing, setLanding] = useState(false);
@@ -411,7 +411,7 @@ export const Timeline = memo(function Timeline({
         aria-label="Messages"
         role="log"
         ListHeaderComponent={UNDER_BAR}
-        ListEmptyComponent={<div className="grid flex-1 place-items-center text-ink3">{loading ? <Spinner label="Loading messages" /> : null}</div>}
+        ListEmptyComponent={<div className="grid flex-1 place-items-center text-ink3">{loading && agent.latest !== null ? <Spinner label="Loading messages" /> : null}</div>}
         ListFooterComponent={
           <div className="px-4 pb-3">
             {/* A new agent's chat says what to do first. Its instructions have it ask what it's for. */}

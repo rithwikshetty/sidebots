@@ -86,8 +86,8 @@ function ChatWith({ agent }: { agent: AgentWithLatest }) {
   // Messages made from here on came in while the chat was open, so they arrive with motion.
   const [openedAt] = useState(() => Date.now() - CLOCK_SLACK_MS);
 
-  // A chat with messages lands on a message it was opened at once its newest page has come: a newest page that doesn't join what the app had saved takes the place of all of it, a run fetched before it too.
-  const [loading, setLoading] = useState(agent.latest !== null);
+  // The chat lands on a message it was opened at once its newest page has come: a newest page that doesn't join what the app had saved takes the place of all of it, a run fetched before it too.
+  const [loading, setLoading] = useState(true);
   useEffect(() => {
     loadMessages(agent.id)
       .catch(() => {})
@@ -126,10 +126,12 @@ function ChatWith({ agent }: { agent: AgentWithLatest }) {
   const drawnWith = useMemo(() => ({ newestMine, flashing }), [newestMine, flashing]);
   // Whether the chat is on its way to a message it was opened at.
   const [landing, setLanding] = useState(false);
-  // The rows the list has measured on screen, as it last said.
+  // The rows the list has measured on screen, as it last said, and the newest row it draws, when that is among them.
   const onScreen = useRef(new Set<string>());
+  const [newestShown, setNewestShown] = useState<string | undefined>();
   const onRowsShown = useRef(({ viewableItems }: { viewableItems: ListViewToken[] }) => {
     onScreen.current = new Set(viewableItems.map((row) => row.key));
+    setNewestShown(viewableItems.find((row) => row.index === 0)?.key);
   }).current;
 
   // Opened at a message it doesn't draw, the chat fetches the run of the chat from it, or, when it is among the newest messages past a hole, goes back to them. Then it scrolls to it and flashes it. A message that draws no row, as one between two agents, is opened at the nearest row to it, the one before it first. Opened again before a run has come, the chat lets that run go, so it can't land over the chat as it is opened now.
@@ -185,7 +187,7 @@ function ChatWith({ agent }: { agent: AgentWithLatest }) {
   }, [opened, agent.id, loading]);
 
   // The end of a stretch from further back fetches the run of the chat after it while it is on screen, and again when the computer is back in reach. While the chat lands on a message it was opened at, the list can be at that end for a moment on its way.
-  useEffect(() => void (online && atEnd && !landing && hole !== undefined && loadOlder(agent.id, hole).catch(() => undefined)), [agent.id, online, atEnd, landing, hole]);
+  useEffect(() => void (online && newestShown === hole && !landing && hole !== undefined && loadOlder(agent.id, hole).catch(() => undefined)), [agent.id, online, newestShown, landing, hole]);
 
   // Scrolling up to the oldest message the app has fetches the page before it, until the chat's beginning: the oldest message, once a page fetched before it came back empty.
   const first = useRef<string | null>(null);
