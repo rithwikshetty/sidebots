@@ -307,6 +307,42 @@ export function createStore<Picked>(platform: Platform<Picked>) {
   // The fetch of each chat's newest page that was asked for last.
   const fetching = new Map<string, Promise<void>>();
 
+  /** Where a chat's newest page joins onto what the chat holds: the place of the page's first message among them. A page short of a full one is the whole chat and joins onto nothing, and neither does one whose first message the chat doesn't hold. */
+  const joinsAt = (held: Message[], page: Message[]) => (page.length < PAGE ? 0 : Math.max(held.findIndex((message) => message.id === page[0].id), 0));
+
+  /** A chat's messages from one to another, both included, as the computer has them now, a run at a time. None when either has gone from the chat. */
+  async function between(agentId: string, from: string, to: string): Promise<Message[]> {
+    const rows: Message[] = [];
+    for (let through = from; ; through = rows.at(-1)!.id) {
+      const run = await request<Message[]>(`/agents/${agentId}/messages?before=${to}&through=${through}`);
+      rows.push(...run.slice(rows.length ? 1 : 0));
+      if (rows.at(-1)?.id === to) return rows;
+      // A run that brings nothing past the message it runs from can't reach the other.
+      if (run.length < 2) return [];
+    }
+  }
+
+  /**
+   * Fetches again what a chat on screen holds from before `page`, its newest
+   * page as it has just come: the messages the page joins onto, and the
+   * stretch before a hole. Answers with what each message the chat holds is
+   * now: the computer's copy of one it fetched again, nothing for one that
+   * has gone from the computer, and the chat's own copy of any other, as one
+   * the stream changed while the fetch was on its way.
+   */
+  async function olderAgain(agentId: string, page: Message[]): Promise<(message: Message) => Message[]> {
+    const held = state.messages[agentId] ?? NO_MESSAGES;
+    const joins = shown.has(agentId) ? joinsAt(held, page) : 0;
+    if (joins === 0) return (message) => [message];
+    // What comes before the page is one run of the chat, or two with a hole between them. A hole the page reaches back past is one the page fills.
+    const hole = held.findIndex((message) => message.id === state.holes[agentId]);
+    const ranges = hole < 0 || hole >= joins ? [[held[0].id, page[0].id]] : [[held[0].id, held[hole].id], ...(hole + 1 < joins ? [[held[hole + 1].id, page[0].id]] : [])];
+    const runs = await Promise.all(ranges.map(([from, to]) => between(agentId, from, to)));
+    const again = new Set(held.slice(0, joins));
+    const now = new Map(runs.flat().map((message) => [message.id, message]));
+    return (message) => (again.has(message) ? [now.get(message.id)].filter((fresh) => fresh !== undefined) : [message]);
+  }
+
   /**
    * Fetches the newest page of a chat, which the app holds from here on, an
    * empty one too, so what the event stream says of it lands in it. A chat
@@ -329,30 +365,47 @@ export function createStore<Picked>(platform: Platform<Picked>) {
    * ends as the later one does, whether its own page came or not. The page
    * of a chat the app has let go of meanwhile, as when its agent was
    * deleted, is dropped too.
+   *
+   * A chat on screen holds messages from before its newest page, which may
+   * have changed too while the app didn't hear of it. Those the page joins
+   * onto are fetched again with it, and the stretch before a hole with them.
+   * Each takes the place of the chat's copy, unless the stream changed that
+   * copy meanwhile, and one that has gone from the computer goes from the
+   * chat.
    */
   function loadMessages(agentId: string): Promise<void> {
     if (isCaughtUp(agentId)) return Promise.resolve();
     const asked = live?.changes[agentId];
     const before = state.messages[agentId] ?? [];
     if (!state.messages[agentId]) set({ messages: { ...state.messages, [agentId]: before } });
-    const land = (fetched: Message[]) => {
+    const land = (fetched: Message[], older: (message: Message) => Message[]) => {
       const known = state.messages[agentId];
       if (!known) return;
       const closed = (message: Message) => known.find((had) => had.id === message.id && had.ask && had.ask !== "waiting");
       const page = fetched.map((message) => (message.ask === "waiting" ? (closed(message) ?? message) : message));
-      const joins = page.length < PAGE ? 0 : Math.max(known.findIndex((message) => message.id === page[0].id), 0);
+      const joins = joinsAt(known, page);
       // The event stream adds at the chat's end, and paging back adds at its start, so what came since the page was made is what follows the last message the chat or the page already had.
       const had = new Set([...before, ...page].map((message) => message.id));
       const since = known.slice(known.findLastIndex((message) => had.has(message.id)) + 1);
-      set({ messages: { ...state.messages, [agentId]: [...known.slice(0, joins), ...page, ...since] }, ...(asked !== undefined && { caughtUp: { ...state.caughtUp, [agentId]: asked } }) });
+      // A page that reaches back to the message before the hole, or past it, holds what the hole was for.
+      const { [agentId]: hole, ...holes } = state.holes;
+      const filled = hole !== undefined && known.findIndex((message) => message.id === hole) >= joins;
+      set({
+        messages: { ...state.messages, [agentId]: [...known.slice(0, joins).flatMap(older), ...page, ...since] },
+        ...(filled && { holes }),
+        ...(asked !== undefined && { caughtUp: { ...state.caughtUp, [agentId]: asked } }),
+      });
     };
-    const fetch: Promise<void> = request<Message[]>(`/agents/${agentId}/messages`).then(
-      (fetched) => (fetching.get(agentId) === fetch ? land(fetched) : fetching.get(agentId)),
-      (failure) => {
+    const fetch: Promise<void> = request<Message[]>(`/agents/${agentId}/messages`)
+      .then(async (fetched) => {
+        if (fetching.get(agentId) !== fetch) return fetching.get(agentId);
+        const older = await olderAgain(agentId, fetched);
+        return fetching.get(agentId) === fetch ? land(fetched, older) : fetching.get(agentId);
+      })
+      .catch((failure) => {
         if (fetching.get(agentId) === fetch) throw failure;
         return fetching.get(agentId);
-      },
-    );
+      });
     fetching.set(agentId, fetch);
     return fetch;
   }
