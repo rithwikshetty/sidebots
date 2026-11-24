@@ -48,7 +48,7 @@ export const MessageRow = memo(function MessageRow({
   arrival,
   flashing,
   onReply,
-  onPage,
+  onPageShown,
 }: {
   message: Message;
   /** The message it answers, when it answers one the window has. */
@@ -61,7 +61,7 @@ export const MessageRow = memo(function MessageRow({
   flashing: boolean;
   onReply: (message: Message) => void;
   /** Hears when a page the message carries has shown. */
-  onPage: (message: Message) => void;
+  onPageShown: (message: Message) => void;
 }) {
   const row = useRef<HTMLDivElement>(null);
   // The Reply button is there only while the pointer or focus is on the message, so a long chat holds one, not one for each message.
@@ -127,7 +127,7 @@ export const MessageRow = memo(function MessageRow({
           quote={message.reply_to ? (quoted ? preview(quoted) : "An earlier message") : undefined}
           photos={photos.length ? <Photos agentId={message.agent_id} paths={photos} end={mine} /> : null}
           pages={pages.map((path) => (
-            <PageCard key={path} agentId={message.agent_id} path={path} onShown={() => onPage(message)} />
+            <PageCard key={path} agentId={message.agent_id} path={path} onShown={() => onPageShown(message)} />
           ))}
           files={files.map((path) => (
             <FileCard key={path} agentId={message.agent_id} path={path} />

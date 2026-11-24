@@ -3,7 +3,7 @@
 // counts as read, and how the bubbles look in light and dark, narrow and wide.
 
 import type { Page } from "@playwright/test";
-import { oneLine } from "../../server/src/contract.ts";
+import { PAGE, oneLine } from "../../server/src/contract.ts";
 import { expect, test } from "./fixtures.ts";
 import { agentId, agentOf, box, expectAtEnd, field, fromEnd, jumpOffered, messagesOf, mine, notices, openChat, said, scrollChatTo, sendFromApp, theirs, timeline, until, wholeChat } from "./chat-helpers.ts";
 
@@ -23,22 +23,23 @@ const dayWords = (page: Page, offset: number) =>
 test.describe("every kind of message in history", () => {
   test("day markers name each day of the week the chat covers", async ({ page, server }) => {
     await openChat(page, server, "Atlas");
-    // The markers are read while scrolling back through the week, newest first, since the chat draws only the rows near the screen.
-    const days: string[] = [];
-    const read = async () => {
-      const drawn = await page.getByTestId("day").evaluateAll((markers) => markers.map((marker) => ({ words: (marker as HTMLElement).innerText, top: marker.getBoundingClientRect().top })));
-      for (const { words } of drawn.sort((a, b) => b.top - a.top)) if (!days.includes(words)) days.push(words);
-    };
-    const first = mine(page).filter({ hasText: ATLAS_FIRST });
+    // Back to the chat's first message, so the window has the whole week, and on through it to the end. The chat draws only the rows near the screen, so each marker is read as it passes, with the message under it, which tells a day marked twice from one read twice.
+    await scrollChatTo(page, mine(page).filter({ hasText: ATLAS_FIRST }));
+    const days = new Map<string, string>();
+    const drawn = () =>
+      timeline(page).evaluate((element) => {
+        const rows = [...element.querySelectorAll<HTMLElement>("[data-message-id]")].map((row) => ({ id: row.dataset.messageId!, top: row.getBoundingClientRect().top })).sort((a, b) => a.top - b.top);
+        const markers = [...element.querySelectorAll<HTMLElement>('[data-testid="day"]')].map((marker) => ({ words: marker.innerText, top: marker.getBoundingClientRect().top })).sort((a, b) => a.top - b.top);
+        return markers.map(({ words, top }) => ({ words, under: rows.find((row) => row.top > top)?.id }));
+      });
+    for (;;) {
+      for (const { words, under } of await drawn()) if (under && !days.has(under)) days.set(under, words);
+      if ((await fromEnd(page)) <= 2) break;
+      await page.mouse.wheel(0, 500);
+      await page.evaluate(() => new Promise(requestAnimationFrame));
+    }
     const expected = [...(await Promise.all([-6, -5, -4, -3, -2].map((offset) => dayWords(page, offset)))), "Yesterday", "Today"];
-    await timeline(page).hover();
-    await expect(async () => {
-      await read();
-      await page.mouse.wheel(0, -500);
-      await expect(first).toBeInViewport({ timeout: 250 });
-      await read();
-      expect([...days].reverse()).toEqual(expected);
-    }).toPass({ intervals: [0], timeout: 60_000 });
+    expect([...days.values()]).toEqual(expected);
   });
 
   test("Sidebots' notices are drawn as notes, not bubbles", async ({ page, server }) => {
@@ -260,6 +261,7 @@ test.describe("scrolling", () => {
     expect(anchor).not.toBeNull();
     expect(await jumpOffered(page)).toBe(false);
     await server.control("deliver", { agent: id, text: "Something new at the end." });
+    await expect(said(page, "Something new at the end.")).toHaveCount(1);
     await expect.poll(() => jumpOffered(page)).toBe(true);
     const now = await page.locator(`[data-message-id="${anchor!.id}"]`).evaluate((row) => row.getBoundingClientRect().top);
     expect(Math.abs(now - anchor!.top)).toBeLessThanOrEqual(2);
@@ -275,8 +277,7 @@ test.describe("scrolling", () => {
     const id = await agentId(server, "Atlas");
     const total = (await wholeChat(server, id)).length;
     // The pages before the newest, which the chat opens with.
-    const newest = (await messagesOf(server, id)).length;
-    const older = Math.ceil((total - newest) / newest);
+    const older = Math.ceil((total - PAGE) / PAGE);
     // Each page the window asks for before the oldest message waits until the test lets it go, so the place on screen can be measured before and after.
     await page.evaluate(() => {
       const held = window as unknown as { pages: string[]; waiting: (() => void)[] };

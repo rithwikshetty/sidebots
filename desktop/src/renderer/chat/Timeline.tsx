@@ -1,5 +1,5 @@
-import { memo, useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent, type RefObject } from "react";
-import { LegendList, type LegendListRef, type LegendListRenderItemProps, type NativeScrollEvent, type NativeSyntheticEvent } from "@legendapp/list/react";
+import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type RefObject } from "react";
+import { LegendList, type LegendListRef, type LegendListRenderItemProps } from "@legendapp/list/react";
 import { ArrowDown } from "lucide-react";
 import { betweenAgents, exchanges, type AgentWithLatest, type Message } from "@server/contract.ts";
 import { standingOf, type Standing } from "@client/exchanges.ts";
@@ -23,7 +23,7 @@ const ROW_HEIGHT = 90;
 const CLOCK_SLACK_MS = 2000;
 // How long a message the chat was opened at flashes.
 const FLASH_MS = 1600;
-// How many frames a scroll of the chat's own is held to its place before the list is left to it.
+// How many frames a glide to the end is given to land on it.
 const SETTLE_FRAMES = 60;
 
 // The messages that have come in with motion, so a row drawn again, as when it is scrolled back to or its chat is opened again, shows as it is.
@@ -50,31 +50,32 @@ type Around = {
   /** Messages made from here on came in while the chat was open, so they arrive with motion. */
   openedAt: number;
   onReply: (message: Message) => void;
-  onPage: (message: Message) => void;
+  onPageShown: (message: Message) => void;
 };
 
 const idOf = (row: Row) => row.id;
 
-/** The kind a row is. The list takes a row it hasn't measured to be as tall as the others of its kind, so a message is of a kind with those of its sender and length that carry files or don't. A long message's height says little about another's, so each is a kind of its own. */
+/** The kind a row is. The list takes a row it hasn't measured to be as tall as the others of its kind: a message is of a kind with those of its sender, under 2,000 characters or under 4,000, with files or without. A longer message's height says little about another's, so each is a kind of its own. */
 function rowKind(row: Row): string {
   if (isDay(row)) return "day";
   if (betweenAgents(row)) return "exchange";
   const drawn = drawnAs(row);
   if (drawn !== "message") return drawn;
-  const length = Math.max(0, Math.floor(Math.log2(row.body.length / 1000)));
-  return length < 2 ? `${row.sender}:${length}:${row.attachments.length > 0 ? "files" : "words"}` : row.id;
+  const { length } = row.body;
+  return length < 4000 ? `${row.sender}:${length < 2000 ? "short" : "long"}:${row.attachments.length > 0 ? "files" : "words"}` : row.id;
 }
 
 /** A row as it is drawn: a day, a message, or the exchange a message was last asked in. */
-function drawRow({ item: message, extraData }: LegendListRenderItemProps<Row>) {
-  const { agentId, standings, byId, newestMine, flashing, today, openedAt, onReply, onPage } = extraData as Around;
-  if (isDay(message)) {
+function drawRow({ item: row, extraData }: LegendListRenderItemProps<Row>) {
+  const { agentId, standings, byId, newestMine, flashing, today, openedAt, onReply, onPageShown } = extraData as Around;
+  if (isDay(row)) {
     return (
       <p className="mt-4 px-4 text-center text-sm font-medium text-ink2" data-testid="day">
-        {dayLabel(message.day, today)}
+        {dayLabel(row.day, today)}
       </p>
     );
   }
+  const message = row;
   const standing = standings.get(message.id);
   const arrival: Arrival = message.created_at < openedAt || arrived.has(message.id) ? "none" : message.sender === "person" ? "settle" : "rise";
   return (
@@ -91,7 +92,7 @@ function drawRow({ item: message, extraData }: LegendListRenderItemProps<Row>) {
           arrival={arrival}
           flashing={flashing === message.id}
           onReply={onReply}
-          onPage={onPage}
+          onPageShown={onPageShown}
         />
       )}
     </div>
@@ -99,39 +100,32 @@ function drawRow({ item: message, extraData }: LegendListRenderItemProps<Row>) {
 }
 
 /**
- * Holds the list at the place a scroll of the chat's own was for, as T3 Code
- * does. The list aims a scroll by the heights it guesses for the rows it
- * hasn't drawn, so it can stop short of the place, and go on waiting to reach
- * one that isn't there. Once the scroll `asked` of it has stopped, by the
- * list's word or the page's, `place` reads where the place is from the page,
- * and the list is put there until it has stayed for two frames, or `over`
- * says the scroll is no longer the chat's.
+ * Lands a glide to the chat's end on the end. The list aims the glide by the
+ * heights it guesses for rows it hasn't drawn, so when messages came in
+ * unseen it stops short, and goes on waiting to reach a place that isn't
+ * there. Once the glide has stopped, by the list's word or the page's, the
+ * list is put at the end as the page measures it, as T3 Code does, until it
+ * has stayed there for two frames or `over` says the scroll is no longer the
+ * chat's.
  */
-async function settle(list: LegendListRef, asked: Promise<void>, place: (scroller: HTMLElement) => number | undefined, over: () => boolean): Promise<void> {
-  await Promise.race([asked, new Promise((resolve) => list.getScrollableNode()?.addEventListener("scrollend", resolve, { once: true }))]);
-  return new Promise((resolve) => {
-    let still = 0;
-    let frames = 0;
-    const hold = () => {
-      const scroller = list.getScrollableNode();
-      const offset = scroller && !over() ? place(scroller) : undefined;
-      if (!scroller || offset === undefined || ++frames > SETTLE_FRAMES) return resolve();
-      if (Math.abs(scroller.scrollTop - offset) > 1) {
-        still = 0;
-        return void list.scrollToOffset({ offset, animated: false }).then(() => requestAnimationFrame(hold));
-      }
-      if (++still >= 2) return resolve();
-      requestAnimationFrame(hold);
-    };
-    requestAnimationFrame(hold);
-  });
+async function landAtEnd(list: LegendListRef, glide: Promise<void>, over: () => boolean): Promise<void> {
+  const stopped = new AbortController();
+  await Promise.race([glide, new Promise((resolve) => list.getScrollableNode()?.addEventListener("scrollend", resolve, { once: true, signal: stopped.signal }))]);
+  stopped.abort();
+  for (let frames = 0, still = 0; frames < SETTLE_FRAMES && still < 2 && !over(); frames++) {
+    const scroller = list.getScrollableNode();
+    if (!scroller) return;
+    const end = scroller.scrollHeight - scroller.clientHeight;
+    if (Math.abs(scroller.scrollTop - end) > 1) {
+      still = 0;
+      await list.scrollToOffset({ offset: end, animated: false });
+    } else still++;
+    await new Promise((resolve) => requestAnimationFrame(resolve));
+  }
 }
 
-const endOf = (scroller: HTMLElement) => scroller.scrollHeight - scroller.clientHeight;
-
-// The list cuts each row off at its own edge, which would take the bottom of a message's focus ring and the start of its rise into place. Its rows keep their layout to themselves, and draw past their edge.
-const ROWS_DRAW_PAST_THEIR_EDGE = "[&_[style*='contain']]:[contain:layout_style]!";
-const SCROLLER = { overflowX: "hidden" } as const;
+// The list cuts each row off at its own edge, with `contain: paint` in the style of the element that holds it, which would take the bottom of a message's focus ring and the start of its rise into place. Those elements, under the scroller, its content and its rows' box, keep their layout to themselves and draw past their edge.
+const ROWS_DRAW_PAST_THEIR_EDGE = "[&>div>div>div[style*='contain']]:[contain:layout_style]!";
 const COLUMN = { display: "flex", flexDirection: "column" } as const;
 // The room the chat's top bar covers.
 const UNDER_BAR = <div className="h-15" />;
@@ -173,10 +167,12 @@ export const Timeline = memo(function Timeline({
   const [loading, setLoading] = useState(messages.length === 0 && agent.latest !== null);
   const [flashing, setFlashing] = useState<string | null>(null);
   const [openedAt] = useState(() => Date.now() - CLOCK_SLACK_MS);
-  const older = useRef<"more" | "loading" | "none">("more");
-  // The rows that stay drawn wherever the chat is scrolled to: those that have shown a page, and the newest, as in T3 Code, so the list has measured the end before the chat glides to it.
+  // Whether the chat has messages before the oldest the window holds.
+  const older = useRef(true);
+  // The rows that have shown a page.
   const [kept, setKept] = useState<string[]>([]);
   const keep = useCallback((message: Message) => setKept((ids) => (ids.includes(message.id) ? ids : [...ids, message.id])), []);
+  // They stay drawn wherever the chat is scrolled to, so each page stays as the person left it. So does the newest row, as in T3 Code, so the list has measured the end before the chat glides to it.
   const pinned = useMemo(() => ({ keys: kept, bottom: 1 }), [kept]);
 
   useEffect(() => {
@@ -196,14 +192,17 @@ export const Timeline = memo(function Timeline({
       }),
     [shown],
   );
-  // When rows land above what is on screen, as a page fetched from the top or one the panel fetched, the list holds the first message on screen where it is. It has to be told while it still has the rows from before, which is as they are drawn here, ahead of it. It then moves with each height it measures above the message, in the frame it measures it.
-  const had = useRef(rows);
-  if (had.current[0]?.id !== rows[0]?.id) {
+  // The list takes the rows once it has been told what to hold. When rows land above what is on screen, as a page fetched from the top or one the panel fetched, it holds the first message on screen where it is, and moves with each height it measures above it, in the frame it measures it. Left to keep the place by itself, it moves the scroll a frame after the rows, and draws that frame out of place. At the chat's end it follows the end.
+  const [listed, setListed] = useState(rows);
+  useLayoutEffect(() => {
     const at = list.current;
-    const first = at && had.current.slice(at.getState().start ?? 0).find((row) => !isDay(row));
-    if (first) at.anchorVisibleContent({ key: first.id });
-  }
-  had.current = rows;
+    if (at && listed[0]?.id !== rows[0]?.id && at.getState().isWithinMaintainScrollAtEndThreshold === false) {
+      const stays = new Set(rows.map(idOf));
+      const first = listed.slice(at.getState().start ?? 0).find((row) => !isDay(row) && stays.has(row.id));
+      if (first) at.anchorVisibleContent({ key: first.id });
+    }
+    setListed(rows);
+  }, [rows, listed]);
   const byId = useMemo(() => new Map(messages.map((message) => [message.id, message])), [messages]);
   const newestMine = messages.findLast((message) => message.sender === "person")?.id;
   // Whether the agent waits on the person's answer to an ask of its own, which is then the last thing in the chat.
@@ -212,38 +211,34 @@ export const Timeline = memo(function Timeline({
   // The faded copy goes once the server's copy is in the chat, which may come over the event stream first.
   const sending = outgoing && outgoing.after === newestMine ? outgoing : null;
   const around = useMemo<Around>(
-    () => ({ agentId: agent.id, standings, byId, newestMine, flashing, today, openedAt, onReply, onPage: keep }),
+    () => ({ agentId: agent.id, standings, byId, newestMine, flashing, today, openedAt, onReply, onPageShown: keep }),
     [agent.id, standings, byId, newestMine, flashing, today, openedAt, onReply, keep],
   );
 
-  // Counts the scrolls of the chat's own and the person's, so one the person takes over, or a later one of the chat's own, ends the one before.
+  // Counts the chat's own scrolls and the person's, so a glide to the end that the person takes over, or that a later scroll follows, is left where it is.
   const scrolls = useRef(0);
   const toEnd = useCallback(async (smooth = false) => {
     const at = list.current;
     if (!at) return;
     setBehind(false);
     const mine = ++scrolls.current;
+    if (!smooth) return void at.scrollToEnd({ animated: false });
     const over = () => mine !== scrolls.current;
     const { contentLength, distanceFromEnd, scrollLength } = at.getState();
     // A long way back, the chat jumps to a screen short of the end, and glides the rest once the page has taken the jump.
-    if (smooth && distanceFromEnd > scrollLength * 2) {
+    if (distanceFromEnd > scrollLength * 2) {
       await at.scrollToOffset({ offset: contentLength - scrollLength * 2, animated: false });
       await new Promise((resolve) => requestAnimationFrame(resolve));
       if (over()) return;
     }
-    await settle(at, at.scrollToEnd({ animated: smooth }), endOf, over);
+    await landAtEnd(at, at.scrollToEnd({ animated: true }), over);
   }, []);
   useEffect(() => {
     handle.current = { toEnd: () => void toEnd() };
   }, [handle, toEnd]);
 
   const fetchOlder = useCallback(() => {
-    if (older.current !== "more") return;
-    older.current = "loading";
-    return loadOlder(agent.id).then(
-      (more) => void (older.current = more ? "more" : "none"),
-      () => void (older.current = "more"),
-    );
+    if (older.current) return loadOlder(agent.id).then((more) => void (older.current = more), () => undefined);
   }, [agent.id]);
 
   // Something new at the end while the person reads further up shows the button that jumps to it, until they are back at the end.
@@ -277,18 +272,8 @@ export const Timeline = memo(function Timeline({
       let nearest: Message | undefined;
       for (let step = 0; !nearest && step < messages.length; step++) nearest = drawn(messages[index - step]) ?? drawn(messages[index + step]);
       if (!nearest) return;
-      const { id: key } = nearest;
-      const mine = ++scrolls.current;
-      // The middle of the room, as the page measures the row.
-      await settle(
-        at,
-        at.scrollToKey({ key, viewPosition: 0.5, animated: false }),
-        (scroller) => {
-          const row = scroller.querySelector(`[data-message-id="${CSS.escape(key)}"]`)?.getBoundingClientRect();
-          return row && Math.max(0, Math.min(endOf(scroller), scroller.scrollTop + row.top - scroller.getBoundingClientRect().top - (scroller.clientHeight - row.height) / 2));
-        },
-        () => !going || mine !== scrolls.current,
-      );
+      scrolls.current++;
+      await at.scrollToKey({ key: nearest.id, viewPosition: 0.5, animated: false });
       if (!going) return;
       setFlashing(nearest.id);
       setTimeout(() => going && setFlashing(null), FLASH_MS);
@@ -304,29 +289,35 @@ export const Timeline = memo(function Timeline({
     const at = list.current;
     const scroller = event.currentTarget;
     const target = event.target as HTMLElement;
-    const focused = target.dataset.messageRow === undefined ? -1 : rows.findIndex((row) => row.id === target.dataset.messageId);
+    const focused = target.dataset.messageRow === undefined ? -1 : listed.findIndex((row) => row.id === target.dataset.messageId);
     if (!at || (focused < 0 && target !== scroller)) return;
     const takesFocus = (row: Row) => !isDay(row) && !standings.has(row.id) && drawnAs(row) === "message";
     const step = event.key === "ArrowDown" ? 1 : -1;
     let next = focused < 0 ? (at.getState().end ?? -1) : focused + step;
-    while (rows[next] && !takesFocus(rows[next])) next += focused < 0 ? -1 : step;
-    const message = rows[next];
+    while (listed[next] && !takesFocus(listed[next])) next += focused < 0 ? -1 : step;
+    const message = listed[next];
     if (!message) return;
     event.preventDefault();
-    void at.scrollIndexIntoView({ index: next, animated: false }).then(() => scroller.querySelector<HTMLElement>(`[data-message-row][data-message-id="${CSS.escape(message.id)}"]`)?.focus({ preventScroll: true }));
+    // A row that is drawn takes focus at once, and one further off once the list has scrolled to it and drawn it.
+    const focus = () => scroller.querySelector<HTMLElement>(`[data-message-row][data-message-id="${CSS.escape(message.id)}"]`)?.focus({ preventScroll: true });
+    focus();
+    void at.scrollItemIntoView({ item: message, animated: false }).then(focus);
   };
 
+  // A message that has come in is drawn with its motion once. The list draws its row after this has run, so it counts as arrived from the frame after.
   useEffect(() => {
-    for (const message of shown) if (message.created_at >= openedAt) arrived.add(message.id);
+    const frame = requestAnimationFrame(() => {
+      for (const message of shown) if (message.created_at >= openedAt) arrived.add(message.id);
+    });
+    return () => cancelAnimationFrame(frame);
   }, [shown, openedAt]);
-
   const empty = !agent.latest && messages.length === 0 && !sending;
 
   return (
     <div className="relative min-h-0 flex-1">
       <LegendList<Row>
         ref={list}
-        data={rows}
+        data={listed}
         extraData={around}
         keyExtractor={idOf}
         getItemType={rowKind}
@@ -340,12 +331,12 @@ export const Timeline = memo(function Timeline({
         alwaysRender={pinned}
         onStartReached={fetchOlder}
         onStartReachedThreshold={NEAR_TOP}
-        onScroll={(event: NativeSyntheticEvent<NativeScrollEvent>) => onScrolled(event.nativeEvent.contentOffset.y > 0)}
+        onScroll={(event) => onScrolled(event.nativeEvent.contentOffset.y > 0)}
         onUserScroll={() => void scrolls.current++}
         onKeyDown={stepFocus}
         tabIndex={0}
+        showsHorizontalScrollIndicator={false}
         className={cn("h-full focus-visible:-outline-offset-2", ROWS_DRAW_PAST_THEIR_EDGE)}
-        style={SCROLLER}
         contentContainerClassName="mx-auto max-w-chat"
         contentContainerStyle={COLUMN}
         data-testid="timeline"
