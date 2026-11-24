@@ -429,6 +429,9 @@ test.describe("search", () => {
     // Opened there again from the search still open, scrolling down reaches the newest message across the hole: the run from the message, then one more.
     await page.getByTestId(`found-${message.id}`).click();
     await expect(row).toBeInViewport({ timeout: 15_000 });
+    await expect(row).toHaveClass(/animate-flash/);
+    await expect(page.getByTestId("hole")).toHaveCount(0);
+    expect(fetched.slice(opened), fetched.join(" ")).toHaveLength(1);
     await scrollChatTo(page, said(page, newest), "on");
     expect(runs(fetched.slice(opened)), fetched.join(" ")).toHaveLength(2);
     expect(fetched.slice(opened), fetched.join(" ")).toHaveLength(2);
