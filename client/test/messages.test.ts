@@ -17,6 +17,7 @@ const message = (body: string, attachments: string[] = []): Message => ({
   ask: null,
   question: null,
   peer_id: null,
+  switched: null,
   created_at: 0,
 });
 

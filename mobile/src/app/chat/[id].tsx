@@ -21,6 +21,7 @@ import { IconButton } from "@/components/IconButton";
 import { Markdown } from "@/components/Markdown";
 import { FileCard, MessagePage, MessagePhotos, type Shown } from "@/components/MessageAttachments";
 import { SwipeToReply } from "@/components/SwipeToReply";
+import { SwitchNotice } from "@/components/SwitchNotice";
 import { WorkingLine } from "@/components/WorkingLine";
 import { problem } from "@/lib/alerts";
 import { attachment } from "@/lib/api";
@@ -367,6 +368,7 @@ function Bubble({
   onReply: () => void;
   onResend: () => void;
 }) {
+  if (message.switched) return <SwitchNotice message={message} switched={message.switched} />;
   if (message.sender === "sidebots") return <Text style={[styles.note, { color: theme.ink2 }]}>{message.body}</Text>;
   const mine = message.sender === "person";
   const shown = message.attachments.map((path) => ({ ...attachment(message.agent_id, path), name: fileName(path) }));

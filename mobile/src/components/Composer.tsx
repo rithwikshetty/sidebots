@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { PixelRatio, Pressable, StyleSheet, Text, TextInput, View, type TextInputInstance, type TextStyle } from "react-native";
 import Animated, { FadeIn, LayoutAnimationConfig, useAnimatedStyle, useReducedMotion, withTiming } from "react-native-reanimated";
 import { ArrowUp, Mic, Plus, Square } from "lucide-react-native";
-import { PROVIDERS, type AgentWithLatest, type Offered } from "@server/contract";
+import { PROVIDERS, runsFast, type AgentWithLatest, type Offered } from "@server/contract";
 import { MessageMenuView, type MessageMenuAction } from "../../modules/message-menu/src";
 import { AttachmentTray, TRAY_HEIGHT, TRAY_TILE_EXIT_MS } from "@/components/AttachmentTray";
 import { BrandLogo } from "@/components/BrandLogo";
@@ -45,7 +45,7 @@ const ATTACH_ACTIONS: (MessageMenuAction & { id: PickSource })[] = [
  * of Photos, Camera and Files, and the round Send at the bottom right, with
  * the microphone before it on iOS 26 and later and the agent's model before
  * that. The model is a square button with its provider's logo, which opens
- * the drawer the agent's model and effort are chosen in. At rest the field
+ * the drawer where what the agent answers with is chosen. At rest the field
  * is one slim line between the buttons. While the person types, or
  * once something is attached, it opens into a card with the text above the
  * buttons, growing with the text up to about six lines, then scrolling;
@@ -229,7 +229,7 @@ export function Composer({
               <Pressable
                 onPress={onModel}
                 accessibilityRole="button"
-                accessibilityLabel={`Model: ${provider.models[agent.model]}, ${provider.efforts[agent.effort]} effort`}
+                accessibilityLabel={`Model: ${provider.models[agent.model]}, ${provider.efforts[agent.effort]} effort${runsFast(agent) ? ", fast" : ""}`}
                 hitSlop={4}
                 style={({ pressed }) => [styles.model, { backgroundColor: pressed ? theme.field : "transparent" }]}>
                 <BrandLogo logo={provider.logo} size={18} />

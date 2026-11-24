@@ -64,7 +64,7 @@ test("an answer stays with what it answers however late it comes, and each other
   );
 });
 
-test("a change of what an agent answers with reads as the parts that changed, and as all of it on another provider", () => {
+test("a change of what an agent answers with reads as the parts that changed, and as all of each on another provider", () => {
   const opus: Selection = { provider: "claude", model: "opus", effort: "medium", fast: false };
   const words = (from: Selection, to: Selection) => [selectionWords(from, to).join(" "), selectionWords(to, from).join(" ")];
   assert.deepEqual(selectionWords(opus), ["Opus", "Medium"]);
@@ -74,5 +74,5 @@ test("a change of what an agent answers with reads as the parts that changed, an
   assert.deepEqual(words(opus, { ...opus, fast: true }), ["Standard", "Fast"]);
   // Sonnet has no fast mode, so it answers at its usual speed whatever the agent is set to.
   assert.deepEqual(words({ ...opus, fast: true }, { ...opus, model: "sonnet", fast: true }), ["Opus Fast", "Sonnet Standard"]);
-  assert.deepEqual(words(opus, { provider: "codex", model: "sol", effort: "high", fast: true }), ["Claude Code Opus Medium", "Codex Sol High Fast"]);
+  assert.deepEqual(words(opus, { provider: "codex", model: "sol", effort: "high", fast: true }), ["Opus Medium", "Sol High Fast"]);
 });

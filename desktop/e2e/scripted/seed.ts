@@ -6,9 +6,9 @@
 
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { CONNECTIONS, PROVIDERS, fenced, type Agent, type Ask, type Effort, type Model, type Provider, type Question, type Schedule, type Status, type TurnKind } from "../../../server/src/contract.ts";
+import { CONNECTIONS, PROVIDERS, fenced, type Agent, type Ask, type Effort, type Model, type Provider, type Question, type Schedule, type Selection, type Status, type TurnKind } from "../../../server/src/contract.ts";
 import { question as claudeQuestion } from "../../../server/src/claude.ts";
-import { nextRun } from "../../../server/src/runner.ts";
+import { nextRun, switchedWords } from "../../../server/src/runner.ts";
 import type { Extras, Person, Store } from "../../../server/src/store.ts";
 import { PAGES, budget, invoice, packingList, picture, tickets, type Made } from "./files.ts";
 import { askFor, planLimits, type Action } from "./script.ts";
@@ -205,6 +205,10 @@ export function seed(store: Store, person: Person, now = Date.now()): Seeded {
       sidebots(body: string, status: Status, gap = 0.2) {
         return add(() => store.addMessage(agent.id, "sidebots", body, status).id, gap);
       },
+      /** The agent answers with something else from here on. */
+      switched(from: Selection, to: Selection, gap = 0.2) {
+        return add(() => store.addMessage(agent.id, "sidebots", switchedWords({ from, to }), "done", { switched: { from, to } }).id, gap);
+      },
       /** An ask the person answered, or that went unanswered. */
       ask(question: Question, outcome: Exclude<Ask, "waiting">, gap = 0.5) {
         return add(() => store.addMessage(agent.id, "agent", askWords(question), "done", { ask: outcome, question }).id, gap);
@@ -304,6 +308,7 @@ export function seed(store: Store, person: Person, now = Date.now()): Seeded {
   atlasChat.person("Sorry, too much at once. Just this month's");
   atlasChat.agent("No problem. I found 14 receipts from November and filed them by category.", {}, 4);
   atlasChat.sidebots("Fresh start", "done", 30);
+  atlasChat.switched({ provider: "claude", model: "sonnet", effort: "high", fast: false }, { provider: "claude", model: "opus", effort: "high", fast: false }, 20);
   atlasChat.person("Check whether the council has posted the bin dates for Christmas");
   atlasChat.ask(askFor("page", "claude", store.agentHome(atlas.id)), "unanswered");
   atlasChat.agent("I didn't hear back about opening the council's page, so I left it. Ask again when you're around.", {}, 30);

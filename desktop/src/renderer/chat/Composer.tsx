@@ -1,24 +1,21 @@
-import { useRef, type ClipboardEvent, type ComponentProps, type KeyboardEvent, type RefObject } from "react";
+import { useRef, type ClipboardEvent, type KeyboardEvent, type RefObject } from "react";
 import { ArrowUp, Plus, Reply, Square, X } from "lucide-react";
-import { PROVIDERS, type AgentWithLatest, type Message, type Offered } from "@server/contract.ts";
+import type { AgentWithLatest, Message } from "@server/contract.ts";
 import { MAX_FILES, fileKind, fileMeta, isImage } from "@client/files.ts";
 import { preview } from "@client/messages.ts";
 import { cn } from "../lib/cn.ts";
 import type { AgentChanges } from "../lib/store.ts";
-import { BrandLogo } from "../ui/BrandLogo.tsx";
-import { Button, IconButton } from "../ui/Button.tsx";
-import { Menu, choice } from "../ui/Menu.tsx";
+import { IconButton } from "../ui/Button.tsx";
 import { Tooltip } from "../ui/Tooltip.tsx";
 import { FileTile } from "./Attachments.tsx";
 import { FILE_ICONS, usePreviews } from "./files.ts";
+import { ModelPicker } from "./ModelPicker.tsx";
 
 /**
  * The message field at the foot of the chat: a round card with + at its
- * start, which opens the system's file picker, and at its end the agent's
- * model and the round Send in the chat's colour. The model is a square
- * button with its provider's logo, and opens a menu of the provider's models
- * and of how hard the agent thinks before it answers, where choosing one
- * takes effect from the agent's next turn. Empty, the card is one line, the
+ * start, which opens the system's file picker, and at its end what the agent
+ * answers with, which opens the panel that changes it, and the round Send in
+ * the chat's colour. Empty, the card is one line, the
  * text between the buttons, with a name too long for it cut short. With text
  * or files in it, it opens: the text across its top, which grows from one
  * line to about eight and then scrolls, and the buttons in a row beneath.
@@ -47,7 +44,7 @@ export function Composer({
 }: {
   field: RefObject<HTMLTextAreaElement | null>;
   agent: AgentWithLatest;
-  /** Changes the model the agent answers with, or its effort. */
+  /** Changes what the agent answers with. */
   onSet: (changes: AgentChanges) => void;
   value: string;
   onChange: (text: string) => void;
@@ -62,7 +59,6 @@ export function Composer({
   online: boolean;
 }) {
   const { name } = agent;
-  const provider: Offered = PROVIDERS[agent.provider];
   const picker = useRef<HTMLInputElement>(null);
   // With something in it, the card is open: the text across its top and the buttons in a row beneath.
   const open = value.length > 0 || files.length > 0;
@@ -74,12 +70,6 @@ export function Composer({
     if (event.key !== "Enter" || event.shiftKey || event.altKey || event.nativeEvent.isComposing || event.keyCode === 229) return;
     event.preventDefault();
     if (canSend) onSend();
-  };
-
-  // A choice from the model's menu leaves the person where they write.
-  const set = (changes: AgentChanges) => {
-    onSet(changes);
-    field.current?.focus();
   };
 
   const paste = (event: ClipboardEvent<HTMLTextAreaElement>) => {
@@ -151,15 +141,7 @@ export function Composer({
             />
           </div>
           <div className="col-start-2 row-start-1 mr-1.5 mb-1.5 flex items-center gap-1 self-end">
-            <Menu
-              align="end"
-              trigger={<ModelButton provider={provider} label={`${provider.models[agent.model]} · ${provider.efforts[agent.effort]} effort`} />}
-              entries={[
-                choice(provider.name, provider.models, agent.model, (model) => set({ model })),
-                "separator",
-                choice("Effort", provider.efforts, agent.effort, (effort) => set({ effort })),
-              ]}
-            />
+            <ModelPicker agent={agent} onSet={onSet} returnTo={field} />
             <Tooltip label={stops ? "Stop" : "Send"} shortcut={stops ? undefined : ["↩"]} side="top">
               <button
                 type="button"
@@ -180,17 +162,6 @@ export function Composer({
         </div>
       </div>
     </div>
-  );
-}
-
-/** The button that opens the model's menu: the provider's logo in a square, with the model and effort in effect as its tooltip. What a menu gives its trigger goes on to the button. */
-function ModelButton({ provider, label, ...props }: ComponentProps<"button"> & { provider: Offered; label: string }) {
-  return (
-    <Tooltip label={label} side="top">
-      <Button variant="ghost" aria-label={`Model: ${label}`} className="w-8 px-0 text-ink2 hover:text-ink data-[popup-open]:bg-press data-[popup-open]:text-ink" data-testid="model" {...props}>
-        <BrandLogo logo={provider.logo} size={16} />
-      </Button>
-    </Tooltip>
   );
 }
 

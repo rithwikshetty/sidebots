@@ -638,6 +638,9 @@ test("another model, effort or speed on the same provider keeps the session, and
     return reply("sure");
   });
   const agent = (await call(ME, "POST", "/agents", { name: "Theo", avatarId: "mochi" })).json;
+  // An agent that has yet to answer has nothing to switch from.
+  assert.equal((await call(ME, "PATCH", `/agents/${agent.id}`, { model: "sonnet" })).json.switched_from, null);
+  await call(ME, "PATCH", `/agents/${agent.id}`, { model: "opus" });
   await say(ME, agent.id, "book the band");
   await queue.kick(agent.id);
   const notices = async () => (await call(ME, "GET", `/agents/${agent.id}/messages`)).json.filter((m: { sender: string }) => m.sender === "sidebots").map((m: { body: string }) => m.body);

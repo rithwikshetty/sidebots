@@ -12,6 +12,8 @@ const agent = (id: string, more: Partial<AgentWithLatest> = {}): AgentWithLatest
   provider: "claude",
   model: "opus",
   effort: "medium",
+  fast: false,
+  switched_from: null,
   muted: false,
   hidden: false,
   color: null,
@@ -40,6 +42,7 @@ const row = (body: string, more: Partial<Message> = {}): Message => ({
   ask: null,
   question: null,
   peer_id: null,
+  switched: null,
   created_at: 0,
   ...more,
 });

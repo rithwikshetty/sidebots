@@ -226,7 +226,10 @@ export function toolsFor(turn: Turn): Tool[] {
 /** What a fresh start shows in the chat. */
 const FRESH_START = "Fresh start";
 /** What a change of what the agent answers with shows in the chat, in an app that doesn't draw it. */
-const switchedWords = ({ from, to }: Switched) => `Switched from ${selectionWords(from, to).join(" ")} to ${selectionWords(to, from).join(" ")}`;
+export function switchedWords({ from, to }: Switched): string {
+  const side = (one: Selection, other: Selection) => [...(one.provider === other.provider ? [] : [PROVIDERS[one.provider].name]), ...selectionWords(one, other)].join(" ");
+  return `Switched from ${side(from, to)} to ${side(to, from)}`;
+}
 /** What a stopped turn shows in the chat. */
 const STOPPED = "Stopped";
 // A session this large gets a fresh start once its reply is in.

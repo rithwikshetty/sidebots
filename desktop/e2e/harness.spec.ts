@@ -308,7 +308,7 @@ test.describe("the seeded world", () => {
     expect(messages.some((message) => message.reply_to && message.peer_id === null)).toBe(true);
     expect(messages.some((message) => message.sender === "person" && message.status === "failed")).toBe(true);
     expect(messages.some((message) => message.sender === "sidebots" && message.status === "failed")).toBe(true);
-    expect(messages.filter((message) => message.sender === "sidebots" && message.status === "done").map((message) => message.body)).toEqual(["Stopped", "Fresh start"]);
+    expect(messages.filter((message) => message.sender === "sidebots" && message.status === "done").map((message) => message.body)).toEqual(["Stopped", "Fresh start", "Switched from Sonnet to Opus"]);
     expect(new Set(messages.filter((message) => message.ask).map((message) => message.ask))).toEqual(new Set(["allowed", "refused", "unanswered"]));
     expect(messages.some((message) => message.question?.kind === "connection")).toBe(true);
     const asked = messages.filter((message) => message.agent_id === atlas.id && message.peer_id && !message.ask);

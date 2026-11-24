@@ -172,9 +172,8 @@ test.describe("an agent's page", () => {
     await openAgentPage(page, atlas.id);
     await expect(page.getByTestId("agent-page-caption")).toHaveText("Opus · High effort");
     await page.getByTestId("model").click();
-    await page.getByRole("menuitemradio", { name: "Sonnet" }).click();
-    await page.getByTestId("model").click();
-    await page.getByRole("menuitemradio", { name: "Low" }).click();
+    await page.getByRole("radio", { name: "Sonnet" }).click();
+    await page.getByRole("radio", { name: "Low" }).click();
     await expect(page.getByTestId("agent-page-caption")).toHaveText("Sonnet · Low effort");
   });
 

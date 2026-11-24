@@ -500,13 +500,15 @@ export function openStore(home: string) {
      * provider takes its instructions with it, in the file that provider
      * reads. When what it answers with changes, the agent keeps what its
      * last turn ran on as `switched_from`, until a turn runs on the new or
-     * the person picks the old again.
+     * the person picks the old again. One that has yet to run a turn has
+     * answered with nothing, and keeps nothing.
      */
     updateAgent(agent: Agent, changes: AgentChanges): void {
       if (Object.keys(changes).length === 0) return;
       const next = { ...agent, ...changes };
       const from = agent.switched_from ?? selectionOf(agent);
-      next.switched_from = sameSelection(from, next) ? null : from;
+      const ran = db.prepare("select 1 from usage where agent_id = ? limit 1").get(agent.id) !== undefined;
+      next.switched_from = !ran || sameSelection(from, next) ? null : from;
       const set: Record<string, string | number | null> = { switched_from: next.switched_from && JSON.stringify(next.switched_from) };
       for (const column of Object.keys(changes) as (keyof AgentChanges)[]) set[column] = typeof changes[column] === "boolean" ? Number(changes[column]) : changes[column]!;
       db.prepare(`update agents set ${Object.keys(set).map((column) => `${column} = ?`).join(", ")} where id = ?`).run(...Object.values(set), agent.id);

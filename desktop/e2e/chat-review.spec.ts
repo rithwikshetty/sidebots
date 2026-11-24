@@ -155,7 +155,7 @@ for (const scheme of ["light", "dark"] as const) {
     await shot("composer-lines");
     await field(page).fill("");
     await page.getByTestId("model").click();
-    await expect(page.getByRole("menuitemradio").first()).toBeVisible();
+    await expect(page.getByTestId("model-picker")).toBeVisible();
     await shot("composer-model");
     await page.keyboard.press("Escape");
     await said(page, "Groceries are up").last().getByTestId("bubble").click({ button: "right" });

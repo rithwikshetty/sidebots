@@ -8,6 +8,7 @@ import { cn } from "../lib/cn.ts";
  * picked, and arrow keys move between them. The mark is the app's colour; a
  * `plain` row, as for tabs, has a raised light mark instead, so it reads as a
  * place to go rather than a setting. `label` names the row for a screen reader.
+ * A `disabled` row shows its choice and can't be changed.
  */
 export function Segmented<Id extends string>({
   options,
@@ -15,6 +16,7 @@ export function Segmented<Id extends string>({
   onChange,
   label,
   plain = false,
+  disabled = false,
   className,
 }: {
   options: Partial<Record<Id, string>>;
@@ -22,6 +24,7 @@ export function Segmented<Id extends string>({
   onChange: (value: Id) => void;
   label: string;
   plain?: boolean;
+  disabled?: boolean;
   className?: string;
 }) {
   const ids = Object.keys(options) as Id[];
@@ -31,7 +34,8 @@ export function Segmented<Id extends string>({
       value={value}
       onValueChange={(next) => onChange(next as Id)}
       aria-label={label}
-      className={cn("relative grid h-8 rounded-md bg-field p-0.5", className)}
+      disabled={disabled}
+      className={cn("relative grid h-8 rounded-md bg-field p-0.5 data-disabled:opacity-45", className)}
       style={{ gridTemplateColumns: `repeat(${ids.length}, minmax(0, 1fr))` }}
     >
       <span
@@ -45,7 +49,7 @@ export function Segmented<Id extends string>({
           value={id}
           className={cn(
             "relative z-10 flex min-w-0 items-center justify-center rounded-sm px-2 text-sm font-medium whitespace-nowrap transition-colors duration-150",
-            id !== value ? "text-ink2 hover:text-ink" : plain ? "text-ink" : "text-on-tint",
+            id !== value ? "text-ink2 not-data-disabled:hover:text-ink" : plain ? "text-ink" : "text-on-tint",
           )}
         >
           {options[id]}

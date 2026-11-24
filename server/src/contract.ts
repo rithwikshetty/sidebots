@@ -240,15 +240,14 @@ export function sameSelection(one: Selection, other: Selection): boolean {
  * A selection in the words the apps show: its model, its effort, and "Fast"
  * when it answers in fast mode. Beside `other`, the selection it changed
  * from or to, it is only the parts the two differ in, where a speed that
- * changed is "Standard" or "Fast", and on another provider it is all of it
- * after the provider's name.
+ * changed is "Standard" or "Fast". On another provider than `other` it is
+ * all of it, which goes with that provider's name or logo.
  */
 export function selectionWords(selection: Selection, other?: Selection): string[] {
-  const { name, models, efforts }: Offered = PROVIDERS[selection.provider];
+  const { models, efforts }: Offered = PROVIDERS[selection.provider];
   const all = other === undefined || other.provider !== selection.provider;
   const fast = runsFast(selection);
   return [
-    ...(other !== undefined && all ? [name] : []),
     ...(all || other.model !== selection.model ? [models[selection.model] ?? selection.model] : []),
     ...(all || other.effort !== selection.effort ? [efforts[selection.effort] ?? selection.effort] : []),
     ...(all ? (fast ? ["Fast"] : []) : runsFast(other) !== fast ? [fast ? "Fast" : "Standard"] : []),

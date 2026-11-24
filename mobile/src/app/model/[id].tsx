@@ -1,13 +1,16 @@
-import { Fragment } from "react";
+import { Fragment, useEffect, useState } from "react";
 import { Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import { useLocalSearchParams } from "expo-router";
 import { Check } from "lucide-react-native";
-import { PROVIDERS, type AgentWithLatest, type Offered } from "@server/contract";
+import { PROVIDERS, runsFast, type AgentWithLatest, type Offered, type Provider } from "@server/contract";
 import { BrandLogo } from "@/components/BrandLogo";
+import { Choices } from "@/components/Choices";
 import { Rule, Section } from "@/components/Section";
 import { problem } from "@/lib/alerts";
-import { changeAgent, useAgent, type AgentChanges } from "@/lib/state";
+import { changeAgent, loadUsage, useAgent, useUsage, type AgentChanges } from "@/lib/state";
 import { useTheme } from "@/lib/theme";
+
+const SPEEDS = { standard: "Standard", fast: "Fast" };
 
 export default function ModelDrawer() {
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -16,16 +19,29 @@ export default function ModelDrawer() {
 }
 
 /**
- * The drawer the model's button in the message field opens: the provider's
- * logo and name, then its models and how hard the agent can think before it
- * answers, a row to each, with a check by the one of each in effect. A tap
- * on another takes effect from the agent's next turn, and the drawer stays up
- * for the other choice until it is swiped away.
+ * The drawer the model's button in the message field opens: a provider's
+ * logo and name over its models, a row to each. A person who has set up more
+ * than one provider picks between them above the models, and a model of
+ * another provider moves the agent there, with its effort when that provider
+ * has it. Under the models of the agent's own provider are how hard it can
+ * think before it answers, and its speed when its model has a fast mode. A
+ * check marks what is in effect. A tap on anything else takes effect from
+ * the agent's next turn, and the drawer stays up for another choice until it
+ * is swiped away.
  */
 function Model({ agent }: { agent: AgentWithLatest }) {
   const theme = useTheme();
-  const provider: Offered = PROVIDERS[agent.provider];
+  // The providers the person has set up, which the computer lists with how each is signed in to.
+  const providers = (useUsage()?.accounts ?? []).map((account) => account.provider);
+  useEffect(() => {
+    loadUsage().catch(() => {});
+  }, []);
+  // The provider whose models are listed, which starts as the agent's own.
+  const [listed, setListed] = useState(agent.provider);
+  const provider: Offered = PROVIDERS[listed];
+  const own = listed === agent.provider;
   const change = (changes: AgentChanges) => void changeAgent(agent.id, changes).catch((failure) => problem("Couldn't change that", failure));
+  const pick = (model: AgentWithLatest["model"]) => change(own ? { model } : { provider: listed, model, effort: Object.hasOwn(provider.efforts, agent.effort) ? agent.effort : PROVIDERS[listed].effort });
   return (
     <ScrollView style={{ backgroundColor: theme.bg }} contentContainerStyle={styles.page}>
       <View style={styles.provider}>
@@ -34,26 +50,38 @@ function Model({ agent }: { agent: AgentWithLatest }) {
           {provider.name}
         </Text>
       </View>
+      {providers.length > 1 ? (
+        <View style={[styles.providers, { backgroundColor: theme.field }]}>
+          <Choices options={Object.fromEntries(providers.map((each) => [each, PROVIDERS[each].name])) as Partial<Record<Provider, string>>} value={listed} onChange={setListed} plain />
+        </View>
+      ) : null}
       <Section title="Model">
-        <Options options={provider.models} value={agent.model} onChange={(model) => change({ model })} />
+        <Options options={provider.models} value={own ? agent.model : undefined} onChange={pick} />
       </Section>
-      <Section
-        title="Effort"
-        note="How hard it thinks before it answers. A more capable model and more effort are slower, and use more of your plan or API credit. A model without the effort you pick runs at the highest it has.">
-        <Options options={provider.efforts} value={agent.effort} onChange={(effort) => change({ effort })} />
-      </Section>
+      {own ? (
+        <Section
+          title="Effort"
+          note="How hard it thinks before it answers. A more capable model and more effort are slower, and use more of your plan or API credit. A model without the effort you pick runs at the highest it has.">
+          <Options options={provider.efforts} value={agent.effort} onChange={(effort) => change({ effort })} />
+        </Section>
+      ) : null}
+      {own && provider.fast.includes(agent.model) ? (
+        <Section title="Speed" note="Fast answers sooner, and uses more of your plan or API credit.">
+          <Choices options={SPEEDS} value={runsFast(agent) ? "fast" : "standard"} onChange={(speed) => change({ fast: speed === "fast" })} plain />
+        </Section>
+      ) : null}
     </ScrollView>
   );
 }
 
-/** A card's rows of choices where one is in effect, which wears the check. */
-function Options<Id extends string>({ options, value, onChange }: { options: Partial<Record<Id, string>>; value: Id; onChange: (value: Id) => void }) {
+/** A card's rows of choices where one may be in effect, which wears the check. */
+function Options<Id extends string>({ options, value, onChange }: { options: Partial<Record<Id, string>>; value: Id | undefined; onChange: (value: Id) => void }) {
   const theme = useTheme();
   return (Object.keys(options) as Id[]).map((id, index) => (
     <Fragment key={id}>
       {index ? <Rule /> : null}
       <Pressable
-        onPress={() => onChange(id)}
+        onPress={() => id !== value && onChange(id)}
         accessibilityRole="button"
         accessibilityState={{ selected: id === value }}
         style={({ pressed }) => [styles.row, pressed && { backgroundColor: theme.line }]}>
@@ -68,6 +96,7 @@ const styles = StyleSheet.create({
   page: { paddingHorizontal: 20, paddingTop: 28, paddingBottom: 32 },
   provider: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 10 },
   name: { fontSize: 20, fontWeight: "700" },
+  providers: { marginTop: 20, borderRadius: 16, borderCurve: "continuous" },
   row: { flexDirection: "row", alignItems: "center", gap: 12, paddingHorizontal: 16, paddingVertical: 12, minHeight: 50 },
   rowTitle: { flex: 1, fontSize: 16, lineHeight: 21 },
 });

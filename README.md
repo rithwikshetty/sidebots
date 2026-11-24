@@ -50,7 +50,7 @@ pnpm add-person Alex claude ~/.claude
 
 Claude Code keeps the person's sessions in that folder and loads their own rules, skills and connections from it. A second person needs a folder of their own, such as `~/.claude-robin`. For a person whose agents run on Codex, the provider is `codex` and the folder is Codex's, such as `~/.codex`.
 
-A person can use both. Set them up on the other with a folder for it, and they pick the provider as they make each agent:
+A person can use both. Set them up on the other with a folder for it, and they pick the provider as they make each agent, and can move an agent to the other from its message field:
 
 ```sh
 pnpm add-account Alex codex ~/.codex
@@ -180,7 +180,7 @@ The phone app and the desktop app list whatever connections the server has, so n
 
 A provider is a program that runs agents: Claude Code or Codex. Each agent runs on one, and each person signs in to each provider their agents use with a config folder of their own. Sidebots carries no provider's program. The server looks for each on the PATH of your shell, then in the folders their installers use, and runs the one it finds when that is no older than its driver works with. Adding a provider takes three things:
 
-- An entry in `PROVIDERS` in `server/src/contract.ts`, with the name the apps show, the logo of whoever makes its models, its models and levels of effort, and the file its agents read their instructions from. The phone app and the desktop app show an agent's models from there.
+- An entry in `PROVIDERS` in `server/src/contract.ts`, with the name the apps show, the logo of whoever makes its models, its models and levels of effort, its models with a fast mode, and the file its agents read their instructions from. The phone app and the desktop app show an agent's models from there.
 - An entry in `PROGRAMS` in `server/src/programs.ts`, with the command a terminal runs it by, the oldest version its driver works with, its maker's installer, its config folder, and its commands to sign in and to say whether it is signed in.
 - A driver, the module that runs a turn on the program: `server/src/claude.ts` is Claude Code's and `server/src/codex.ts` is Codex's. It hands the program the agent's tools from `toolsFor` in `server/src/runner.ts` and the tool servers of the person's connections, has a tool that acts as the person outside the machine judged by the program's safety check or allowed by the person first, says what the session has cost, says where the limits of the person's plan stand as a turn runs and when it is asked, ends a turn the person stops with its session kept, puts the program's failures in words for the person, and removes the program's sessions when an agent is deleted. `server/src/main.ts` passes each driver to the queue.
 
@@ -226,7 +226,16 @@ gh release create v1.0.0 mac/build/Sidebots.dmg --title "Sidebots 1.0.0"
 (cd site && npx wrangler deploy)
 ```
 
-To try a build beside the Sidebots you already run, start it from a terminal with a data folder and port of its own. The app passes `SIDEBOTS_HOME`, `PORT` and `SIDEBOTS_RELAY` on to the server and the window, which passes them on in turn when it opens the app, and sets a new person up with the Claude Code config folder in `CLAUDE_CONFIG_DIR`, or the Codex one in `CODEX_HOME`, when it is set:
+To work on Sidebots beside the one you already run, build the dev app:
+
+```sh
+mac/build.sh dev
+open "mac/build/Sidebots Dev.app"
+```
+
+Sidebots Dev is an app of its own, as the phone's is: its own name and identifier, the phone's dev icon, its data in `~/.sidebots-dev` and its server on port 4318, and it never updates itself. The Sidebots in `/Applications` keeps running beside it.
+
+To try any other build beside the Sidebots you already run, start it from a terminal with a data folder and port of its own. The app passes `SIDEBOTS_HOME`, `PORT` and `SIDEBOTS_RELAY` on to the server and the window, which passes them on in turn when it opens the app, and sets a new person up with the Claude Code config folder in `CLAUDE_CONFIG_DIR`, or the Codex one in `CODEX_HOME`, when it is set:
 
 ```sh
 SIDEBOTS_HOME=/tmp/sidebots-try PORT=4320 SIDEBOTS_RELAY=off CLAUDE_CONFIG_DIR=/tmp/claude-try \
