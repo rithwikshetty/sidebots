@@ -19,11 +19,11 @@ import type { AgentWithLatest, PushToken } from "@server/contract";
 import { isPaired, request } from "./api";
 import { onAgents, useAgents } from "./state";
 
-// The chat open on the stack, which openChat closes sheets down to or puts another in place of, the message it was last opened at, and what listens for them.
+// The chat open on the stack, which openChat closes sheets down to or puts another in place of, and what listens for it.
 let chatOnScreen: string | null = null;
-let openedAt: OpenedAt | null = null;
 const listeners = new Set<() => void>();
-// What hears that a chat is being opened, as the side menu, which shuts.
+// The chat opened last, and what hears that a chat is being opened, as the side menu, which shuts.
+let opened: OpenChat | null = null;
 const opening = new Set<() => void>();
 const SILENT = { shouldShowBanner: false, shouldShowList: false, shouldPlaySound: false, shouldSetBadge: false };
 
@@ -102,8 +102,8 @@ export async function askForPush(): Promise<void> {
   if (answer.status === "granted") await register();
 }
 
-/** A message a chat was opened at. */
-export type OpenedAt = { agentId: string; messageId: string };
+/** A chat as it was opened: the agent's, and the message it was opened at. */
+export type OpenChat = { agentId: string; messageId?: string };
 
 /**
  * Opens an agent's chat. The side menu shuts, a sheet over home or over the
@@ -114,9 +114,8 @@ export type OpenedAt = { agentId: string; messageId: string };
  * it again.
  */
 export function openChat(agentId: string, messageId?: string): void {
+  opened = { agentId, messageId };
   opening.forEach((listener) => listener());
-  openedAt = messageId ? { agentId, messageId } : null;
-  listeners.forEach((listener) => listener());
   router.dismissTo(chatOnScreen ? `/chat/${chatOnScreen}` : "/");
   if (!chatOnScreen) router.push(`/chat/${agentId}`);
   else if (agentId !== chatOnScreen) router.replace(`/chat/${agentId}`);
@@ -143,9 +142,9 @@ export function useChatOnScreen(): string | null {
   return useSyncExternalStore(onChatOnScreen, () => chatOnScreen);
 }
 
-/** The message a chat was last opened at, as the chat scrolls to it. */
-export function useOpenedAt(): OpenedAt | null {
-  return useSyncExternalStore(onChatOnScreen, () => openedAt);
+/** The chat opened last, which scrolls to the message it was opened at. */
+export function useOpenChat(): OpenChat | null {
+  return useSyncExternalStore(onOpenChat, () => opened);
 }
 
 /** Marks a chat as the one open on the stack until the returned release runs, and clears its notifications from the phone. */
