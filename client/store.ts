@@ -4,7 +4,7 @@
 // the few things a phone and a desktop do differently.
 
 import { KEEPALIVE_MS, PAGE } from "../server/src/contract.ts";
-import type { About, Agent, AgentWithLatest, Avatar, Connected, Connection, Effort, Found, Message, Model, Provider, SignIn, StreamEvent, Usage } from "../server/src/contract.ts";
+import type { About, Agent, AgentWithLatest, Avatar, Connected, Connection, Effort, Found, Message, Model, Plan, Provider, SignIn, StreamEvent, Usage } from "../server/src/contract.ts";
 import { ApiError, behind, type Behind } from "./api.ts";
 
 type State = {
@@ -184,8 +184,8 @@ export function createStore<Picked>(platform: Platform<Picked>) {
   /**
    * Calls `listener` with the agents each time the computer has just said how
    * they are: with every event of its stream about an agent or its messages,
-   * and when the app catches up with it. What the app saved of them doesn't count. Returns a function that
-   * stops it.
+   * and when the app catches up with it. What the app saved of them doesn't
+   * count. Returns a function that stops it.
    */
   function onAgents(listener: (agents: AgentWithLatest[]) => void): () => void {
     told.add(listener);
@@ -224,8 +224,8 @@ export function createStore<Picked>(platform: Platform<Picked>) {
    */
   function apply(event: StreamEvent): void {
     if ("plan" in event) {
-      const { plan } = event;
-      if (state.usage) set({ usage: { ...state.usage, accounts: state.usage.accounts.map((each) => (each.provider === plan.provider ? plan : each)) } });
+      for (const heard of plansHeard) heard.set(event.plan.provider, event.plan);
+      if (state.usage) set({ usage: withPlans(state.usage, new Map([[event.plan.provider, event.plan]])) });
       return;
     }
     if ("deleted" in event) forget(event.deleted);
@@ -452,9 +452,23 @@ export function createStore<Picked>(platform: Platform<Picked>) {
     set({ about: { ...state.about, [agentId]: about } });
   }
 
+  // For each fetch of usage on its way, the plans the stream brought meanwhile, which are newer than what the fetch answers with.
+  const plansHeard = new Set<Map<Provider, Plan>>();
+
+  /** Usage with each of `plans` in the place of its provider's account. */
+  function withPlans(usage: Usage, plans: Map<Provider, Plan>): Usage {
+    return { ...usage, accounts: usage.accounts.map((each) => plans.get(each.provider) ?? each) };
+  }
+
   /** Fetches where the person's plan or API credit goes: what their agents used lately, and what is left of their plan as its provider last said. What the provider says next comes on the event stream. */
   async function loadUsage(): Promise<void> {
-    set({ usage: await request<Usage>("/usage") });
+    const heard = new Map<Provider, Plan>();
+    plansHeard.add(heard);
+    try {
+      set({ usage: withPlans(await request<Usage>("/usage"), heard) });
+    } finally {
+      plansHeard.delete(heard);
+    }
   }
 
   /** Fetches the apps the person's agents can use as them, and which are connected. */

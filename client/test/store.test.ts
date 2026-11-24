@@ -1,6 +1,6 @@
 import { test, type TestContext } from "node:test";
 import assert from "node:assert/strict";
-import { CONTRACT_HEADER, CONTRACT_VERSION, KEEPALIVE_MS, PAGE, type AgentWithLatest, type Connected, type Message, type StreamEvent } from "../../server/src/contract.ts";
+import { CONTRACT_HEADER, CONTRACT_VERSION, KEEPALIVE_MS, PAGE, type AgentWithLatest, type Connected, type Message, type StreamEvent, type Usage } from "../../server/src/contract.ts";
 import { ApiError } from "../api.ts";
 import { createStore } from "../store.ts";
 
@@ -239,12 +239,21 @@ test("a provider's plan from the stream takes its place in the usage the app has
   await settle();
   assert.equal(store.useUsage(), null);
 
-  const codex = { provider: "codex" as const, apiKey: true, limits: [] };
-  answers["GET /usage"] = () => ({ used: [], days: [], accounts: [{ provider: "claude", apiKey: false, limits: [] }, codex] });
-  await store.loadUsage();
+  // A plan the stream brings while usage is on its way is newer than what the computer answers with.
+  const codex = { provider: "codex" as const, apiKey: false, limits: [] };
+  let answer!: (usage: Usage) => void;
+  answers["GET /usage"] = () => new Promise((resolve) => (answer = resolve));
+  const loading = store.loadUsage();
+  await settle();
   events.say({ plan: { provider: "claude", apiKey: false, limits: [weekly] } });
   await settle();
+  answer({ used: [], days: [], accounts: [{ provider: "claude", apiKey: false, limits: [] }, codex] });
+  await loading;
   assert.deepEqual(store.useUsage()?.accounts, [{ provider: "claude", apiKey: false, limits: [weekly] }, codex]);
+
+  events.say({ plan: { provider: "codex", apiKey: true, limits: [] } });
+  await settle();
+  assert.deepEqual(store.useUsage()?.accounts, [{ provider: "claude", apiKey: false, limits: [weekly] }, { provider: "codex", apiKey: true, limits: [] }]);
 
   // What a newer computer might send, which this app reads nothing of, and the stream goes on.
   events.write(`event: news\ndata: ${JSON.stringify({ news: "something new" })}\n\n`);

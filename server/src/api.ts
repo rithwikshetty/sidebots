@@ -330,7 +330,7 @@ export function createApi(store: Store, queue: Queue, connections: Connections, 
    * it says reaches the person's devices on the event stream.
    */
   app.get("/usage", (c) => {
-    void queue.askLimits(c.var.person.id);
+    queue.askLimits(c.var.person.id);
     return c.json(store.usage(c.var.person.id));
   });
 
