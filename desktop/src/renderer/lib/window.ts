@@ -3,6 +3,7 @@
 // and the keys the system's shortcuts are made with.
 
 import { useSyncExternalStore, type KeyboardEvent as ReactKeyboardEvent } from "react";
+import { follow } from "./motion.ts";
 
 export const mac = window.desktop.platform === "darwin";
 
@@ -46,10 +47,7 @@ export function useFullScreen(): boolean {
 // How often the window looks at what day it is. A timer set for midnight would run late after the computer slept.
 const DAY_CHECK_MS = 60_000;
 
-function onDayCheck(listener: () => void): () => void {
-  const timer = setInterval(listener, DAY_CHECK_MS);
-  return () => clearInterval(timer);
-}
+const onDayCheck = (listener: () => void) => follow(DAY_CHECK_MS, listener);
 
 /** When today began on the computer's clock, kept up as the day changes, for a time told by it, as "Yesterday" is. */
 export function useToday(): number {

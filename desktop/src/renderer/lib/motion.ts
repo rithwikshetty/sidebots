@@ -26,6 +26,17 @@ function pace(ms: number) {
 const paces = new Map<number, ReturnType<typeof pace>>();
 const REST = () => () => {};
 
+function paceOf(ms: number) {
+  let followed = paces.get(ms);
+  if (!followed) paces.set(ms, (followed = pace(ms)));
+  return followed;
+}
+
+/** Calls `step` every `ms`, on the one timer everything on that pace follows. Returns a function that stops it. */
+export function follow(ms: number, step: () => void): () => void {
+  return paceOf(ms).follow(step);
+}
+
 /**
  * A count that goes up by one every `ms`, for a drawing that steps through
  * its frames or a line that changes. Everything on one pace follows one
@@ -33,7 +44,6 @@ const REST = () => () => {};
  * follows no timer, and draws again for none of its beats.
  */
 export function useBeat(ms: number, running = true): number {
-  let followed = paces.get(ms);
-  if (!followed) paces.set(ms, (followed = pace(ms)));
+  const followed = paceOf(ms);
   return useSyncExternalStore(running ? followed.follow : REST, followed.beat);
 }
