@@ -224,8 +224,7 @@ export function createStore<Picked>(platform: Platform<Picked>) {
    */
   function apply(event: StreamEvent): void {
     if ("plan" in event) {
-      // A plan that waited on its way, as behind a catch-up, may name a limit that has reset since, which the computer leaves out by now.
-      const plan = { ...event.plan, limits: event.plan.limits.filter((limit) => limit.resets_at === null || limit.resets_at > Date.now()) };
+      const { plan } = event;
       for (const heard of plansHeard) heard.set(plan.provider, plan);
       if (state.usage) set({ usage: withPlans(state.usage, new Map([[plan.provider, plan]])) });
       return;
@@ -457,9 +456,14 @@ export function createStore<Picked>(platform: Platform<Picked>) {
   // For each fetch of usage on its way, the plans the stream brought meanwhile, which are newer than what the fetch answers with.
   const plansHeard = new Set<Map<Provider, Plan>>();
 
-  /** Usage with each of `plans` in the place of its provider's account. */
+  /**
+   * Usage with each of `plans` in the place of its provider's account. A plan
+   * that waited, on its way or for a fetch, may name a limit that has reset
+   * since, which is left out, as the computer leaves it out by now.
+   */
   function withPlans(usage: Usage, plans: Map<Provider, Plan>): Usage {
-    return { ...usage, accounts: usage.accounts.map((each) => plans.get(each.provider) ?? each) };
+    const current = (plan: Plan) => ({ ...plan, limits: plan.limits.filter((limit) => limit.resets_at === null || limit.resets_at > Date.now()) });
+    return { ...usage, accounts: usage.accounts.map((each) => (plans.has(each.provider) ? current(plans.get(each.provider)!) : each)) };
   }
 
   /** Fetches where the person's plan or API credit goes: what their agents used lately, and what is left of their plan as its provider last said. What the provider says next comes on the event stream. */

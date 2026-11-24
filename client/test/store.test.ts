@@ -255,9 +255,17 @@ test("a provider's plan from the stream takes its place in the usage the app has
   await settle();
   assert.deepEqual(store.useUsage()?.accounts, [{ provider: "claude", apiKey: false, limits: [weekly] }, { provider: "codex", apiKey: true, limits: [] }]);
 
-  // A plan that comes late may name a limit that has reset since, which is left out, as the computer leaves it out.
-  tick(5);
+  // A plan that waits for a fetch may name a limit that resets meanwhile, which is left out, as the computer leaves it out.
   const reset = { name: "5-hour limit", used: 1, resets_at: 4, at: 1 };
+  const refetched = store.loadUsage();
+  await settle();
+  events.say({ plan: { provider: "claude", apiKey: false, limits: [reset, weekly] } });
+  await settle();
+  tick(5);
+  answer({ used: [], days: [], accounts: [{ provider: "claude", apiKey: false, limits: [weekly] }, codex] });
+  await refetched;
+  assert.deepEqual(store.useUsage()?.accounts[0], { provider: "claude", apiKey: false, limits: [weekly] });
+  // So is one in a plan that comes late.
   events.say({ plan: { provider: "claude", apiKey: false, limits: [reset, weekly] } });
   await settle();
   assert.deepEqual(store.useUsage()?.accounts[0], { provider: "claude", apiKey: false, limits: [weekly] });
