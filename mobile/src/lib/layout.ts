@@ -7,8 +7,9 @@
 // there moves aside for. The root layout works all of it out once, and every
 // screen reads it.
 
-import { createContext, useContext, useEffect, useMemo, useRef, useState } from "react";
+import { createContext, useContext, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { AppState, useWindowDimensions } from "react-native";
+import { follow } from "./motion";
 
 /** The narrowest window that splits, which every iPad's whole screen is. */
 const SPLIT_MIN_WIDTH = 700;
@@ -41,6 +42,16 @@ export function useAppActive(): boolean {
     return () => subscription.remove();
   }, []);
   return active;
+}
+
+// How often the app looks at what day it is. A timer set for midnight would run late after the phone slept.
+const DAY_CHECK_MS = 60_000;
+
+const onDayCheck = (listener: () => void) => follow(DAY_CHECK_MS, listener);
+
+/** When today began on the phone's clock, kept up as the day changes, for a time told by it, as "Yesterday" is. */
+export function useToday(): number {
+  return useSyncExternalStore(onDayCheck, () => new Date().setHours(0, 0, 0, 0));
 }
 
 /**

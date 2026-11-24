@@ -27,7 +27,7 @@ import { problem } from "@/lib/alerts";
 import { attachment } from "@/lib/api";
 import { pick, type Picked, type PickSource } from "@/lib/files";
 import { haptics } from "@/lib/haptics";
-import { useAppActive, useReadingMargin, useSplit } from "@/lib/layout";
+import { useAppActive, useReadingMargin, useSplit, useToday } from "@/lib/layout";
 import { useWorkingLine } from "@/lib/lines";
 import { HIDE, MOVE, SHOW, arrive } from "@/lib/motion";
 import { askForPush, showChatOnScreen } from "@/lib/push";
@@ -62,6 +62,7 @@ function ChatWith({ agent }: { agent: AgentWithLatest }) {
   const split = useSplit();
   const margin = useReadingMargin();
   const avatarState = avatarStateOf(agent);
+  const today = useToday();
   const messages = useMessages(agent.id);
   // The agent this one asked something and hasn't heard back from.
   const waitingOn = useAgent(agent.waiting_on ?? "");
@@ -249,7 +250,7 @@ function ChatWith({ agent }: { agent: AgentWithLatest }) {
           return (
             <Row message={item} openedAt={openedAt}>
               {!older || !sameDay(older.created_at, item.created_at) ? (
-                <Text style={[styles.day, { color: theme.ink2 }]}>{dayLabel(item.created_at)}</Text>
+                <Text style={[styles.day, { color: theme.ink2 }]}>{dayLabel(item.created_at, today)}</Text>
               ) : null}
               {standing ? (
                 <Exchange
