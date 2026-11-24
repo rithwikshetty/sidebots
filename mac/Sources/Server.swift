@@ -20,7 +20,7 @@ struct ServerStatus: Decodable {
   var running: Bool
   /// The address phones reach this computer at, once the relay has given it one.
   let address: String?
-  /// Whether phones reach the server at its address. Nil until it has one.
+  /// Whether phones reach the server at its address, as the app last found there. The command leaves it out, and it is nil until the app has looked.
   var reachable: Bool?
   /// Whether any agent has a turn queued or running.
   let working: Bool
@@ -203,7 +203,10 @@ enum SignIn {
   /// Reads the server's state from its `status` command.
   func readStatus() async {
     let saves = countingSaves
-    status = try? Self.decode(await command(["status", "--json"]))
+    var read: ServerStatus? = try? Self.decode(await command(["status", "--json"]))
+    // What the app last found at the address holds while the address does.
+    if read?.address == status?.address { read?.reachable = status?.reachable }
+    status = read
     failed = status == nil
     // What the server said while it was saving the switch, or since before it last did, may be from before it saved.
     if let status, !savingCounting, saves == countingSaves { counting = status.counting }
@@ -220,7 +223,7 @@ enum SignIn {
     status?.running = await Self.answers("http://127.0.0.1:\(Self.port)")
   }
 
-  /// Looks whether phones reach the server at its address, by asking the server there. The address leads to the port, so only a server that runs is asked. When nothing answers there the server's state is read, since the relay may have given it another address.
+  /// Looks whether phones reach the server at its address, by asking the server there, which is the only place the app asks. The address leads to the port, so only a server that runs is asked. When nothing answers there the server's state is read, since the relay may have given it another address.
   func lookAtAddress() async {
     guard let status, let address = status.address else { return }
     if !status.running {
@@ -228,6 +231,7 @@ enum SignIn {
     } else if await Self.answers("https://\(address)") {
       self.status?.reachable = true
     } else {
+      self.status?.reachable = false
       await readStatus()
     }
   }
