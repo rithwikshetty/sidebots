@@ -1,6 +1,7 @@
 // The packaged app against the scripted server, through the fixtures: it
-// pairs itself, gets ready and lists the seeded agents, and the fixtures'
-// helpers act on it.
+// pairs itself, gets ready and lists the seeded agents, the fixtures'
+// helpers act on it, and the computer's own pointer can't end a drag a test
+// is making (unseen.ts).
 
 import { expect, test } from "./fixtures.ts";
 
@@ -23,6 +24,21 @@ test.describe("against the seeded world", () => {
     expect(await page.evaluate(() => [innerWidth, innerHeight])).toEqual([760, 520]);
     const again = await restartApp();
     await expect(again.page.getByText("Atlas", { exact: true })).toBeVisible();
+  });
+
+  test("a move with no button down, as the computer's own pointer makes over the window, doesn't end a drag the test is making", async ({ page }) => {
+    const pointer = await page.context().newCDPSession(page);
+    const edge = page.getByRole("separator", { name: "Sidebar width" });
+    const at = (await edge.boundingBox())!;
+    const [x, y] = [at.x + at.width / 2, at.y + at.height / 2];
+    await page.mouse.move(x, y);
+    await page.mouse.down();
+    await page.mouse.move(x + 30, y, { steps: 4 });
+    await expect(edge).toHaveAttribute("aria-valuenow", "310");
+    await pointer.send("Input.dispatchMouseEvent", { type: "mouseMoved", x: 40, y: 300, button: "none", buttons: 0 });
+    await page.mouse.move(x + 60, y, { steps: 4 });
+    await page.mouse.up();
+    await expect(edge).toHaveAttribute("aria-valuenow", "340");
   });
 
   test("a sign-in the app starts is recorded, not opened, and finishSignIn brings it back", async ({ page, server, mainCalls, finishSignIn }) => {
