@@ -4,24 +4,29 @@ import type { ReactNode, RefObject } from "react";
 import { cn } from "../lib/cn.ts";
 import { IconButton } from "./Button.tsx";
 
-/** What dims the window behind a dialog, and how a dialog's card rises into place and back. Shared with the confirm dialog. A card keeps a top bar's height clear above and below it, so it never sits under the system's own buttons. */
+/** What dims the window behind a dialog, and how a dialog's card rises into place and back. Shared with the confirm dialog. */
 export const BACKDROP = "fixed inset-0 z-40 bg-scrim transition-opacity duration-200 ease-out data-ending-style:opacity-0 data-starting-style:opacity-0";
 export const CARD =
-  "fixed top-1/2 left-1/2 z-40 flex max-h-[calc(100vh-104px)] max-w-[calc(100vw-48px)] -translate-x-1/2 -translate-y-1/2 flex-col rounded-xl bg-raised text-ink shadow-dialog outline-none transition-[opacity,scale] duration-200 ease-out data-ending-style:scale-[0.97] data-ending-style:opacity-0 data-starting-style:scale-[0.97] data-starting-style:opacity-0";
+  "row-start-2 flex max-h-full max-w-full flex-col rounded-xl bg-raised text-ink shadow-dialog outline-none transition-[opacity,scale] duration-200 ease-out data-ending-style:scale-[0.97] data-ending-style:opacity-0 data-starting-style:scale-[0.97] data-starting-style:opacity-0";
+/** A card sits in the middle of the window. In a window too small for it, it shrinks to fit, with a top bar's height clear above it, so it never sits under the system's own buttons, and a margin at the window's other edges. */
+export const VIEWPORT = "fixed inset-0 z-40 grid grid-cols-[minmax(0,1fr)] grid-rows-[minmax(52px,1fr)_minmax(0,auto)_minmax(24px,1fr)] justify-items-center px-6";
+/** How wide a card is, by what it holds: a question and its two buttons, a short form, or a list of sections with the open one beside it. */
+export const WIDTH = { question: "w-[320px]", form: "w-[400px]", sections: "w-[880px]" };
 
 /**
  * A card over the window that holds the person's attention until they close
  * it, with Esc, a click outside, or a button inside. Focus stays inside it
  * while it is open and goes back where it was once it closes. `initialFocus`
- * is what takes focus as it opens, when that isn't its first control. The
- * card's look and size are `className`'s, and `label` names it when it has
- * no `DialogHeader`.
+ * is what takes focus as it opens, when that isn't its first control. `width`
+ * is how wide the card is, by what it holds, `className` is the rest of its
+ * look, and `label` names it when it has no `DialogHeader`.
  */
 export function Dialog({
   open,
   onOpenChange,
   initialFocus,
   label,
+  width = "form",
   className,
   testId,
   children,
@@ -30,6 +35,7 @@ export function Dialog({
   onOpenChange: (open: boolean) => void;
   initialFocus?: RefObject<HTMLElement | null>;
   label?: string;
+  width?: keyof typeof WIDTH;
   className?: string;
   testId?: string;
   children: ReactNode;
@@ -38,9 +44,11 @@ export function Dialog({
     <Base.Root open={open} onOpenChange={(next) => onOpenChange(next)}>
       <Base.Portal>
         <Base.Backdrop data-floating className={BACKDROP} />
-        <Base.Popup data-floating data-testid={testId} aria-label={label} initialFocus={initialFocus} className={cn(CARD, "w-[440px]", className)}>
-          {children}
-        </Base.Popup>
+        <Base.Viewport className={VIEWPORT}>
+          <Base.Popup data-floating data-testid={testId} aria-label={label} initialFocus={initialFocus} className={cn(CARD, WIDTH[width], className)}>
+            {children}
+          </Base.Popup>
+        </Base.Viewport>
       </Base.Portal>
     </Base.Root>
   );

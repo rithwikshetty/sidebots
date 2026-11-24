@@ -7,6 +7,7 @@
 
 import type { Avatar, Found } from "../../server/src/contract.ts";
 import { LINES } from "../../client/lines.ts";
+import { TOP_BAR } from "../src/bridge.ts";
 import { expect, test, type TestServer } from "./fixtures.ts";
 import { agentNamed, agentsOf, avatarRowOffset, avatarShown, changeOnPhone, chooseMenu, faintIn, listedIds, onDatabase, rowOf, settled } from "./shell.ts";
 import type { Page } from "@playwright/test";
@@ -516,6 +517,17 @@ test.describe("a new agent", () => {
     await expect(page.getByTestId("chat-name")).toHaveText("Cody");
     expect((await agentNamed(server, "Cleo")).provider).toBe("claude");
     expect((await agentNamed(server, "Cody")).provider).toBe("codex");
+  });
+
+  test("New agent fits the smallest window under the top bar, with nothing to scroll", async ({ page, setWindowSize }) => {
+    await setWindowSize(760, 520);
+    await page.getByTestId("new-agent-button").click();
+    await expect(page.getByRole("radiogroup", { name: "Provider" })).toBeVisible();
+    const box = (await page.getByTestId("new-agent").boundingBox())!;
+    expect(box.y).toBeGreaterThanOrEqual(TOP_BAR);
+    expect(box.y + box.height).toBeLessThanOrEqual(520);
+    const body = page.getByRole("radiogroup", { name: "Avatar" }).locator("xpath=..");
+    expect(await body.evaluate((element) => element.scrollHeight - element.clientHeight)).toBe(0);
   });
 
   test("with one provider set up, there is no choice of provider", async ({ page, server }) => {
