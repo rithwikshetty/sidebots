@@ -44,8 +44,9 @@ async function dismiss(read: (notification: Notifications.Notification) => boole
 /**
  * Takes off the phone the notifications of the agents that, as the computer
  * said they stand, have nothing left unread, and those of agents that are
- * gone. Only those that came before `asked`, the time the app asked: one
- * that came later may be of something newer than the answer.
+ * gone. Only those that came before `asked`, the time the app asked, in
+ * seconds as iOS dates a notification: one that came later may be of
+ * something newer than the answer.
  */
 function follow(agents: AgentWithLatest[], asked = Infinity): Promise<void> {
   const unread = new Set(agents.filter((agent) => agent.unread > 0).map((agent) => agent.id));
@@ -58,7 +59,7 @@ function follow(agents: AgentWithLatest[], asked = Infinity): Promise<void> {
 // iOS wakes the app for that push, in the background and unseen, and the app asks the computer how the agents stand.
 TaskManager.defineTask(READ_ELSEWHERE, async () => {
   if (!isPaired()) return;
-  const asked = Date.now();
+  const asked = Date.now() / 1000;
   const agents = await request<AgentWithLatest[]>("/agents").catch(() => null);
   if (agents) await follow(agents, asked).catch(() => undefined);
 });
