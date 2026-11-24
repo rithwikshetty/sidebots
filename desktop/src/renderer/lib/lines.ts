@@ -1,12 +1,9 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { CHANGE_MS, LINES } from "@client/lines.ts";
+import { useBeat } from "./motion.ts";
 
-/** A playful line to show while an agent works. It changes every few seconds. */
-export function useWorkingLine(): string {
-  const [index, setIndex] = useState(() => Math.floor(Math.random() * LINES.length));
-  useEffect(() => {
-    const timer = setInterval(() => setIndex((current) => (current + 1) % LINES.length), CHANGE_MS);
-    return () => clearInterval(timer);
-  }, []);
-  return LINES[index];
+/** A playful line to show while an agent works. It changes every few seconds while it is `shown`. */
+export function useWorkingLine(shown = true): string {
+  const [first] = useState(() => Math.floor(Math.random() * LINES.length));
+  return LINES[(first + useBeat(CHANGE_MS, shown)) % LINES.length];
 }

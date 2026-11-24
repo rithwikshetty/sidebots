@@ -1,3 +1,5 @@
+import { useSyncExternalStore } from "react";
+import { AppState } from "react-native";
 import { Easing, FadeIn, FadeOut, LinearTransition, ReduceMotion, ZoomIn, ZoomOut, withTiming, type EntryExitAnimationFunction } from "react-native-reanimated";
 
 /**
@@ -21,6 +23,66 @@ export const POP_OUT = ZoomOut.duration(HIDE_MS);
 
 /** The timing for a value that eases to where it should be, such as a selection sliding to its choice. */
 export const EASE = { duration: SHOW_MS, easing: Easing.out(Easing.cubic), reduceMotion: ReduceMotion.System } as const;
+
+/** A pace: one timer that counts its beats and tells everything following it of each one. It runs while something follows it, and rests while the app is in the background. */
+function pace(ms: number) {
+  const followers = new Set<() => void>();
+  let beat = 0;
+  let timer: ReturnType<typeof setInterval> | undefined;
+  const keepTime = () => {
+    const due = followers.size > 0 && AppState.currentState !== "background";
+    if (due && timer === undefined) {
+      timer = setInterval(() => {
+        beat += 1;
+        followers.forEach((step) => step());
+      }, ms);
+    } else if (!due && timer !== undefined) {
+      clearInterval(timer);
+      timer = undefined;
+    }
+  };
+  AppState.addEventListener("change", (state) => {
+    keepTime();
+    // The timer rested in the background, so what follows it looks again as the app comes back.
+    if (state === "active") followers.forEach((step) => step());
+  });
+  return {
+    follow(step: () => void) {
+      followers.add(step);
+      keepTime();
+      return () => {
+        followers.delete(step);
+        keepTime();
+      };
+    },
+    beat: () => beat,
+  };
+}
+
+const paces = new Map<number, ReturnType<typeof pace>>();
+const REST = () => () => {};
+
+function paceOf(ms: number) {
+  let followed = paces.get(ms);
+  if (!followed) paces.set(ms, (followed = pace(ms)));
+  return followed;
+}
+
+/** Calls `step` every `ms`, on the one timer everything on that pace follows, and as the app comes back to the front. Returns a function that stops it. */
+export function follow(ms: number, step: () => void): () => void {
+  return paceOf(ms).follow(step);
+}
+
+/**
+ * A count that goes up by one every `ms`, for a drawing that steps through
+ * its frames or a line that changes. Everything on one pace follows one
+ * timer, so it all steps in the same render. The count holds still while
+ * `running` is false, and while the app is in the background.
+ */
+export function useBeat(ms: number, running = true): number {
+  const followed = paceOf(ms);
+  return useSyncExternalStore(running ? followed.follow : REST, followed.beat);
+}
 
 const ARRIVE = { duration: 320, easing: Easing.out(Easing.cubic), reduceMotion: ReduceMotion.System } as const;
 

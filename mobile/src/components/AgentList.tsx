@@ -18,7 +18,7 @@ import { UPDATE, type Behind } from "@/lib/api";
 import { useWorkingLine } from "@/lib/lines";
 import { EASE, HIDE, MOVE, POP_IN, POP_OUT, SHOW } from "@/lib/motion";
 import { changeAgent, findMessages, useAgent, useAgents, useAvatars, useBehind, useOnline, type AgentChanges } from "@/lib/state";
-import { useSplit, useWindowControls } from "@/lib/layout";
+import { useSplit, useToday, useWindowControls } from "@/lib/layout";
 import { openChat, useChatOnScreen } from "@/lib/push";
 import { useTheme } from "@/lib/theme";
 import { ScrollWaitsForMenuSwipe } from "../../modules/side-menu-swipe/src";
@@ -308,11 +308,12 @@ function RowAction({ icon: Icon, label, color, onPress }: { icon: ComponentType<
 function AgentRow({ agent, found, search, online, selected = false, onPress }: { agent: AgentWithLatest; found?: Found; search: string; online: boolean; selected?: boolean; onPress: () => void }) {
   const theme = useTheme();
   const avatarState = found ? "resting" : avatarStateOf(agent);
-  const line = useWorkingLine();
   const working = online && avatarState === "working";
+  const line = useWorkingLine(working);
   // The agent it asked something and hasn't heard back from.
   const waitingOn = useAgent(agent.waiting_on ?? "");
   const unread = !found && agent.unread > 0;
+  const today = useToday();
   return (
     <Pressable
       onPress={onPress}
@@ -331,7 +332,7 @@ function AgentRow({ agent, found, search, online, selected = false, onPress }: {
               </Animated.View>
             ) : null}
           </View>
-          <Text style={[styles.time, { color: theme.ink2 }]}>{listTime((found ?? agent.latest)?.created_at ?? agent.created_at)}</Text>
+          <Text style={[styles.time, { color: theme.ink2 }]}>{listTime((found ?? agent.latest)?.created_at ?? agent.created_at, today)}</Text>
         </View>
         <View style={styles.bottom}>
           {/* The line crossfades as a new message comes or the working line changes. */}

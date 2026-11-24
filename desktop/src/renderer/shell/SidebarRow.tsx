@@ -7,6 +7,7 @@ import { changeOrSay, confirmDelete } from "../lib/alerts.ts";
 import { cn } from "../lib/cn.ts";
 import { useWorkingLine } from "../lib/lines.ts";
 import { useAgent, useChatColor } from "../lib/store.ts";
+import { useToday } from "../lib/window.ts";
 import { Avatar } from "../ui/Avatar.tsx";
 import { IconButton } from "../ui/Button.tsx";
 import { ContextMenu, Menu, type MenuEntry } from "../ui/Menu.tsx";
@@ -64,11 +65,12 @@ export function agentActions(agent: AgentWithLatest): MenuEntry[] {
  */
 export function RowBody({ agent, online, found, search = "" }: { agent: AgentWithLatest; online: boolean; found?: Found; search?: string }) {
   const state = found ? "resting" : avatarStateOf(agent);
-  const line = useWorkingLine();
   const working = online && state === "working";
+  const line = useWorkingLine(working);
   // The agent it asked something and hasn't heard back from.
   const waitingOn = useAgent(agent.waiting_on ?? "");
   const unread = !found && agent.unread > 0;
+  const today = useToday();
   const said = found ? foundLine(found, search) : working ? line : waitingOn && online ? `Waiting on ${waitingOn.name}` : agent.latest ? preview(agent.latest) : "Say hello";
   return (
     <>
@@ -80,7 +82,7 @@ export function RowBody({ agent, online, found, search = "" }: { agent: AgentWit
             {agent.muted ? <BellOff role="img" aria-label="Muted" className="size-3 shrink-0 text-ink2" strokeWidth={2.25} /> : null}
           </span>
           <Time className="transition-opacity duration-150 group-has-[:focus-visible]/row:opacity-0 group-hover/row:opacity-0 group-has-[[data-popup-open]]/row:opacity-0">
-            {listTime((found ?? agent.latest)?.created_at ?? agent.created_at)}
+            {listTime((found ?? agent.latest)?.created_at ?? agent.created_at, today)}
           </Time>
         </span>
         <span className="flex items-center gap-2">
