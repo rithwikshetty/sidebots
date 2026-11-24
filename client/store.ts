@@ -3,6 +3,7 @@
 // instantly and can be read offline. Each app makes one store, and gives it
 // the few things a phone and a desktop do differently.
 
+import { KEEPALIVE_MS } from "../server/src/contract.ts";
 import type { About, Agent, AgentWithLatest, Avatar, Connected, Connection, Effort, Found, Message, Model, Provider, SignIn, StreamEvent, Usage } from "../server/src/contract.ts";
 import { ApiError, behind, type Behind } from "./api.ts";
 
@@ -38,7 +39,7 @@ export type Platform<Picked> = {
   events(signal: AbortSignal): Promise<Pick<Response, "status" | "ok" | "headers" | "body">>;
   /** Where the store's copy is saved, as text under a key. */
   storage: { getItem(key: string): string | null; setItem(key: string, value: string): void };
-  /** Calls `listener` each time the app comes back to the front, when the stream is opened again. Returns a function that stops it. */
+  /** Calls `listener` each time the app comes back to the front, when the store looks whether the stream is still open. Returns a function that stops it. */
   onFront(listener: () => void): () => void;
   /** Adds a picked file to the form a message is sent as, under `files`. */
   attach(form: FormData, file: Picked): void;
@@ -55,6 +56,10 @@ export type Platform<Picked> = {
 // The number changes when the shape of what is saved does.
 const CACHE_KEY = "cache-6";
 const SAVE_DELAY_MS = 300;
+// As many of a chat's newest messages as are saved. The ones before them page back from the computer.
+const SAVED_MESSAGES = 50;
+// The computer says something on the stream within every keepalive, and a slow connection may bring it late. A stream quiet for longer than this has dropped.
+const QUIET_MS = KEEPALIVE_MS + 10_000;
 const NO_MESSAGES: Message[] = [];
 const EMPTY = { agents: [], messages: {}, avatars: [], about: {}, usage: null, connections: null, pending: {} };
 
@@ -80,7 +85,8 @@ export function createStore<Picked>(platform: Platform<Picked>) {
     if (saveTimer) clearTimeout(saveTimer);
     saveTimer = setTimeout(() => {
       const { online: _online, behind: _behind, ...rest } = state;
-      storage.setItem(CACHE_KEY, JSON.stringify(rest));
+      const messages = Object.fromEntries(Object.entries(rest.messages).map(([agentId, chat]) => [agentId, chat.slice(-SAVED_MESSAGES)]));
+      storage.setItem(CACHE_KEY, JSON.stringify({ ...rest, messages }));
     }, SAVE_DELAY_MS);
   }
 
@@ -180,8 +186,13 @@ export function createStore<Picked>(platform: Platform<Picked>) {
     told.forEach((listener) => listener(state.agents));
   }
 
-  /** Lets go of everything the app kept of an agent that is gone. */
+  /**
+   * Lets go of everything the app kept of an agent that is gone. What the
+   * other agents' chats held of it goes on the computer too, which the stream
+   * doesn't spell out, so each chat is fetched again when it is next opened.
+   */
   function forget(agentId: string): void {
+    if (live) live.current = new Set();
     const { [agentId]: _messages, ...messages } = state.messages;
     const { [agentId]: _about, ...about } = state.about;
     const { [agentId]: _pending, ...pending } = state.pending;
@@ -190,7 +201,9 @@ export function createStore<Picked>(platform: Platform<Picked>) {
 
   /**
    * Fetches the newest page of a chat, which the app holds from here on, an
-   * empty one too, so what the event stream says of it lands in it. The page
+   * empty one too, so what the event stream says of it lands in it. A chat
+   * fetched while the stream is open is as the computer has it for as long as
+   * the stream stays open, and isn't fetched again. The page
    * joins onto the older messages already saved when they run up to it. When
    * the chat has moved on by more than a page, the page stands alone and the
    * chat pages back from there. A message that reached the chat while the page
@@ -200,9 +213,12 @@ export function createStore<Picked>(platform: Platform<Picked>) {
    * closed when the page was fetched before it did.
    */
   async function loadMessages(agentId: string): Promise<void> {
+    const current = live?.current;
+    if (current?.has(agentId)) return;
     const before = state.messages[agentId] ?? [];
     if (!state.messages[agentId]) set({ messages: { ...state.messages, [agentId]: before } });
     const fetched = await request<Message[]>(`/agents/${agentId}/messages`);
+    current?.add(agentId);
     if (fetched.length === 0) return;
     const known = state.messages[agentId] ?? NO_MESSAGES;
     const closed = (message: Message) => known.find((had) => had.id === message.id && had.ask && had.ask !== "waiting");
@@ -214,14 +230,28 @@ export function createStore<Picked>(platform: Platform<Picked>) {
     set({ messages: { ...state.messages, [agentId]: [...known.slice(0, joins), ...page, ...since] } });
   }
 
-  /** Fetches the page before the oldest message the app has of a chat. False once the chat's beginning is reached. */
-  async function loadOlder(agentId: string): Promise<boolean> {
+  const paging = new Map<string, Promise<boolean>>();
+
+  /**
+   * Fetches the page before the oldest message the app has of a chat. False
+   * once the chat's beginning is reached. Whoever asks while the page is on
+   * its way waits for the same one, and whoever asks once it has come, as a
+   * screen does on seeing it, fetches the one before it.
+   */
+  function loadOlder(agentId: string): Promise<boolean> {
+    const running = paging.get(agentId);
+    if (running) return running;
     const oldest = state.messages[agentId]?.[0];
-    if (!oldest) return false;
-    const page = await request<Message[]>(`/agents/${agentId}/messages?before=${oldest.id}`);
-    const known = state.messages[agentId] ?? NO_MESSAGES;
-    if (page.length && known[0]?.id === oldest.id) set({ messages: { ...state.messages, [agentId]: [...page, ...known] } });
-    return page.length > 0;
+    if (!oldest) return Promise.resolve(false);
+    const done = request<Message[]>(`/agents/${agentId}/messages?before=${oldest.id}`)
+      .finally(() => paging.delete(agentId))
+      .then((page) => {
+        const known = state.messages[agentId] ?? NO_MESSAGES;
+        if (page.length && known[0]?.id === oldest.id) set({ messages: { ...state.messages, [agentId]: [...page, ...known] } });
+        return page.length > 0;
+      });
+    paging.set(agentId, done);
+    return done;
   }
 
   async function refresh(): Promise<void> {
@@ -412,18 +442,31 @@ export function createStore<Picked>(platform: Platform<Picked>) {
   }
 
   let syncing: (() => void) | null = null;
+  /**
+   * The event stream while it is open: when the computer last said anything
+   * on it, and the chats whose newest page was fetched since it opened. The
+   * stream brings what is said in those from then on.
+   */
+  let live: { heard: number; current: Set<string> } | null = null;
 
-  /** Keeps the app's copy current: listens to the server's event stream and reconnects when it drops. */
+  /**
+   * Keeps the app's copy current: listens to the server's event stream, and
+   * opens it again when it drops. The app coming back to the front opens it
+   * again too, unless the computer spoke on it lately, which an open stream
+   * shows.
+   */
   function startSync(): void {
     if (syncing) return;
     const abort = new AbortController();
     const front = platform.onFront(() => {
+      if (live && Date.now() - live.heard < QUIET_MS) return;
       stopSync();
       startSync();
     });
     syncing = () => {
       abort.abort();
       front();
+      live = null;
       syncing = null;
     };
     void listen(abort.signal);
@@ -452,6 +495,7 @@ export function createStore<Picked>(platform: Platform<Picked>) {
           return platform.onRefused();
         }
         if (!response.ok || !response.body) throw new Error(`events answered ${response.status}`);
+        const opened = (live = { heard: Date.now(), current: new Set() });
         await refresh();
         set({ online: true });
         wait = 1000;
@@ -459,6 +503,7 @@ export function createStore<Picked>(platform: Platform<Picked>) {
         const decoder = new TextDecoder();
         let buffer = "";
         for (let chunk = await reader.read(); !chunk.done; chunk = await reader.read()) {
+          opened.heard = Date.now();
           buffer += decoder.decode(chunk.value, { stream: true });
           for (let end = buffer.indexOf("\n\n"); end >= 0; end = buffer.indexOf("\n\n")) {
             const data = buffer.slice(0, end).split("\n").find((line) => line.startsWith("data: {"));
@@ -470,6 +515,7 @@ export function createStore<Picked>(platform: Platform<Picked>) {
         // Falls through to the retry below.
       }
       if (signal.aborted) return;
+      live = null;
       set({ online: false });
       await new Promise((resolve) => setTimeout(resolve, wait));
       wait = Math.min(wait * 2, 15_000);

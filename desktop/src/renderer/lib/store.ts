@@ -32,7 +32,7 @@ const store = createStore<File>({
   request,
   events: (signal) => fetch("/api/events", { headers: { Accept: "text/event-stream" }, signal }),
   storage: localStorage,
-  // The stream is opened again when the window comes back from hidden, as after a Mac's window was closed or the computer slept.
+  // The window comes back to the front when it is shown again from hidden, as after a Mac's window was closed or the computer slept.
   onFront(listener) {
     const shown = () => {
       if (document.visibilityState === "visible") listener();

@@ -5,13 +5,12 @@ import { extname } from "node:path";
 import { Hono } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import { streamSSE } from "hono/streaming";
-import { COLOR, CONNECTIONS, CONTRACT_HEADER, CONTRACT_VERSION, MESSAGE_BYTES, PROVIDERS, effortMoved } from "./contract.ts";
+import { COLOR, CONNECTIONS, CONTRACT_HEADER, CONTRACT_VERSION, KEEPALIVE_MS, MESSAGE_BYTES, PROVIDERS, effortMoved } from "./contract.ts";
 import type { Connection, Effort, Model, Paired, Provider, PushToken, StreamEvent } from "./contract.ts";
 import type { Connections } from "./connections.ts";
 import type { AgentChanges, Device, Person, Store } from "./store.ts";
 import type { Queue } from "./runner.ts";
 
-const KEEPALIVE_MS = 25_000;
 // A token of Apple's as the phone reports it, in hex: 32 bytes for a phone today and 128 for a Live Activity, with room for Apple to lengthen either.
 const DEVICE_TOKEN = /^[0-9a-f]{64,512}$/;
 // An app's bundle identifier, as Apple allows it.
