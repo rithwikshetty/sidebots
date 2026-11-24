@@ -86,7 +86,8 @@ function ChatWith({ agent }: { agent: AgentWithLatest }) {
   // Messages made from here on came in while the chat was open, so they arrive with motion.
   const [openedAt] = useState(() => Date.now() - CLOCK_SLACK_MS);
 
-  const [loading, setLoading] = useState(chat.length === 0 && agent.latest !== null);
+  // The chat lands on a message it was opened at once its newest page has come: a newest page that doesn't join what the phone had saved takes the place of all of it, a run fetched before it too.
+  const [loading, setLoading] = useState(true);
   useEffect(() => {
     loadMessages(agent.id)
       .catch(() => {})
@@ -144,6 +145,9 @@ function ChatWith({ agent }: { agent: AgentWithLatest }) {
     const isIt = (message: Message) => message.id === id;
     setLanding(true);
     void (async () => {
+      // What the chat holds is read a frame on, once a run the last landing let go of has gone from it.
+      await frame();
+      if (!going) return;
       if (!held.current.messages.some(isIt)) {
         if (held.current.chat.some(isIt)) backToNewest(agent.id);
         else {
