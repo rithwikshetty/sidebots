@@ -60,6 +60,10 @@
 //                                              adds an agent, as another device does
 //   POST /__test/outage       { ms? }          every API answer is 503 for that long (0 ends it), and event streams end
 //   POST /__test/drop-events  { ms? }          ends the open event streams, and refuses new ones for that long
+//   POST /__test/hold-requests { match: string | null }
+//                                              holds the API requests whose path and query match `match`, a
+//                                              regular expression, until null lets them all go on; `state`
+//                                              counts them as `requests`, held and answered since let go
 //   POST /__test/contract     { version: "older" | "newer" | number | null }
 //                                              answers with another contract version, or its own again with null
 //   POST /__test/address      { address: string | null }
