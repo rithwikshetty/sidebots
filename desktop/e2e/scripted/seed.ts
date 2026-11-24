@@ -157,7 +157,10 @@ export function seed(store: Store, person: Person, now = Date.now()): Seeded {
   const today = new Date(now);
   /** A time `offset` days from today, at a time of day. */
   const day = (offset: number, hour: number, minute = 0) => new Date(today.getFullYear(), today.getMonth(), today.getDate() + offset, hour, minute).getTime();
-  const ago = (minutes: number) => now - minutes * MINUTE;
+  // The world's last four hours, back to Scout's latest message. Before 4am they are squeezed into the part of today that has passed, so the world has something from today, and a minute of them is shorter.
+  const recentMinute = MINUTE * Math.min(1, (now - day(0, 0)) / (4 * HOUR));
+  /** A time `minutes` before now, in the world's last four hours. */
+  const ago = (minutes: number) => now - minutes * recentMinute;
   const random = numbers(20261121);
   const everyday = [...EVERYDAY];
 
@@ -176,7 +179,8 @@ export function seed(store: Store, person: Person, now = Date.now()): Seeded {
   /** A chat being written, from `start`, a minute or two between messages unless told otherwise. */
   const chat = (agent: Agent, start: number) => {
     let time = start;
-    const next = (gap: number) => (time += gap * MINUTE);
+    let length = MINUTE;
+    const next = (gap: number) => (time += gap * length);
     const add = (run: () => string, gap: number): Ref => {
       const ref: Ref = { id: "" };
       later(next(gap), () => (ref.id = run()));
@@ -188,6 +192,13 @@ export function seed(store: Store, person: Person, now = Date.now()): Seeded {
       /** Moves the chat on to `when`. */
       at(when: number) {
         time = when;
+        length = MINUTE;
+        return talk;
+      },
+      /** Moves the chat on to `minutes` before now, into the world's last four hours, where its minutes are as long as theirs. */
+      ago(minutes: number) {
+        time = ago(minutes);
+        length = recentMinute;
         return talk;
       },
       /** A message of the person's, which the agent read and answered, or which failed. */
@@ -338,7 +349,7 @@ export function seed(store: Store, person: Person, now = Date.now()): Seeded {
 
   // Today's part of the chat ends a little before now, and the person has read it.
   const left = everyday.length;
-  atlasChat.at(ago(left * 14 + 20));
+  atlasChat.ago(left * 14 + 20);
   atlasChat.everyday(left, 8).read(2);
 
   // Ledger: budgets, with two replies the person hasn't read.
@@ -351,8 +362,8 @@ export function seed(store: Store, person: Person, now = Date.now()): Seeded {
   ledgerChat.person("Which of those do we actually use?", {}, 0);
   ledgerChat.agent("Netflix and Spotify every week. The gym app hasn't been opened since August, so that's £9 a month to save.");
   ledgerChat.read(5);
-  ledgerChat.at(ago(140)).agent("Your card statement is in: £1,284 this month, £96 of it takeaways.", {}, 0);
-  ledgerChat.at(ago(35)).agent("Heads up: the car insurance renews on the 3rd at £418, up from £362 last year. Want me to look for a better quote?", {}, 0);
+  ledgerChat.ago(140).agent("Your card statement is in: £1,284 this month, £96 of it takeaways.", {}, 0);
+  ledgerChat.ago(35).agent("Heads up: the car insurance renews on the 3rd at £418, up from £362 last year. Want me to look for a better quote?", {}, 0);
 
   // Scout: muted, with replies the person hasn't read.
   const scoutChat = chat(scout, day(-5, 19, 30));
@@ -360,7 +371,7 @@ export function seed(store: Store, person: Person, now = Date.now()): Seeded {
   scoutChat.agent("Watching. Right now the cheapest return is £142 on TAP, Friday to Monday.");
   scoutChat.at(day(-3, 21, 0)).read(0);
   scoutChat.at(day(-1, 7, 45)).agent("Prices dropped: £118 return on TAP for 5 to 8 December.", {}, 0);
-  scoutChat.at(ago(240)).agent("Still £118. Fares usually rise about three weeks out, so this is a good time to book.", {}, 0);
+  scoutChat.ago(240).agent("Still £118. Fares usually rise about three weeks out, so this is a good time to book.", {}, 0);
 
   // Archive: a few notes, then hidden.
   const archiveChat = chat(archive, day(-6, 20, 15));
@@ -377,7 +388,7 @@ export function seed(store: Store, person: Person, now = Date.now()): Seeded {
   patchChat.person("Nice. Can you also bump the dependencies?");
   patchChat.agent("Done: 14 packages updated, all minor versions. The tests pass.", {}, 8);
   patchChat.read(3);
-  patchChat.at(ago(95)).person("Run the test suite again and deploy to staging", { status: "failed" }, 0);
+  patchChat.ago(95).person("Run the test suite again and deploy to staging", { status: "failed" }, 0);
   patchChat.sidebots("Sidebots couldn't finish this. Codex on your computer is signed out. Sign in to it there.", "failed", 0.3);
 
   // Tidy: a short chat, then the ask that `start` raises.
