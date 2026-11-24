@@ -107,8 +107,7 @@ SIDEBOTS_VERSION=$(plutil -extract CFBundleShortVersionString raw "$app/Contents
   pnpm --dir "$root/desktop" package
 ditto "$root/desktop/out/Sidebots-darwin-arm64/Sidebots.app" "$app/Contents/Helpers/Sidebots.app"
 if [ "${1:-}" = dev ]; then
-  # The window's app shows the dev name and icon in the Dock, and keeps the files' names, which the signing goes by. Opened by itself, as from the Dock, it reaches the dev server too.
-  plutil -replace CFBundleName -string "$name" "$app/Contents/Helpers/Sidebots.app/Contents/Info.plist"
+  # The window's app shows the dev name and icon in the Dock. It keeps its bundle name, which Electron finds its helper apps by. Opened by itself, as from the Dock, it reaches the dev server too.
   plutil -replace CFBundleDisplayName -string "$name" "$app/Contents/Helpers/Sidebots.app/Contents/Info.plist"
   dev_environment "$app/Contents/Helpers/Sidebots.app/Contents/Info.plist"
   cp "$resources/AppIcon.icns" "$app/Contents/Helpers/Sidebots.app/Contents/Resources/electron.icns"
