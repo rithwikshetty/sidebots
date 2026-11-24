@@ -35,42 +35,32 @@ function agentOf(notification: Notifications.Notification): string | null {
   return typeof agentId === "string" ? agentId : null;
 }
 
-/** Takes off the phone the notifications of the agents `read` picks. */
-async function dismiss(read: (agentId: string) => boolean): Promise<void> {
+/** Takes off the phone the notifications `read` picks. */
+async function dismiss(read: (notification: Notifications.Notification) => boolean): Promise<void> {
   const presented = await Notifications.getPresentedNotificationsAsync();
-  await Promise.all(
-    presented
-      .filter((notification) => read(agentOf(notification) ?? ""))
-      .map((notification) => Notifications.dismissNotificationAsync(notification.request.identifier)),
-  );
+  await Promise.all(presented.filter(read).map((notification) => Notifications.dismissNotificationAsync(notification.request.identifier)));
 }
 
-/** What the app's icon counts: the unread messages of the agents that aren't muted. */
-const unreadIn = (agents: AgentWithLatest[]): number => agents.reduce((total, agent) => total + (agent.muted ? 0 : agent.unread), 0);
-
-/** Takes off the phone the notifications of the agents that, as the computer just said they stand, have nothing left unread, and those of agents that are gone. */
-function follow(agents: AgentWithLatest[]): Promise<void> {
+/**
+ * Takes off the phone the notifications of the agents that, as the computer
+ * said they stand, have nothing left unread, and those of agents that are
+ * gone. Only those that came before `asked`, the time the app asked: one
+ * that came later may be of something newer than the answer.
+ */
+function follow(agents: AgentWithLatest[], asked = Infinity): Promise<void> {
   const unread = new Set(agents.filter((agent) => agent.unread > 0).map((agent) => agent.id));
-  return dismiss((agentId) => agentId !== "" && !unread.has(agentId));
+  return dismiss((notification) => {
+    const agentId = agentOf(notification);
+    return agentId !== null && !unread.has(agentId) && notification.date < asked;
+  });
 }
 
-// How many times the app has come to the front. Each time, the computer's stream brings it up to date.
-let fronts = 0;
-AppState.addEventListener("change", (state) => {
-  if (state === "active") fronts += 1;
-});
-
-// iOS wakes the app for that push, in the background and unseen, and the app asks the computer how the agents stand, and sets its icon's count. In front, the app follows the computer's stream already.
+// iOS wakes the app for that push, in the background and unseen, and the app asks the computer how the agents stand.
 TaskManager.defineTask(READ_ELSEWHERE, async () => {
-  while (isPaired() && AppState.currentState !== "active") {
-    const asked = fronts;
-    const agents = await request<AgentWithLatest[]>("/agents").catch(() => null);
-    if (!agents) return;
-    // The app was in front while it asked, so the answer may be older than what the stream told it there: it asks again.
-    if (fronts !== asked) continue;
-    await Promise.all([follow(agents), Notifications.setBadgeCountAsync(unreadIn(agents))]).catch(() => undefined);
-    return;
-  }
+  if (!isPaired()) return;
+  const asked = Date.now();
+  const agents = await request<AgentWithLatest[]>("/agents").catch(() => null);
+  if (agents) await follow(agents, asked).catch(() => undefined);
 });
 
 /**
@@ -147,7 +137,7 @@ export function useChatOnScreen(): string | null {
 /** Marks a chat as the one open on the stack until the returned release runs, and clears its notifications from the phone. */
 export function showChatOnScreen(agentId: string): () => void {
   setChatOnScreen(agentId);
-  void dismiss((notified) => notified === agentId).catch(() => undefined);
+  void dismiss((notification) => agentOf(notification) === agentId).catch(() => undefined);
   return () => {
     if (chatOnScreen === agentId) setChatOnScreen(null);
   };
@@ -162,7 +152,7 @@ export function showChatOnScreen(agentId: string): () => void {
  * chat.
  */
 export function usePush(): void {
-  const unread = unreadIn(useAgents());
+  const unread = useAgents().reduce((total, agent) => total + (agent.muted ? 0 : agent.unread), 0);
   useEffect(() => {
     void Notifications.setBadgeCountAsync(unread).catch(() => undefined);
   }, [unread]);
