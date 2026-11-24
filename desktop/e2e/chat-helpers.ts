@@ -104,6 +104,9 @@ export const box = (locator: Locator): Promise<Box> =>
     return { left, right, top, bottom, width, height };
   });
 
+/** Scrolls the open chat with the wheel until a row is drawn and on screen. */
+export { scrollChatTo } from "./panel-support.ts";
+
 /** A PNG of `width` by `height` in one colour, for a file a person picks. */
 export { png } from "./scripted/files.ts";
 

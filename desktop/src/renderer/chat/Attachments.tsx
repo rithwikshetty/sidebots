@@ -73,8 +73,9 @@ export function Photos({ agentId, paths, end }: { agentId: string; paths: string
  * hasn't loaded waits while Sidebots is out of reach, holding its place, and
  * loads when the server is back; one that has loaded stays as the person left
  * it. A page the server says the window can't have shows as its file card.
+ * `onShown` hears each time the page says it has shown.
  */
-export function PageCard({ agentId, path }: { agentId: string; path: string }) {
+export function PageCard({ agentId, path, onShown }: { agentId: string; path: string; onShown?: () => void }) {
   const title = pageTitle(fileName(path));
   const [measured, setMeasured] = useState(() => measuredHeight(agentId, path));
   const found = useSentFile(agentId, path)?.found;
@@ -101,6 +102,7 @@ export function PageCard({ agentId, path }: { agentId: string; path: string }) {
             onHeight={(height) => {
               setMeasured(height);
               setLoaded(true);
+              onShown?.();
             }}
           />
         ) : (

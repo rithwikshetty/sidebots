@@ -11,22 +11,16 @@ import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import type { Page } from "@playwright/test";
 import { expect, test, type TestServer } from "./fixtures.ts";
-import { agentId, field, messagesOf, mine, openChat, payload, png, said, sendFromApp, timeline, until } from "./chat-helpers.ts";
+import { agentId, field, messagesOf, mine, openChat, payload, png, said, scrollChatTo, sendFromApp, until } from "./chat-helpers.ts";
 
 test.skip(!process.env.CHAT_REVIEW, "CHAT_REVIEW names the folder the pictures go to.");
 const REVIEW = process.env.CHAT_REVIEW!;
 test.use({ world: "seeded" });
 
-/** Scrolls the open chat back with the wheel until `words` are on screen. */
+/** Scrolls the open chat back with the wheel until `words` are in the middle of the screen. */
 async function scrollTo(page: Page, words: string) {
   const target = page.locator("[data-message-id]").filter({ hasText: words }).first();
-  await expect(async () => {
-    if ((await target.count()) === 0) {
-      await timeline(page).hover();
-      await page.mouse.wheel(0, -4_000);
-    }
-    await expect(target).toHaveCount(1, { timeout: 1_000 });
-  }).toPass({ timeout: 30_000 });
+  await scrollChatTo(page, target);
   await target.evaluate((row) => row.scrollIntoView({ block: "center" }));
 }
 
@@ -46,19 +40,19 @@ for (const scheme of ["light", "dark"] as const) {
       await page.screenshot({ path: join(REVIEW, `${name}-${scheme}.png`) });
     };
 
-    // Messages in history.
+    // Messages in history, newest first, as scrolling back through the chat comes to them.
     await openChat(page, server, "Atlas");
     await shot("message-text");
-    await scrollTo(page, "Actually, what was FlowFix's price again?");
-    await shot("message-reply-and-exchange");
-    await scrollTo(page, "Fresh start");
-    await shot("message-notices-and-asks");
-    await scrollTo(page, "Sidebots couldn't finish this. Your Claude usage limit");
-    await shot("message-failed");
-    await scrollTo(page, "Here are three from the trip");
-    await shot("attachment-pictures-history");
     await scrollTo(page, "Here are six. Albert St");
     await shot("attachment-tall-page-history");
+    await scrollTo(page, "Fresh start");
+    await shot("message-notices-and-asks");
+    await scrollTo(page, "Actually, what was FlowFix's price again?");
+    await shot("message-reply-and-exchange");
+    await scrollTo(page, "Here are three from the trip");
+    await shot("attachment-pictures-history");
+    await scrollTo(page, "Sidebots couldn't finish this. Your Claude usage limit");
+    await shot("message-failed");
     await openChat(page, server, "Ledger");
     await shot("message-table");
     await openChat(page, server, "Patch");

@@ -19,6 +19,13 @@ import { SwitchNotice } from "./SwitchNotice.tsx";
 /** How a row comes into the chat: as it is, rising into place as a new message does, or settling from its faded copy as the person's own does. */
 export type Arrival = "none" | "rise" | "settle";
 
+/** What a message is drawn as: a line across the chat when it tells of a change of what the agent answers with, a small grey note when Sidebots says it, nothing when it has nothing to show, as a turn that ended without a reply, and a message otherwise. */
+export function drawnAs(message: Message): "switch" | "notice" | "nothing" | "message" {
+  if (message.switched) return "switch";
+  if (message.sender === "sidebots") return "notice";
+  return message.body || message.reply_to || message.question || message.attachments.length > 0 ? "message" : "nothing";
+}
+
 /**
  * A message in the chat, as the phone draws it: a notice from Sidebots as a
  * small grey line, or as a line across the chat when it tells of a change of
@@ -41,6 +48,7 @@ export const MessageRow = memo(function MessageRow({
   arrival,
   flashing,
   onReply,
+  onPage,
 }: {
   message: Message;
   /** The message it answers, when it answers one the window has. */
@@ -52,6 +60,8 @@ export const MessageRow = memo(function MessageRow({
   arrival: Arrival;
   flashing: boolean;
   onReply: (message: Message) => void;
+  /** Hears when a page the message carries has shown. */
+  onPage: (message: Message) => void;
 }) {
   const row = useRef<HTMLDivElement>(null);
   // The Reply button is there only while the pointer or focus is on the message, so a long chat holds one, not one for each message.
@@ -69,7 +79,7 @@ export const MessageRow = memo(function MessageRow({
       </p>
     );
   }
-  if (!message.body && !message.reply_to && !message.question && message.attachments.length === 0) return null;
+  if (drawnAs(message) === "nothing") return null;
   const mine = message.sender === "person";
   // A page is the agent's to send. An HTML file from the person is a file, as it is to the agent.
   const drawn = (path: string) => !mine && isPage(path);
@@ -117,7 +127,7 @@ export const MessageRow = memo(function MessageRow({
           quote={message.reply_to ? (quoted ? preview(quoted) : "An earlier message") : undefined}
           photos={photos.length ? <Photos agentId={message.agent_id} paths={photos} end={mine} /> : null}
           pages={pages.map((path) => (
-            <PageCard key={path} agentId={message.agent_id} path={path} />
+            <PageCard key={path} agentId={message.agent_id} path={path} onShown={() => onPage(message)} />
           ))}
           files={files.map((path) => (
             <FileCard key={path} agentId={message.agent_id} path={path} />

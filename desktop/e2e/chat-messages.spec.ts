@@ -5,22 +5,12 @@
 import type { Page } from "@playwright/test";
 import { oneLine } from "../../server/src/contract.ts";
 import { expect, test } from "./fixtures.ts";
-import { agentId, agentOf, box, expectAtEnd, field, fromEnd, jumpOffered, messagesOf, mine, notices, openChat, said, sendFromApp, theirs, timeline, until, wholeChat } from "./chat-helpers.ts";
+import { agentId, agentOf, box, expectAtEnd, field, fromEnd, jumpOffered, messagesOf, mine, notices, openChat, said, scrollChatTo, sendFromApp, theirs, timeline, until, wholeChat } from "./chat-helpers.ts";
 
 test.use({ world: "seeded" });
 
 /** The first thing said in Atlas's chat, a week ago. */
 const ATLAS_FIRST = "Morning! Can you keep track of the errands for this week?";
-
-/** Scrolls the open chat to its top with the wheel until `first` is in it, as a person flicking back through a week would. */
-async function loadAll(page: Page, first: string) {
-  const row = mine(page).filter({ hasText: first });
-  await expect(async () => {
-    await timeline(page).hover();
-    await page.mouse.wheel(0, -50_000);
-    await expect(row).toHaveCount(1, { timeout: 1_500 });
-  }).toPass({ timeout: 30_000 });
-}
 
 /** How a day marker names a day `offset` days from today, as this window writes a date. */
 const dayWords = (page: Page, offset: number) =>
@@ -33,18 +23,30 @@ const dayWords = (page: Page, offset: number) =>
 test.describe("every kind of message in history", () => {
   test("day markers name each day of the week the chat covers", async ({ page, server }) => {
     await openChat(page, server, "Atlas");
-    await loadAll(page, ATLAS_FIRST);
-    const days = await page.getByTestId("day").allInnerTexts();
+    // The markers are read while scrolling back through the week, newest first, since the chat draws only the rows near the screen.
+    const days: string[] = [];
+    const read = async () => {
+      const drawn = await page.getByTestId("day").evaluateAll((markers) => markers.map((marker) => ({ words: (marker as HTMLElement).innerText, top: marker.getBoundingClientRect().top })));
+      for (const { words } of drawn.sort((a, b) => b.top - a.top)) if (!days.includes(words)) days.push(words);
+    };
+    const first = mine(page).filter({ hasText: ATLAS_FIRST });
     const expected = [...(await Promise.all([-6, -5, -4, -3, -2].map((offset) => dayWords(page, offset)))), "Yesterday", "Today"];
-    expect(days).toEqual(expected);
+    await timeline(page).hover();
+    await expect(async () => {
+      await read();
+      await page.mouse.wheel(0, -500);
+      await expect(first).toBeInViewport({ timeout: 250 });
+      await read();
+      expect([...days].reverse()).toEqual(expected);
+    }).toPass({ intervals: [0], timeout: 60_000 });
   });
 
   test("Sidebots' notices are drawn as notes, not bubbles", async ({ page, server }) => {
     await openChat(page, server, "Atlas");
-    await loadAll(page, ATLAS_FIRST);
-    for (const words of ["Stopped", "Fresh start", "Sidebots couldn't finish this. Your Claude usage limit is reached. It resets at 4pm (Europe/London)."]) {
+    // Newest first, as scrolling back through the chat comes to them.
+    for (const words of ["Fresh start", "Stopped", "Sidebots couldn't finish this. Your Claude usage limit is reached. It resets at 4pm (Europe/London)."]) {
       const note = notices(page).filter({ hasText: words });
-      await note.scrollIntoViewIfNeeded();
+      await scrollChatTo(page, note);
       await expect(note).toBeVisible();
       await expect(note).toHaveText(words);
       expect(await note.evaluate((element) => element.closest('[data-testid="bubble"]') === null && getComputedStyle(element).textAlign === "center")).toBe(true);
@@ -71,9 +73,10 @@ test.describe("every kind of message in history", () => {
     const all = await wholeChat(server, id);
     const plumbers = all.find((message) => message.body.startsWith("Three nearby with good reviews"))!;
     await openChat(page, server, "Atlas");
-    await loadAll(page, ATLAS_FIRST);
+    // Back to the message it answers, so the window has it, and on to the reply.
+    await scrollChatTo(page, said(page, "Three nearby with good reviews"));
     const reply = mine(page).filter({ hasText: "Actually, what was FlowFix's price again?" });
-    await reply.scrollIntoViewIfNeeded();
+    await scrollChatTo(page, reply, "on");
     await expect(reply.getByTestId("quote")).toHaveText(oneLine(plumbers));
     await expect(reply.getByTestId("quote")).toHaveAccessibleName(`In reply to: ${oneLine(plumbers)}`);
   });
@@ -92,13 +95,14 @@ test.describe("every kind of message in history", () => {
 
   test("an exchange with another agent shows as one line in each state, and opens in the panel", async ({ page, server }) => {
     await openChat(page, server, "Atlas");
-    await loadAll(page, ATLAS_FIRST);
     const answered = page.getByRole("button", { name: "Atlas asked Ledger. Answered" });
     const unanswered = page.getByRole("button", { name: "Atlas asked Scout. No answer" });
-    await answered.scrollIntoViewIfNeeded();
+    // The exchange with Scout is the later of the two, so scrolling back comes to it first.
+    await scrollChatTo(page, unanswered);
+    await expect(unanswered).toHaveAttribute("data-state", "No answer");
+    await scrollChatTo(page, answered);
     await expect(answered).toHaveAttribute("data-state", "Answered");
     await expect(answered).toContainText("Atlas asked Ledger · Answered");
-    await expect(unanswered).toHaveAttribute("data-state", "No answer");
     // What the two said to each other is the line, not bubbles in the chat.
     await expect(theirs(page).filter({ hasText: "Can you check what's left in Home for November?" })).toHaveCount(0);
     await answered.click();
@@ -256,7 +260,6 @@ test.describe("scrolling", () => {
     expect(anchor).not.toBeNull();
     expect(await jumpOffered(page)).toBe(false);
     await server.control("deliver", { agent: id, text: "Something new at the end." });
-    await expect(said(page, "Something new at the end.")).toHaveCount(1);
     await expect.poll(() => jumpOffered(page)).toBe(true);
     const now = await page.locator(`[data-message-id="${anchor!.id}"]`).evaluate((row) => row.getBoundingClientRect().top);
     expect(Math.abs(now - anchor!.top)).toBeLessThanOrEqual(2);
@@ -271,6 +274,9 @@ test.describe("scrolling", () => {
     test.setTimeout(90_000);
     const id = await agentId(server, "Atlas");
     const total = (await wholeChat(server, id)).length;
+    // The pages before the newest, which the chat opens with.
+    const newest = (await messagesOf(server, id)).length;
+    const older = Math.ceil((total - newest) / newest);
     // Each page the window asks for before the oldest message waits until the test lets it go, so the place on screen can be measured before and after.
     await page.evaluate(() => {
       const held = window as unknown as { pages: string[]; waiting: (() => void)[] };
@@ -291,25 +297,25 @@ test.describe("scrolling", () => {
     await openChat(page, server, "Atlas");
     await expectAtEnd(page);
     let pages = 0;
-    for (let round = 0; round < 10 && (await mine(page).filter({ hasText: ATLAS_FIRST }).count()) === 0; round++) {
+    while (pages < older) {
       await timeline(page).hover();
       await page.mouse.wheel(0, -50_000);
       await expect.poll(async () => (await asked()).length).toBe(pages + 1);
       pages += 1;
       await expect.poll(() => timeline(page).evaluate((element) => element.scrollTop)).toBe(0);
-      const before = await rows.count();
       // The oldest row the window has, and where it sits, before the page above it comes.
       const anchor = await rows.first().evaluate((row) => ({ id: row.getAttribute("data-message-id")!, top: row.getBoundingClientRect().top }));
       await release();
-      await expect.poll(() => rows.count()).toBeGreaterThan(before);
+      // The page has come once there is something above the row to scroll to.
+      await expect.poll(() => timeline(page).evaluate((element) => element.scrollTop)).toBeGreaterThan(0);
       const top = await page.locator(`[data-message-id="${anchor.id}"]`).evaluate((row) => row.getBoundingClientRect().top);
       expect(Math.abs(top - anchor.top), `the place on screen after page ${pages}`).toBeLessThanOrEqual(3);
     }
-    await expect(mine(page).filter({ hasText: ATLAS_FIRST })).toHaveCount(1);
     // At the beginning, the window may ask once more and hear there is nothing before, and then asks no more.
     await timeline(page).hover();
     await page.mouse.wheel(0, -50_000);
     await release();
+    await expect(mine(page).filter({ hasText: ATLAS_FIRST })).toHaveCount(1);
     await page.mouse.wheel(0, -50_000);
     await release();
     const all = await asked();
