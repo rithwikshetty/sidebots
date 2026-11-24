@@ -3,9 +3,10 @@
 // the extension in targets/notifications opens it as it arrives. The app says
 // whether they may come, which phone takes them, and what a tap on one opens.
 // They are for when the person is away: while the app is open none shows or
-// sounds, and the chat list carries the unread counts. A tap on one opens its
-// chat through openChat, the one way into a chat, which knows the chat open
-// on the stack.
+// sounds, and the chat list carries the unread counts. One stays on the phone
+// while its chat has something unread, and goes when the person reads the
+// chat, here or on another device. A tap on one opens its chat through
+// openChat, the one way into a chat, which knows the chat open on the stack.
 
 import { useEffect, useSyncExternalStore } from "react";
 import { AppState } from "react-native";
@@ -13,9 +14,10 @@ import * as Application from "expo-application";
 import { isDevice } from "expo-device";
 import * as Notifications from "expo-notifications";
 import { router } from "expo-router";
-import type { PushToken } from "@server/contract";
+import * as TaskManager from "expo-task-manager";
+import type { AgentWithLatest, PushToken } from "@server/contract";
 import { isPaired, request } from "./api";
-import { useAgents } from "./state";
+import { onAgents, useAgents } from "./state";
 
 // The chat open on the stack, which openChat closes sheets down to or puts another in place of, and what listens for it.
 let chatOnScreen: string | null = null;
@@ -24,11 +26,43 @@ const listeners = new Set<() => void>();
 const opening = new Set<() => void>();
 const SILENT = { shouldShowBanner: false, shouldShowList: false, shouldPlaySound: false, shouldSetBadge: false };
 
+// The task iOS runs when the server says, with a push that shows nothing, that the person read something on another device.
+const READ_ELSEWHERE = "read-elsewhere";
+
 /** The agent a notification is about, which the server sends as its data. */
 function agentOf(notification: Notifications.Notification): string | null {
   const agentId = notification.request.content.data?.agent_id;
   return typeof agentId === "string" ? agentId : null;
 }
+
+/** Takes off the phone the notifications `read` picks. */
+async function dismiss(read: (notification: Notifications.Notification) => boolean): Promise<void> {
+  const presented = await Notifications.getPresentedNotificationsAsync();
+  await Promise.all(presented.filter(read).map((notification) => Notifications.dismissNotificationAsync(notification.request.identifier)));
+}
+
+/**
+ * Takes off the phone the notifications of the agents that, as the computer
+ * said they stand, have nothing left unread, and those of agents that are
+ * gone. Only those that came before `asked`, the time the app asked, in
+ * seconds as iOS dates a notification: one that came later may be of
+ * something newer than the answer.
+ */
+function follow(agents: AgentWithLatest[], asked = Infinity): Promise<void> {
+  const unread = new Set(agents.filter((agent) => agent.unread > 0).map((agent) => agent.id));
+  return dismiss((notification) => {
+    const agentId = agentOf(notification);
+    return agentId !== null && !unread.has(agentId) && notification.date < asked;
+  });
+}
+
+// iOS wakes the app for that push, in the background and unseen, and the app asks the computer how the agents stand.
+TaskManager.defineTask(READ_ELSEWHERE, async () => {
+  if (!isPaired()) return;
+  const asked = Date.now() / 1000;
+  const agents = await request<AgentWithLatest[]>("/agents").catch(() => null);
+  if (agents) await follow(agents, asked).catch(() => undefined);
+});
 
 /**
  * Which of Apple's push services issued this install's token. A build signed
@@ -104,13 +138,7 @@ export function useChatOnScreen(): string | null {
 /** Marks a chat as the one open on the stack until the returned release runs, and clears its notifications from the phone. */
 export function showChatOnScreen(agentId: string): () => void {
   setChatOnScreen(agentId);
-  void Notifications.getPresentedNotificationsAsync()
-    .then((presented) =>
-      Promise.all(
-        presented.filter((notification) => agentOf(notification) === agentId).map((notification) => Notifications.dismissNotificationAsync(notification.request.identifier)),
-      ),
-    )
-    .catch(() => undefined);
+  void dismiss((notification) => agentOf(notification) === agentId).catch(() => undefined);
   return () => {
     if (chatOnScreen === agentId) setChatOnScreen(null);
   };
@@ -119,8 +147,10 @@ export function showChatOnScreen(agentId: string): () => void {
 /**
  * The app's side of notifications, kept by the home screen: none shows while
  * the app is open, the app's icon carries the number of unread messages, the
- * phone's token is kept with the server and sent again on each return to the
- * app, and a tapped notification opens its chat.
+ * notifications of a chat read on another device go, whether the app is open
+ * or iOS wakes it to say so, the phone's token is kept with the server and
+ * sent again on each return to the app, and a tapped notification opens its
+ * chat.
  */
 export function usePush(): void {
   const unread = useAgents().reduce((total, agent) => total + (agent.muted ? 0 : agent.unread), 0);
@@ -128,8 +158,11 @@ export function usePush(): void {
     void Notifications.setBadgeCountAsync(unread).catch(() => undefined);
   }, [unread]);
 
+  useEffect(() => onAgents((agents) => void follow(agents).catch(() => undefined)), []);
+
   useEffect(() => {
     Notifications.setNotificationHandler({ handleNotification: async () => SILENT });
+    void Notifications.registerTaskAsync(READ_ELSEWHERE).catch(() => undefined);
 
     const sync = () => void register().catch(() => undefined);
     sync();

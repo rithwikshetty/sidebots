@@ -47,8 +47,8 @@ const config: ExpoConfig = {
     "expo-status-bar",
     "expo-sqlite",
     "expo-image",
-    // Adds the entitlement that lets Apple's push service deliver to the app, and the sound a notification plays.
-    ["expo-notifications", { sounds: ["./assets/sounds/sidebots.wav"] }],
+    // Adds the entitlement that lets Apple's push service deliver to the app, the sound a notification plays, and the background mode in which iOS wakes the app for a push that shows nothing, as when a chat was read on another device.
+    ["expo-notifications", { sounds: ["./assets/sounds/sidebots.wav"], enableBackgroundRemoteNotifications: true }],
     // The words the phone shows when it asks for the photos, the camera and the microphone.
     [
       "expo-image-picker",

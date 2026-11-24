@@ -27,7 +27,7 @@ import { problem } from "@/lib/alerts";
 import { attachment } from "@/lib/api";
 import { pick, type Picked, type PickSource } from "@/lib/files";
 import { haptics } from "@/lib/haptics";
-import { useReadingMargin, useSplit } from "@/lib/layout";
+import { useAppActive, useReadingMargin, useSplit } from "@/lib/layout";
 import { useWorkingLine } from "@/lib/lines";
 import { HIDE, MOVE, SHOW, arrive } from "@/lib/motion";
 import { askForPush, showChatOnScreen } from "@/lib/push";
@@ -92,9 +92,14 @@ function ChatWith({ agent }: { agent: AgentWithLatest }) {
     loadMessages(agent.id).catch(() => {});
   }, [agent.id]);
 
-  // While the chat is open, everything in it counts as read.
+  // While the chat is open with the app in front, everything in it counts as read. What comes after the person leaves the app waits, unread, and notifies them.
   const latest = agent.latest?.id;
-  useFocusEffect(useCallback(() => markRead(agent.id), [agent.id, latest]));
+  const active = useAppActive();
+  useFocusEffect(
+    useCallback(() => {
+      if (active) markRead(agent.id);
+    }, [agent.id, latest, active]),
+  );
   // Opening the chat clears its notifications from the phone.
   useEffect(() => showChatOnScreen(agent.id), [agent.id]);
 

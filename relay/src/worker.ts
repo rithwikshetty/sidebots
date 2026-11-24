@@ -2,8 +2,9 @@
 // Cloudflare Tunnel, and passes the server's notifications to Apple, under the
 // push key of the developer account that publishes the app. Each notification
 // comes encrypted for the phone it goes to, so the relay can't read it. It
-// also ends a Live Activity for the server, which says only the state the
-// avatar is left in. It knows each server as a machine: a public key the server
+// also tells a phone that something was read on another device, without
+// saying what, and ends a Live Activity for the server, which says only the
+// state the avatar is left in. It knows each server as a machine: a public key the server
 // registered, an id, and its tunnel. As a machine registers it may say how
 // much it is used: the version of the Mac app it runs in, how many agents and
 // paired phones it has, and how many turns its agents ran each day, by provider
@@ -18,7 +19,7 @@
 // it registers, `time` is milliseconds since 1970, and the Ed25519 signature
 // covers `<method> <path>\n<time>\n<sha256 of the body, in hex>`.
 
-import { ENDED, endActivity, notify, type Ended, type PushKey } from "./apple.ts";
+import { ENDED, endActivity, notify, tellRead, type Ended, type PushKey } from "./apple.ts";
 import { makeTunnel, removeTunnel, routeTunnel, type Tunnels } from "./cloudflare.ts";
 
 export type Env = {
@@ -175,9 +176,9 @@ export async function handle(request: Request<unknown, unknown>, env: Env, send:
     return new Response(null, { status: 204 });
   }
 
-  const { token, environment, app, sealed, messageId, ended } = JSON.parse(new TextDecoder().decode(body)) as Record<string, unknown>;
+  const { token, environment, app, sealed, messageId, ended, read } = JSON.parse(new TextDecoder().decode(body)) as Record<string, unknown>;
   const topics = env.APNS_TOPICS.split(" ");
-  // A notice is an encrypted notification with the message it is about, or the end of a Live Activity.
+  // A notice is an encrypted notification with the message it is about, word that something was read, or the end of a Live Activity.
   const notice = typeof sealed === "string" && SEALED.test(sealed) && typeof messageId === "string" && MESSAGE_ID.test(messageId) ? { sealed, messageId } : null;
   const end = ENDED.includes(ended as Ended) ? (ended as Ended) : null;
   if (
@@ -185,10 +186,13 @@ export async function handle(request: Request<unknown, unknown>, env: Env, send:
     typeof token !== "string" ||
     !DEVICE_TOKEN.test(token) ||
     (environment !== "sandbox" && environment !== "production") ||
-    (ended === undefined ? !notice : !end)
+    (read !== undefined ? read !== true : ended === undefined ? !notice : !end)
   ) {
     return answer(
-      { error: "A notice comes with the phone's token, its push service, and one of the relay's apps if it names one. It is encrypted, with the message it is about, or it ends a Live Activity on one of the avatar's states." },
+      {
+        error:
+          "A notice comes with the phone's token, its push service, and one of the relay's apps if it names one. It is encrypted, with the message it is about, or it says that something was read, or it ends a Live Activity on one of the avatar's states.",
+      },
       400,
     );
   }
@@ -202,7 +206,8 @@ export async function handle(request: Request<unknown, unknown>, env: Env, send:
 
   const push: PushKey = { key: env.APNS_KEY, keyId: env.APNS_KEY_ID, teamId: env.APNS_TEAM_ID };
   const topic = (app as string | undefined) ?? topics[0];
-  return answer({ result: end ? await endActivity(push, topic, { token, environment }, end, send, now) : await notify(push, topic, { token, environment }, notice!, send, now) });
+  const to = { token, environment } as const;
+  return answer({ result: await (read ? tellRead(push, topic, to, send, now) : end ? endActivity(push, topic, to, end, send, now) : notify(push, topic, to, notice!, send, now)) });
 }
 
 /** Removes the machines that have been quiet for 60 days, with their tunnels and addresses. One that Cloudflare fails to remove stays for the next day's run. */

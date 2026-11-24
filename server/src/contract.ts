@@ -277,6 +277,14 @@ export function notifies(message: Pick<Message, "sender" | "interim" | "ask" | "
 }
 
 /**
+ * How long a device waits before it notifies of a message, in milliseconds,
+ * and it notifies only of one still unread by then. The device the person is
+ * reading the chat on marks it read well within that, so no other device of
+ * theirs sounds for it.
+ */
+export const NOTIFY_AFTER_MS = 2_000;
+
+/**
  * The exchanges in a chat's messages, each oldest first: what two of the
  * person's agents asked and answered each other, one thing after another.
  * An exchange ends when the person sends a message or the chat's agent gives

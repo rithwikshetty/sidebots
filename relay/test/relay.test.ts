@@ -202,6 +202,23 @@ test("the end of a Live Activity reaches Apple as the avatar's state and nothing
   assert.equal(toApple.length, 2);
 });
 
+test("word that something was read reaches Apple as a push that wakes the app and says nothing", async () => {
+  const { send, toApple, toRelay } = setup();
+
+  assert.equal(await send(PHONE, { read: true }), "sent");
+  const [delivery] = toApple;
+  assert.equal(delivery.url, `https://api.sandbox.push.apple.com/3/device/${PHONE.token}`);
+  assert.deepEqual(
+    ["apns-topic", "apns-push-type", "apns-priority", "apns-collapse-id"].map((header) => delivery.headers.get(header)),
+    ["app.sidebots", "background", "5", null],
+  );
+  assert.deepEqual(await delivery.json(), { aps: { "content-available": 1 } });
+  assert.deepEqual(JSON.parse(await toRelay.at(-1)!.text()), { ...PHONE, read: true });
+
+  assert.equal(await send(PHONE, { read: "Maya's chat" as unknown as true }), "failed");
+  assert.equal(toApple.length, 1);
+});
+
 test("a token Apple has let go comes back as gone, and a machine stops at its daily share", async () => {
   const gone = setup(() => Response.json({ reason: "Unregistered" }, { status: 410 }));
   assert.equal(await gone.send(PHONE, NOTICE), "gone");

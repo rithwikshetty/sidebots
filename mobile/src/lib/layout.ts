@@ -33,6 +33,16 @@ type WindowLayout = {
 /** The window's layout, which the root layout gives every screen. */
 export const WindowLayout = createContext<WindowLayout>({ split: false, readingMargin: 0, controls: 0 });
 
+/** Whether the app is in front, with the person able to see and use it. It isn't in the background, nor under the app switcher or the phone's own panels. */
+export function useAppActive(): boolean {
+  const [active, setActive] = useState(AppState.currentState === "active");
+  useEffect(() => {
+    const subscription = AppState.addEventListener("change", (state) => setActive(state === "active"));
+    return () => subscription.remove();
+  }, []);
+  return active;
+}
+
 /**
  * Works out the window's layout, from its width while the app is in front and
  * the room its controls take. iPadOS turns an app in the background to take
@@ -40,11 +50,7 @@ export const WindowLayout = createContext<WindowLayout>({ split: false, readingM
  */
 export function useWindowLayout(controls: number): WindowLayout {
   const { width } = useWindowDimensions();
-  const [active, setActive] = useState(AppState.currentState === "active");
-  useEffect(() => {
-    const subscription = AppState.addEventListener("change", (state) => setActive(state === "active"));
-    return () => subscription.remove();
-  }, []);
+  const active = useAppActive();
   const held = useRef(width);
   if (active) held.current = width;
   const front = held.current;

@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { homedir } from "node:os";
-import { limitsAnswered, limitsIn, question } from "../src/claude.ts";
+import { limitsAnswered, limitsIn, question, readIds } from "../src/claude.ts";
 
 /** What Claude Code says of a plan's limits as a turn runs, with the limits it lists as the SDK's types leave them out. */
 const said = (info: object) => limitsIn(info as Parameters<typeof limitsIn>[0], 5);
@@ -31,6 +31,18 @@ test("asked where a plan's limits stand, Claude Code lists each with a hundredth
   ]);
   // A login with no plan.
   assert.deepEqual(answered(null), []);
+});
+
+test("a message sent into a running turn is read when Claude Code starts it, long before the result that answers it", () => {
+  // The frames Claude Code sends for a follow-up, as the SDK's types leave them out.
+  const frame = (each: object) => readIds(each as Parameters<typeof readIds>[0]);
+  const lifecycle = (state: string) => frame({ type: "command_lifecycle", command_uuid: "second", state, uuid: "frame", session_id: "session" });
+  assert.deepEqual(lifecycle("queued"), []);
+  assert.deepEqual(lifecycle("started"), ["second"]);
+  assert.deepEqual(lifecycle("completed"), []);
+  assert.deepEqual(lifecycle("cancelled"), []);
+  assert.deepEqual(frame({ type: "result", subtype: "success", user_message_uuids: ["first", "second"] }), ["first", "second"]);
+  assert.deepEqual(frame({ type: "system", subtype: "task_started" }), []);
 });
 
 test("an ask leads with plain words, lists the facts that matter, and keeps the thing itself as its detail", () => {
