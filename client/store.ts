@@ -309,8 +309,9 @@ export function createStore<Picked>(platform: Platform<Picked>) {
    */
   const isCaughtUp = (agentId: string) => agentId in state.caughtUp && state.caughtUp[agentId] === live?.changes[agentId];
 
-  // The fetch of each chat's newest page that was asked for last, and the catch-up as a stream opens, which asks for the newest page of each chat the app holds.
+  // The fetch of each chat's newest page that was asked for last.
   const fetching = new Map<string, Promise<void>>();
+  // The catch-up as the stream last opened.
   let catchingUp: Promise<void> = Promise.resolve();
 
   /** Where a chat's newest page joins onto what the chat holds: the place of the page's first message among them. A page short of a full one is the whole chat and joins onto nothing, and neither does one whose first message the chat doesn't hold. */
@@ -416,7 +417,7 @@ export function createStore<Picked>(platform: Platform<Picked>) {
     return fetch;
   }
 
-  /** Settles once the newest page of a chat that was asked for last has come, or failed to, after a catch-up on its way has asked for it: at once when neither is on its way. */
+  /** Settles once a catch-up on its way, then the newest page of a chat that was asked for last, have come or failed to: at once when neither is on its way. */
   async function newestPage(agentId: string): Promise<void> {
     await catchingUp.catch(() => undefined);
     await fetching.get(agentId)?.catch(() => undefined);

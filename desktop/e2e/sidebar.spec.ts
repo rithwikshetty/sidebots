@@ -534,7 +534,7 @@ test.describe("search", () => {
       await page.getByTestId("search-button").click();
       await page.getByTestId("search").fill("keep track of the errands");
       await page.getByTestId(`found-${first.id}`).click();
-      // The chat fetches no run from the message while its newest page is on its way.
+      // The chat fetches no run from the message while its newest page is on its way. A landing reads the chat a frame on before it fetches, so the run it would fetch has had time to go out after two waits.
       await drawn(page);
       await drawn(page);
       expect(runs).toEqual([]);
