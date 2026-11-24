@@ -62,11 +62,15 @@ AppState.addEventListener("change", (state) => {
 
 // iOS wakes the app for that push, in the background and unseen, and the app asks the computer how the agents stand, and sets its icon's count. In front, the app follows the computer's stream already.
 TaskManager.defineTask(READ_ELSEWHERE, async () => {
-  if (!isPaired() || AppState.currentState === "active") return;
-  const asked = fronts;
-  const agents = await request<AgentWithLatest[]>("/agents").catch(() => null);
-  // An answer that comes after the app has been in front is older than what the stream told it there.
-  if (agents && fronts === asked) await Promise.all([follow(agents), Notifications.setBadgeCountAsync(unreadIn(agents))]).catch(() => undefined);
+  while (isPaired() && AppState.currentState !== "active") {
+    const asked = fronts;
+    const agents = await request<AgentWithLatest[]>("/agents").catch(() => null);
+    if (!agents) return;
+    // The app was in front while it asked, so the answer may be older than what the stream told it there: it asks again.
+    if (fronts !== asked) continue;
+    await Promise.all([follow(agents), Notifications.setBadgeCountAsync(unreadIn(agents))]).catch(() => undefined);
+    return;
+  }
 });
 
 /**
