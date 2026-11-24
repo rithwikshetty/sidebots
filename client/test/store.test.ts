@@ -1,6 +1,10 @@
 import { test, type TestContext } from "node:test";
 import assert from "node:assert/strict";
-import { CONTRACT_HEADER, CONTRACT_VERSION, KEEPALIVE_MS, PAGE, type AgentWithLatest, type Connected, type Message, type StreamEvent } from "../../server/src/contract.ts";
+import { CONTRACT_HEADER, CONTRACT_VERSION, KEEPALIVE_MS, PAGE, RUN, type AgentWithLatest, type Connected, type Message, type StreamEvent } from "../../server/src/contract.ts";
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { openStore } from "../../server/src/store.ts";
 import { ApiError } from "../api.ts";
 import { createStore } from "../store.ts";
 
@@ -85,7 +89,8 @@ async function settle(): Promise<void> {
 
 /**
  * A store with a made-up computer behind it. `answers` are the computer's, by
- * method and path, and a call it has none for is refused as not found.
+ * method and path, or by method and path with `?` for a path with any query,
+ * and a call it has none for is refused as not found.
  * `streams` are what it answers the event stream with, one for each time the
  * stream is opened. `saved` is the copy a store before this one left.
  * `heard.changed` calls a listener each time the store changes, as a screen
@@ -107,7 +112,7 @@ function app(t: TestContext, saved: object = {}) {
     async request<T>(path: string, init: { method?: string; body?: unknown } = {}) {
       const call = { method: init.method ?? "GET", path, body: init.body };
       calls.push(call);
-      const answer = answers[`${call.method} ${path}`];
+      const answer = answers[`${call.method} ${path}`] ?? answers[`${call.method} ${path.replace(/\?.*/, "")}?`];
       if (!answer) throw new ApiError("Not found.", 404);
       return answer(call) as T;
     },
@@ -397,6 +402,74 @@ test("an older page that reaches a chat while its newest page is fetched stays b
   fetched([row("nine"), row("ten"), row("eleven")]);
   await joined;
   assert.deepEqual(ids(), ["six", "seven", "eight", "nine", "ten", "eleven", "twelve"]);
+});
+
+test("a message any distance back in a chat thousands long is a request or two away, and the chat holds it as a stretch with a hole after it that it pages across", async (t) => {
+  const { store, answers, streams, heard, asked } = app(t);
+  // The computer's own store answers, with a chat of 5,000 messages, each a moment after the one before.
+  const computer = openStore(mkdtempSync(join(tmpdir(), "sidebots-client-")));
+  const person = computer.addPerson({ name: "Alex", provider: "claude", configDir: "/config/alex" });
+  const mochi = computer.createAgent(person, "Mochi", "mochi", "claude");
+  const chat = Array.from({ length: 5_000 }, (_, index) => {
+    t.mock.timers.tick(1);
+    return computer.addMessage(mochi.id, index % 2 ? "agent" : "person", `message ${index}`, "done");
+  });
+  const id = mochi.id;
+  answers["GET /agents"] = () => [agent(id)];
+  answers[`GET /agents/${id}/messages?`] = ({ path }) => {
+    const query = new URL(path, "http://computer").searchParams;
+    return computer.messages(id, { before: query.get("before") ?? undefined, through: query.get("through") ?? undefined });
+  };
+  const events = stream();
+  streams.push(() => events.response);
+  store.startSync();
+  await settle();
+  const place = new Map(chat.map((message, index) => [message.id, index]));
+  const held = () => store.useMessages(id).map((message) => place.get(message.id));
+  const run = (from: number, to: number) => Array.from({ length: to - from }, (_, index) => from + index);
+  const fetches = () => asked().filter((call) => call.startsWith(`GET /agents/${id}/messages`));
+
+  // Opened at the newest messages, then at one 4,900 back, the chat asks for the run from it, and the page before it for the rows above it.
+  store.useMessages(id);
+  const close = heard.changed(() => {});
+  await store.loadMessages(id);
+  assert.equal(await store.loadOlder(id, chat[100].id), true);
+  assert.equal(await store.loadOlder(id), true);
+  assert.equal(fetches().length, 3);
+  assert.deepEqual(held(), [...run(50, 100 + RUN), ...run(5_000 - PAGE, 5_000)]);
+  assert.equal(store.useHole(id), chat[99 + RUN].id);
+
+  // A message in the hole that changes is no new message at the chat's end.
+  events.say({ message: { ...chat[2_000], status: "failed" }, agent: agent(id) });
+  events.say({ message: { ...chat[4_990], status: "failed" }, agent: agent(id) });
+  await settle();
+  assert.equal(store.useMessages(id).length, 300);
+  assert.equal(store.useMessages(id).at(-10)?.status, "failed");
+
+  // Paging down across the hole fetches a run at a time, until the chat is whole.
+  let runs = 0;
+  for (let hole = store.useHole(id); hole; hole = store.useHole(id), runs++) await store.loadOlder(id, hole);
+  assert.equal(runs, Math.ceil((5_000 - PAGE - (100 + RUN)) / (RUN - 1)));
+  assert.deepEqual(held(), run(50, 5_000));
+
+  // A message a few pages back from the newest comes with everything after it, in one answer.
+  close();
+  store.useMessages(id);
+  heard.changed(() => {});
+  const before = fetches().length;
+  assert.equal(await store.loadOlder(id, chat[4_850].id), true);
+  assert.equal(fetches().length, before + 1);
+  assert.deepEqual(held(), run(4_850, 5_000));
+  assert.equal(store.useHole(id), undefined);
+
+  // Back at the newest, the stretch and its hole go, as they do when the chat leaves the screen.
+  await store.loadOlder(id, chat[10].id);
+  assert.equal(store.useHole(id), chat[9 + RUN].id);
+  store.backToNewest(id);
+  assert.deepEqual(held(), run(4_850, 5_000));
+  assert.equal(store.useHole(id), undefined);
+  computer.close();
+  store.stopSync();
 });
 
 test("a change to an agent shows at once over what the server says, and changes go one at a time in the order they were made", async (t) => {

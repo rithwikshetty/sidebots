@@ -191,7 +191,7 @@ export function createApi(store: Store, queue: Queue, connections: Connections, 
   app.get("/agents/:id/messages", (c) => {
     const agent = ownAgent(c.var.person, c.req.param("id"));
     if (!agent) return c.json({ error: "No such agent." }, 404);
-    return c.json(store.messages(agent.id, { after: c.req.query("after"), before: c.req.query("before") }));
+    return c.json(store.messages(agent.id, { after: c.req.query("after"), before: c.req.query("before"), through: c.req.query("through") }));
   });
 
   /**

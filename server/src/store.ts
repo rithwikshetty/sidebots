@@ -6,7 +6,7 @@ import { basename, join, resolve } from "node:path";
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
 
-import { COLOR, PAGE, PROVIDERS, USAGE_DAYS, betweenAgents, readableColor, selectionOf } from "./contract.ts";
+import { COLOR, PAGE, PROVIDERS, RUN, USAGE_DAYS, betweenAgents, readableColor, selectionOf } from "./contract.ts";
 import type { About, Agent, AgentWithLatest, Ask, Avatar, Connection, Day, Found, Job, Limit, Memory, Message, Provider, PushToken, Question, Schedule, Selection, Sender, Status, Switched, TurnKind, Usage, Used } from "./contract.ts";
 
 export type Person = { id: string; name: string };
@@ -219,13 +219,13 @@ const ASKED = "peer_id is not null and ask is null and reply_to is null";
 const IN_CHAT = "(agent_id = ?1 or peer_id = ?1)";
 /**
  * The same for a page of the chat: the newest `limit` of its messages that
- * `where` leaves. The agent's own messages and the ones that name it as the
- * other agent are each read in order from their own index and merged, so a
- * page costs what it holds however long the chat is. Asked as one condition,
- * SQLite gathers the whole chat and sorts it.
+ * `where` leaves, or the oldest. The agent's own messages and the ones that
+ * name it as the other agent are each read in order from their own index and
+ * merged, so a page costs what it holds however long the chat is. Asked as
+ * one condition, SQLite gathers the whole chat and sorts it.
  */
-const pageOfChat = (where: string, limit: string) =>
-  `rowid in (select rowid from messages where agent_id = ?1 and ${where} union select rowid from messages where peer_id = ?1 and ${where} order by 1 desc limit ${limit})`;
+const pageOfChat = (where: string, limit: string, end: "newest" | "oldest" = "newest") =>
+  `rowid in (select rowid from messages where agent_id = ?1 and ${where} union select rowid from messages where peer_id = ?1 and ${where} order by 1 ${end === "newest" ? "desc" : "asc"} limit ${limit})`;
 // What waits on an agent: the messages in its chat that aren't for another agent, and other agents' messages to it.
 const FOR_AGENT = "((agent_id = ?1 and peer_id is null) or (peer_id = ?1 and ask is null))";
 // A message whose turn hasn't ended: it waits to be read, or the agent works on it. It is worded as `messages_unfinished` is, which is how SQLite knows the index holds every such message.
@@ -849,11 +849,21 @@ export function openStore(home: string) {
       if (message) messageChanged(message);
     },
 
-    /** A chat, oldest first: everything after a known message, the page before one, or the latest page. What the agent and another agent said to each other is in both their chats. */
-    messages(agentId: string, { after, before }: { after?: string; before?: string } = {}): Message[] {
+    /**
+     * A chat, oldest first: everything after a known message, the page before
+     * one, or the latest page. With `through` as well as `before`, it is the
+     * run from the message `through` names on, through the one `before` names,
+     * or the first `RUN` of it when it is longer. What the agent and another
+     * agent said to each other is in both their chats.
+     */
+    messages(agentId: string, { after, before, through }: { after?: string; before?: string; through?: string } = {}): Message[] {
       const known = "(select rowid from messages where id = ?2)";
       // A limit below zero is no limit.
       if (after) return many(`select * from messages where ${pageOfChat(`rowid > ${known}`, "-1")} order by rowid`, agentId, after);
+      if (before && through) {
+        const from = `(select rowid from messages where ${IN_CHAT} and id = ?3)`;
+        return many(`select * from messages where ${pageOfChat(`rowid between ${from} and ${known}`, "?4", "oldest")} order by rowid`, agentId, before, through, RUN);
+      }
       if (before) return many(`select * from messages where ${pageOfChat(`rowid < ${known}`, "?3")} order by rowid`, agentId, before, PAGE);
       return many(`select * from messages where ${pageOfChat("true", "?2")} order by rowid`, agentId, PAGE);
     },
