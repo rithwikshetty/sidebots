@@ -809,11 +809,15 @@ export function openStore(home: string) {
 
     /**
      * A file the agent names to send with a message, by its path in full or
-     * from the agent's home folder, as it is now. Nothing when no file is there.
+     * from the agent's home folder, as it is now. Nothing when no file is
+     * there. A file of more than `room` bytes is sized and never read, and is
+     * answered as too big.
      */
-    fileToSend(agentId: string, path: string): Upload | undefined {
+    fileToSend(agentId: string, path: string, room: number): Upload | "too big" | undefined {
       const full = resolve(agentHome(agentId), path);
-      return statSync(full, { throwIfNoEntry: false })?.isFile() ? { name: basename(full), bytes: readFileSync(full) } : undefined;
+      const file = statSync(full, { throwIfNoEntry: false });
+      if (!file?.isFile()) return undefined;
+      return file.size > room ? "too big" : { name: basename(full), bytes: readFileSync(full) };
     },
 
     /** The path of a file in the agent's `attachments/` folder, if it is there. */

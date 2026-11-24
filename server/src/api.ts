@@ -1,7 +1,8 @@
 // The api owns the HTTP routes and works out which paired device is asking, and whose it is.
 
-import { readFileSync, statSync } from "node:fs";
+import { createReadStream, readFileSync, statSync } from "node:fs";
 import { extname } from "node:path";
+import { Readable } from "node:stream";
 import { Hono } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import { streamSSE } from "hono/streaming";
@@ -221,13 +222,18 @@ export function createApi(store: Store, queue: Queue, connections: Connections, 
     return c.json({});
   });
 
-  /** A file in an agent's `attachments/` folder. Asked with HEAD, it answers only with the file's type and size, so an app can say how big a file is without fetching it. */
+  /**
+   * A file in an agent's `attachments/` folder, sent as it is read, a piece at
+   * a time, so the server holds only what is on its way to the app however
+   * large the file is. Asked with HEAD, it answers only with the file's type
+   * and size, so an app can say how big a file is without fetching it.
+   */
   app.get("/agents/:id/attachments/:name", (c) => {
     const agent = ownAgent(c.var.person, c.req.param("id"));
     const path = agent && store.attachment(agent.id, c.req.param("name"));
     if (!path) return c.json({ error: "No such file." }, 404);
     const headers = { "Content-Type": CONTENT_TYPES[extname(path).toLowerCase()] ?? "application/octet-stream", "Content-Length": String(statSync(path).size), "Cache-Control": "private, max-age=31536000, immutable" };
-    return c.req.method === "HEAD" ? c.body(null, 200, headers) : c.body(readFileSync(path), 200, headers);
+    return c.req.method === "HEAD" ? c.body(null, 200, headers) : c.body(Readable.toWeb(createReadStream(path)) as ReadableStream, 200, headers);
   });
 
   app.post("/agents/:id/read", (c) => {
