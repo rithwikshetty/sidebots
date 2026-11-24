@@ -167,6 +167,8 @@ export const Timeline = memo(function Timeline({
   const [loading, setLoading] = useState(messages.length === 0 && agent.latest !== null);
   const [flashing, setFlashing] = useState<string | null>(null);
   const [openedAt] = useState(() => Date.now() - CLOCK_SLACK_MS);
+  // A chat that opens with messages, or with some to fetch, opens at its end. One with none has no end to open at, and a list still waiting to open at one draws the first row it is given a frame late, after the copy of the message on its way has gone.
+  const [opensAtEnd] = useState(() => messages.length > 0 || agent.latest !== null);
   // Whether the chat has messages before the oldest the window holds.
   const older = useRef(true);
   // The rows that have shown a page.
@@ -330,7 +332,7 @@ export const Timeline = memo(function Timeline({
         renderItem={drawRow}
         recycleItems={false}
         estimatedItemSize={ROW_HEIGHT}
-        initialScrollAtEnd
+        initialScrollAtEnd={opensAtEnd}
         alignItemsAtEnd
         maintainScrollAtEnd
         maintainScrollAtEndThreshold={AT_END}
