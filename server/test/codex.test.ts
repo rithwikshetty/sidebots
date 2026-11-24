@@ -4,15 +4,21 @@ import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { codexOn, costOf, limitsIn, newest, question } from "../src/codex.ts";
+import { codexOn, costOf, effortOn, limitsIn, newest, question } from "../src/codex.ts";
 import type { FollowUps, Prompt, Turn } from "../src/runner.ts";
 import type { Limit, Question } from "../src/contract.ts";
 
 test("a kind of model is the newest version of it that Codex offers", () => {
   const offered = ["gpt-6-sol", "gpt-6.2-sol", "gpt-6.10-sol", "gpt-6.1-sol", "gpt-6.2-astra", "gpt-reserve"].map((model) => ({ model }));
-  assert.equal(newest(offered, "sol"), "gpt-6.10-sol");
-  assert.equal(newest(offered, "astra"), "gpt-6.2-astra");
+  assert.equal(newest(offered, "sol")?.model, "gpt-6.10-sol");
+  assert.equal(newest(offered, "astra")?.model, "gpt-6.2-astra");
   assert.equal(newest(offered, "luna"), undefined);
+});
+
+test("a turn runs at the agent's effort, or at the highest its model has when it hasn't that one", () => {
+  const luna = { model: "gpt-6-luna", supportedReasoningEfforts: ["low", "medium", "high", "xhigh", "max"].map((reasoningEffort) => ({ reasoningEffort })) };
+  assert.equal(effortOn(luna, "xhigh"), "xhigh");
+  assert.equal(effortOn(luna, "ultra"), "max");
 });
 
 test("a plan's limits are the windows Codex gives its own limit, named for how long each runs", () => {

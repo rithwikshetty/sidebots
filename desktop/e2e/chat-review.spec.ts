@@ -154,6 +154,10 @@ for (const scheme of ["light", "dark"] as const) {
     await field(page).fill("A longer message\nover a few lines\nso the field grows\nto hold them all");
     await shot("composer-lines");
     await field(page).fill("");
+    await page.getByTestId("model").click();
+    await expect(page.getByRole("menuitemradio").first()).toBeVisible();
+    await shot("composer-model");
+    await page.keyboard.press("Escape");
     await said(page, "Groceries are up").last().getByTestId("bubble").click({ button: "right" });
     await page.getByRole("menuitem", { name: "Reply" }).click();
     await shot("composer-replying");

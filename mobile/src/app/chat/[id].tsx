@@ -302,6 +302,8 @@ function ChatWith({ agent }: { agent: AgentWithLatest }) {
               here: the reply banner coming or going above moves this view, not the composer in it. */}
           <View collapsable={false} style={styles.bar}>
             <Composer
+              agent={agent}
+              onModel={() => router.push(`/model/${agent.id}`)}
               value={draft}
               onChangeText={setDraft}
               onSend={() => void onSend(draft, picked, replyTo)}

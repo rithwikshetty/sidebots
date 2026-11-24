@@ -772,6 +772,9 @@ test("an agent's name, avatar, model and effort can be changed, and its turns ru
 
   assert.equal((await call(ME, "PATCH", `/agents/${agent.id}`, { model: "gpt" })).status, 400);
   assert.equal((await call(ME, "PATCH", `/agents/${agent.id}`, { effort: "ultracode" })).status, 400);
+  // Each provider has its own efforts: Claude Code goes up to Max, and Ultra is Codex's alone.
+  assert.equal((await call(ME, "PATCH", `/agents/${agent.id}`, { effort: "max" })).json.effort, "max");
+  assert.equal((await call(ME, "PATCH", `/agents/${agent.id}`, { effort: "ultra" })).status, 400);
   assert.equal((await call(ME, "PATCH", `/agents/${agent.id}`, { avatarId: "dragon" })).status, 400);
   assert.equal((await call(HER, "PATCH", `/agents/${agent.id}`, { name: "Mine" })).status, 404);
 });

@@ -3,8 +3,8 @@ import { RadioGroup } from "@base-ui/react/radio-group";
 import { cn } from "../lib/cn.ts";
 
 /**
- * A row of choices where one is in effect, as for an agent's model or
- * effort. The mark behind the choice in effect slides to a new one as it is
+ * A row of choices where one is in effect, as for a new agent's provider.
+ * The mark behind the choice in effect slides to a new one as it is
  * picked, and arrow keys move between them. The mark is the app's colour; a
  * `plain` row, as for tabs, has a raised light mark instead, so it reads as a
  * place to go rather than a setting. `label` names the row for a screen reader.

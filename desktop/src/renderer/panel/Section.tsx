@@ -4,15 +4,14 @@ import { Spinner } from "../ui/Spinner.tsx";
 
 /**
  * A group of rows on a card, under its title, with a line of help below. A
- * group with no rows shows only its title and help. A `bare` group sets out
- * its controls without the card, as the model's choices are.
+ * group with no rows shows only its title and help.
  */
-export function Section({ title, note, bare = false, children, testId }: { title?: string; note?: string; bare?: boolean; children?: ReactNode; testId?: string }) {
+export function Section({ title, note, children, testId }: { title?: string; note?: string; children?: ReactNode; testId?: string }) {
   const rows = Children.toArray(children).length > 0;
   return (
     <section aria-label={title} data-testid={testId} className="flex flex-col gap-2">
       {title ? <SectionTitle>{title}</SectionTitle> : null}
-      {rows ? <div className={bare ? "flex flex-col gap-2" : "flex flex-col divide-y divide-line overflow-hidden rounded-lg bg-raised shadow-control"}>{children}</div> : null}
+      {rows ? <div className="flex flex-col divide-y divide-line overflow-hidden rounded-lg bg-raised shadow-control">{children}</div> : null}
       {note ? <p className="px-1 text-xs text-pretty text-ink2">{note}</p> : null}
     </section>
   );

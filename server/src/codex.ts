@@ -55,12 +55,21 @@ export function costOf(tokens: Tokens, model: string): number {
  * name for it, as `gpt-6.2-sol` is for `sol`. Codex names a model for its
  * version and its kind, and offers the older versions beside the newest.
  */
-export function newest(models: { model: string }[], kind: string): string | undefined {
-  const versions = models.flatMap(({ model }) => {
-    const version = new RegExp(`^gpt-([\\d.]+)-${kind}$`).exec(model)?.[1];
-    return version ? [{ model, version }] : [];
+export function newest<Offered extends { model: string }>(models: Offered[], kind: string): Offered | undefined {
+  const versions = models.flatMap((offered) => {
+    const version = new RegExp(`^gpt-([\\d.]+)-${kind}$`).exec(offered.model)?.[1];
+    return version ? [{ offered, version }] : [];
   });
-  return versions.sort((a, b) => later(b.version, a.version))[0]?.model;
+  return versions.sort((a, b) => later(b.version, a.version))[0]?.offered;
+}
+
+/** A model as Codex offers it: its name, and the efforts it can think at, lowest first. */
+type Offer = { model: string; supportedReasoningEfforts: { reasoningEffort: string }[] };
+
+/** The effort a turn on a model runs at: the agent's, or the highest the model has when it hasn't that one, as Luna has no Ultra. */
+export function effortOn(model: Offer, effort: string): string {
+  const has = model.supportedReasoningEfforts.map((each) => each.reasoningEffort);
+  return has.includes(effort) ? effort : (has.at(-1) ?? effort);
 }
 
 type Window = { usedPercent: number; windowDurationMins: number | null; resetsAt: number | null };
@@ -276,11 +285,11 @@ const runTurn = (start: () => Promise<Start>): RunTurn => async (turn) => {
       const { account, requiresOpenaiAuth } = await codex.request<{ account: object | null; requiresOpenaiAuth: boolean }>("account/read", { refreshToken: false });
       if (!account && requiresOpenaiAuth) throw new Error("Not logged in");
     }
-    const name = newest((await codex.request<{ data: { model: string }[] }>("model/list", {})).data, model);
-    if (!name) throw new Error(`Codex offers this account no ${PROVIDERS.codex.models[model as keyof typeof PRICES]} model.`);
+    const offered = newest((await codex.request<{ data: Offer[] }>("model/list", {})).data, model);
+    if (!offered) throw new Error(`Codex offers this account no ${PROVIDERS.codex.models[model as keyof typeof PRICES]} model.`);
     const settings = {
       cwd,
-      model: name,
+      model: offered.model,
       approvalPolicy: "on-request",
       approvalsReviewer: "auto_review",
       sandbox: "workspace-write",
@@ -367,7 +376,7 @@ const runTurn = (start: () => Promise<Start>): RunTurn => async (turn) => {
       answer = "";
       taken.set(first.id, first);
       const ended = new Promise<Ended>((resolve) => (finish = resolve));
-      const started = await codex.request<{ turn: { id: string } }>("turn/start", { threadId, clientUserMessageId: first.id, input: text(first.text), effort });
+      const started = await codex.request<{ turn: { id: string } }>("turn/start", { threadId, clientUserMessageId: first.id, input: text(first.text), effort: effortOn(offered, effort) });
       running = started.turn.id;
       mine.add(running);
       kept = true;

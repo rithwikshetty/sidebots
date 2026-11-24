@@ -167,28 +167,15 @@ test.describe("an agent's page", () => {
     expect((await agentNamed(server, "Atlas")).id).toBe(atlas.id);
   });
 
-  test("the model and the effort chosen are saved, and are still chosen after the app opens again", async ({ page, server, restartApp }) => {
+  test("the caption follows the model and the effort chosen in the chat", async ({ page, server }) => {
     const atlas = await agentNamed(server, "Atlas");
     await openAgentPage(page, atlas.id);
-    const model = page.getByRole("radiogroup", { name: "Model" });
-    const effort = page.getByRole("radiogroup", { name: "Effort" });
-    await expect(model.getByRole("radio")).toHaveText(Object.values(PROVIDERS.claude.models));
-    await model.getByRole("radio", { name: "Sonnet" }).click();
-    await effort.getByRole("radio", { name: "Low" }).click();
+    await expect(page.getByTestId("agent-page-caption")).toHaveText("Opus · High effort");
+    await page.getByTestId("model").click();
+    await page.getByRole("menuitemradio", { name: "Sonnet" }).click();
+    await page.getByTestId("model").click();
+    await page.getByRole("menuitemradio", { name: "Low" }).click();
     await expect(page.getByTestId("agent-page-caption")).toHaveText("Sonnet · Low effort");
-    await until(() => agentNamed(server, "Atlas"), (agent) => agent.model === "sonnet" && agent.effort === "low");
-    const again = await restartApp();
-    await openAgentPage(again.page, atlas.id);
-    await expect(again.page.getByTestId("agent-page-caption")).toHaveText("Sonnet · Low effort");
-    await expect(again.page.getByRole("radiogroup", { name: "Model" }).getByRole("radio", { name: "Sonnet" })).toBeChecked();
-    await expect(again.page.getByRole("radiogroup", { name: "Effort" }).getByRole("radio", { name: "Low" })).toBeChecked();
-  });
-
-  test("a Codex agent offers Codex's models", async ({ page, server }) => {
-    const patch = await agentNamed(server, "Patch");
-    await openAgentPage(page, patch.id);
-    await expect(page.getByRole("radiogroup", { name: "Model" }).getByRole("radio")).toHaveText(Object.values(PROVIDERS.codex.models));
-    await expect(page.getByTestId("agent-model")).toContainText("What it answers with on Codex");
   });
 
   test("Usage, last 7 days shows each kind of turn the agent ran, with its count and cost", async ({ page, server }) => {

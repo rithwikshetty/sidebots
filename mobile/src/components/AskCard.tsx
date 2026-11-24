@@ -4,7 +4,7 @@ import Animated, { useAnimatedStyle, withTiming } from "react-native-reanimated"
 import { Cable, ChevronRight, FilePenLine, Globe, Plug, Terminal } from "lucide-react-native";
 import { fenced, type Question } from "@server/contract";
 import { AvatarView } from "@/components/AvatarView";
-import { ConnectionLogo } from "@/components/ConnectionLogo";
+import { BrandLogo } from "@/components/BrandLogo";
 import { Markdown } from "@/components/Markdown";
 import { haptics } from "@/lib/haptics";
 import { EASE, HIDE, SHOW } from "@/lib/motion";
@@ -44,7 +44,7 @@ export function AskCard({ question, from }: { question: Question; from?: string 
         </View>
       ) : null}
       <View style={styles.kind}>
-        {logo ? <ConnectionLogo logo={logo} size={14} /> : <Icon size={14} strokeWidth={2.25} color={theme.ink2} />}
+        {logo ? <BrandLogo logo={logo} size={14} /> : <Icon size={14} strokeWidth={2.25} color={theme.ink2} />}
         <Text style={[styles.small, { color: theme.ink2 }]}>{question.title}</Text>
       </View>
       <Text selectable style={[styles.what, { color: theme.ink }]}>

@@ -18,7 +18,7 @@ import {
   type SDKUserMessage,
 } from "@anthropic-ai/claude-agent-sdk";
 import type { Servers } from "./connections.ts";
-import { CONNECTIONS, type Connection, type Limit, type Question } from "./contract.ts";
+import { CONNECTIONS, PROVIDERS, type Connection, type Limit, type Question } from "./contract.ts";
 import { environment, inFolder, program } from "./programs.ts";
 import { SHOW, short, toolQuestion, toolsFor, type Driver, type Prompt, type RunTurn } from "./runner.ts";
 
@@ -249,7 +249,8 @@ const runTurn: RunTurn = async (turn) => {
       resume: sessionId ?? undefined,
       persistSession: keepSession,
       model,
-      effort,
+      // A Claude Code agent's effort is one of Claude Code's own, since the API takes no other for it. Claude Code runs a model that hasn't that level at the highest it has.
+      effort: effort as keyof typeof PROVIDERS.claude.efforts,
       abortController: end,
       pathToClaudeCodeExecutable: claudeCode,
       // Claude Code uses a key in its environment ahead of a login in the config folder.

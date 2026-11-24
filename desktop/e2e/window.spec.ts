@@ -159,7 +159,7 @@ test.describe("the panel", () => {
     expect(chat.x).toBeGreaterThanOrEqual(sidebar.x + sidebar.width - 0.5);
     expect(chat.width).toBeGreaterThanOrEqual(380);
     // The chat's own parts each show whole inside its column, with nothing over them.
-    for (const part of [page.getByTestId("chat-name"), page.getByTestId("chat-menu"), page.getByTestId("message-field"), page.getByTestId("send"), page.getByTestId("add-files")]) {
+    for (const part of [page.getByTestId("chat-name"), page.getByTestId("chat-menu"), page.getByTestId("message-field"), page.getByTestId("model"), page.getByTestId("send"), page.getByTestId("add-files")]) {
       expect(inside(await box(part), chat), String(part)).toBe(true);
       expect(await onTop(part), String(part)).toBe(true);
     }

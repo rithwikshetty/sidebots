@@ -32,12 +32,13 @@ export default function AgentPage() {
  * An agent's page, opened from its avatar at the top of its chat. It opens on
  * the agent's avatar, large, with its name and the model it answers with. Edit
  * turns the name into a field and brings up the avatars and the colours of its
- * chat to choose from, and Save keeps them. Below are two tabs. Settings holds the model and effort,
- * what the agent used in the last days, Mute and Hide, and Delete. Jobs & memory holds what the agent works from:
- * its jobs, which can be removed here, the instructions it follows and what
- * it remembers. The agent writes those three itself, as it is told things
- * in its chat. What loads after the page opens fades in, and the sections
- * below slide down to make room for it.
+ * chat to choose from, and Save keeps them. Below are two tabs. Settings
+ * holds what the agent used in the last days, Mute and Hide, and Delete.
+ * Jobs & memory holds what the agent works from: its jobs, which can be
+ * removed here, the instructions it follows and what it remembers. The agent
+ * writes those three itself, as it is told things in its chat. What loads
+ * after the page opens fades in, and the sections below slide down to make
+ * room for it.
  */
 function AgentAbout({ agent }: { agent: AgentWithLatest }) {
   const theme = useTheme();
@@ -151,18 +152,8 @@ function caption(agent: AgentWithLatest): string {
 
 function SettingsTab({ agent, change }: { agent: AgentWithLatest; change: (changes: AgentChanges) => void }) {
   const theme = useTheme();
-  const provider: Offered = PROVIDERS[agent.provider];
   return (
     <>
-      <Section
-        title="Model"
-        note={`What it answers with on ${provider.name}, and how hard it thinks first. A more capable model and more effort are slower, and use more of your plan or API credit.`}
-      >
-        <Choices options={provider.models} value={agent.model} onChange={(model) => change({ model })} />
-        <Rule />
-        <Choices options={provider.efforts} value={agent.effort} onChange={(effort) => change({ effort })} />
-      </Section>
-
       <UsedSection agentId={agent.id} />
 
       <Section>

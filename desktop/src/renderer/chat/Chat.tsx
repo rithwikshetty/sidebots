@@ -3,7 +3,7 @@ import { FilePlus2 } from "lucide-react";
 import type { AgentWithLatest, Message } from "@server/contract.ts";
 import { MAX_FILES } from "@client/files.ts";
 import { preview } from "@client/messages.ts";
-import { problem } from "../lib/alerts.ts";
+import { changeOrSay, problem } from "../lib/alerts.ts";
 import { markRead, send, stop, useAgent, useMessages, useOnline } from "../lib/store.ts";
 import { useLooking } from "../lib/view.ts";
 import { ChatBar } from "./ChatBar.tsx";
@@ -151,7 +151,8 @@ function ChatWith({ agent }: { agent: AgentWithLatest }) {
       <div className="mx-auto w-full max-w-chat shrink-0">
         <Composer
           field={field}
-          name={agent.name}
+          agent={agent}
+          onSet={(changes) => changeOrSay(agent.id, changes)}
           value={session.draft}
           onChange={(draft) => update({ draft })}
           files={session.files}
