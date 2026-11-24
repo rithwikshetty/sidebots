@@ -699,7 +699,7 @@ test("a chat fetched while the stream is open isn't fetched again until the stre
 });
 
 test("a chat holds what was fetched and said of it only while it is on screen, and its newest page is what is saved", async (t) => {
-  const { store, answers, streams, heard, savedNow } = app(t);
+  const { store, answers, streams, heard, asked, savedNow } = app(t);
   const said = (from: number, to: number) => Array.from({ length: to - from }, (_, index) => row(`m${from + index}`, { created_at: from + index }));
   const ids = (messages: Message[]) => messages.map((message) => message.id);
   answers["GET /agents"] = () => [agent("mochi")];
@@ -724,11 +724,17 @@ test("a chat holds what was fetched and said of it only while it is on screen, a
   close();
   assert.deepEqual(ids(store.useMessages("mochi")), ids(said(350, 400)));
   events.say({ message: row("m400", { created_at: 400 }), agent: agent("mochi") });
-  // A message from before that page that changes, as one sent again, is no new message at the chat's end.
+  // A message from before that page that changes, as one sent again, is no new message at the chat's end. The chat had no place for it, so it is fetched again when it is next opened.
+  const fetches = () => asked().filter((call) => call === "GET /agents/mochi/messages").length;
+  await store.loadMessages("mochi");
+  assert.equal(fetches(), 1);
   events.say({ message: row("m10", { created_at: 10, status: "queued" }), agent: agent("mochi") });
   await settle();
   assert.deepEqual(ids(store.useMessages("mochi")), ids(said(351, 401)));
   assert.deepEqual(ids(savedNow().messages.mochi), ids(said(351, 401)));
+  answers["GET /agents/mochi/messages"] = () => said(351, 401);
+  await store.loadMessages("mochi");
+  assert.equal(fetches(), 2);
   store.stopSync();
 });
 

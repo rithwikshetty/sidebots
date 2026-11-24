@@ -225,10 +225,13 @@ export function createStore<Picked>(platform: Platform<Picked>) {
     else {
       const { message, agent } = event;
       const known = state.messages[agent.id];
+      const chat = known && message ? upsert(known, message) : known;
+      // A message the chat had no place for is on a page it doesn't hold, and the chat is fetched again when it is next opened.
+      if (message && chat === known) live?.caughtUp.delete(agent.id);
       const stays = !message && state.agents.some((item) => item.id === agent.id);
       set({
         agents: stays ? state.agents.map((item) => (item.id === agent.id ? withPending(agent) : item)) : [withPending(agent), ...state.agents.filter((item) => item.id !== agent.id)],
-        messages: known && message ? { ...state.messages, [agent.id]: upsert(known, message) } : state.messages,
+        messages: chat && chat !== known ? { ...state.messages, [agent.id]: chat } : state.messages,
       });
     }
     told.forEach((listener) => listener(state.agents));
