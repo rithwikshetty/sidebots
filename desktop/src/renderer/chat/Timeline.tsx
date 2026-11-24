@@ -241,6 +241,12 @@ export const Timeline = memo(function Timeline({
     if (older.current) return loadOlder(agent.id).then((more) => void (older.current = more), () => undefined);
   }, [agent.id]);
 
+  // A chat with no messages yet gives the list nothing to scroll to, so the copy of a first message on its way, when it is taller than the room, is scrolled to its end here.
+  useLayoutEffect(() => {
+    const scroller = list.current?.getScrollableNode();
+    if (sending && listed.length === 0 && scroller) scroller.scrollTop = scroller.scrollHeight;
+  }, [sending, listed.length]);
+
   // Something new at the end while the person reads further up shows the button that jumps to it, until they are back at the end.
   const newest = shown.at(-1)?.id;
   const seenNewest = useRef(newest);
