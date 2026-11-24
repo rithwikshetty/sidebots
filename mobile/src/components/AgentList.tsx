@@ -308,8 +308,8 @@ function RowAction({ icon: Icon, label, color, onPress }: { icon: ComponentType<
 function AgentRow({ agent, found, search, online, selected = false, onPress }: { agent: AgentWithLatest; found?: Found; search: string; online: boolean; selected?: boolean; onPress: () => void }) {
   const theme = useTheme();
   const avatarState = found ? "resting" : avatarStateOf(agent);
-  const line = useWorkingLine();
   const working = online && avatarState === "working";
+  const line = useWorkingLine(working);
   // The agent it asked something and hasn't heard back from.
   const waitingOn = useAgent(agent.waiting_on ?? "");
   const unread = !found && agent.unread > 0;

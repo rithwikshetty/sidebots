@@ -74,12 +74,6 @@ function ChatWith({ agent }: { agent: AgentWithLatest }) {
   }, [messages]);
   // The person's newest message, which carries the chat's receipt.
   const newestMine = messages.findLast((message) => message.sender === "person")?.id;
-  // What the person typed stays with the chat when they leave it and come back.
-  const [draft, keepDraft] = useState(() => drafts.get(agent.id) ?? "");
-  const setDraft = (text: string) => {
-    drafts.set(agent.id, text);
-    keepDraft(text);
-  };
   const [picked, setPicked] = useState<Picked[]>([]);
   // The message the next one answers, set by a swipe on it.
   const [replyTo, setReplyTo] = useState<Message | null>(null);
@@ -131,10 +125,11 @@ function ChatWith({ agent }: { agent: AgentWithLatest }) {
     );
   }
 
-  async function onSend(body: string, files: Picked[], answering: Message | null) {
-    const text = body.trim();
-    if (!text && files.length === 0) return;
-    setDraft("");
+  // Resolves to whether the message went. One that didn't leaves its files and the message it answers as they were.
+  async function onSend(text: string): Promise<boolean> {
+    const files = picked;
+    const answering = replyTo;
+    if (!text && files.length === 0) return false;
     setPicked([]);
     setReplyTo(null);
     setOutgoing({ body: text, files, quote: answering ? preview(answering) : undefined, after: newestMine });
@@ -144,11 +139,12 @@ function ChatWith({ agent }: { agent: AgentWithLatest }) {
       await send(agent.id, text, files, answering?.id);
       // They may leave while the agent works, so this is when a notification starts to matter.
       void askForPush().catch(() => undefined);
+      return true;
     } catch (failure) {
-      setDraft(text);
       setPicked(files);
       setReplyTo(answering);
       problem("Not sent", failure);
+      return false;
     } finally {
       setOutgoing(null);
     }
@@ -310,9 +306,7 @@ function ChatWith({ agent }: { agent: AgentWithLatest }) {
             <Composer
               agent={agent}
               onModel={() => router.push(`/model/${agent.id}`)}
-              value={draft}
-              onChangeText={setDraft}
-              onSend={() => void onSend(draft, picked, replyTo)}
+              onSend={onSend}
               onStop={(agent.working || waitingOn) && online ? onStop : undefined}
               placeholder={`Message ${agent.name}`}
               attachments={picked}
@@ -503,8 +497,6 @@ function Sent({ body, quote, photos, pages = [], files, mine, theme, asked, from
  */
 type Outgoing = { body: string; files: Picked[]; quote?: string; after: string | undefined };
 
-// What the person had typed in each chat, kept while the app runs.
-const drafts = new Map<string, string>();
 // The person's message shows this faded until the server has it.
 const PENDING_OPACITY = 0.7;
 // A new message rises into the chat. The person's own settles from its faded copy, which already sits there.

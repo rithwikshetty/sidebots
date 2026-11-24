@@ -1,9 +1,9 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { Image } from "expo-image";
 import Animated, { useAnimatedStyle, withTiming } from "react-native-reanimated";
 import { AVATAR_SHEET, AVATAR_STATES, avatarFrame, type AvatarState } from "@server/contract";
 import { avatarSheet } from "@/lib/api";
-import { EASE } from "@/lib/motion";
+import { EASE, useBeat } from "@/lib/motion";
 
 const { columns, cellWidth, cellHeight } = AVATAR_SHEET;
 const ROWS = Object.keys(AVATAR_STATES).length;
@@ -15,17 +15,15 @@ const ROWS = Object.keys(AVATAR_STATES).length;
  */
 export function AvatarView({ avatarId, state, size, dimmed = false }: { avatarId: string; state: AvatarState; size: number; dimmed?: boolean }) {
   const { frames, frameMs } = AVATAR_STATES[state];
-  const [frame, setFrame] = useState(0);
-  useEffect(() => {
-    setFrame(0);
-    const timer = setInterval(() => setFrame((current) => (current + 1) % frames), frameMs);
-    return () => clearInterval(timer);
-  }, [frames, frameMs]);
+  const beat = useBeat(frameMs);
+  // A state plays from its first frame, from the beat the avatar took it up on.
+  const [began, setBegan] = useState({ state, beat });
+  if (began.state !== state) setBegan({ state, beat });
 
   const fade = useAnimatedStyle(() => ({ opacity: withTiming(dimmed ? 0.4 : 1, EASE) }));
 
   // The view is a window onto the sheet, the size of one frame.
-  const shown = avatarFrame(state, frame % frames);
+  const shown = avatarFrame(state, (beat - began.beat) % frames);
   const scale = size / shown.width;
   return (
     <Animated.View style={[{ width: size, height: shown.height * scale, overflow: "hidden" }, fade]}>
