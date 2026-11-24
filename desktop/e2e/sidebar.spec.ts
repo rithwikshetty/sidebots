@@ -412,27 +412,26 @@ test.describe("search", () => {
     const row = page.locator(`[data-message-id="${message.id}"]`);
     await expect(row).toBeInViewport({ timeout: 15_000 });
     await expect(row).toHaveClass(/animate-flash/);
-    // The newest page, the run from the message, and the page before it, which the chat's first message has nothing in.
-    expect(fetched.filter((search) => search.includes("through="))).toHaveLength(1);
-    expect(fetched.length).toBeLessThanOrEqual(3);
+    const runs = (searches: string[]) => searches.filter((search) => search.includes("through="));
+    // The newest page, the run from the message, and the page before it, which the chat's first message has nothing in. The run doesn't reach the newest page, so the chat draws the stretch with Jump to latest, and the hole after it is off screen.
+    expect(runs(fetched), fetched.join(" ")).toHaveLength(1);
+    expect(fetched.length, fetched.join(" ")).toBeLessThanOrEqual(3);
     expect(await jumpOffered(page)).toBe(true);
-    await expect(said(page, newest)).toHaveCount(0);
+    await expect(page.getByTestId("hole")).toHaveCount(0);
 
-    // Jump to latest goes back to the newest messages and lets the stretch go.
+    // Jump to latest goes back to the newest messages and lets the stretch go, with nothing fetched.
+    const opened = fetched.length;
     await page.getByTestId("jump-to-latest").click();
     await expect(said(page, newest)).toBeInViewport();
     await expect(row).toHaveCount(0);
+    expect(fetched.slice(opened), fetched.join(" ")).toEqual([]);
 
-    // Opened there again, scrolling down reaches the newest message through the hole, a run at a time.
-    await page.getByTestId("search-button").click();
-    await page.getByTestId("search").fill("keep track of the errands");
+    // Opened there again from the search still open, scrolling down reaches the newest message across the hole: the run from the message, then one more.
     await page.getByTestId(`found-${message.id}`).click();
     await expect(row).toBeInViewport({ timeout: 15_000 });
-    const opened = fetched.length;
     await scrollChatTo(page, said(page, newest), "on");
-    const runs = fetched.slice(opened).filter((search) => search.includes("through="));
-    expect(runs.length).toBeGreaterThanOrEqual(1);
-    expect(runs.length).toBeLessThanOrEqual(2);
+    expect(runs(fetched.slice(opened)), fetched.join(" ")).toHaveLength(2);
+    expect(fetched.slice(opened), fetched.join(" ")).toHaveLength(2);
     await expect.poll(() => jumpOffered(page)).toBe(false);
   });
 

@@ -57,6 +57,8 @@ type Around = {
   openedAt: number;
   onReply: (message: Message) => void;
   onPageShown: (message: Message) => void;
+  /** Whether a hole that is drawn fetches the run after it. While the chat lands on a message it was opened at, the list can draw the hole for a moment on its way. */
+  fills: boolean;
 };
 
 const idOf = (row: Row) => row.id;
@@ -75,8 +77,8 @@ function rowKind(row: Row): string {
 
 /** A row as it is drawn: a day, a message, the exchange a message was last asked in, the person's message on its way, or the hole after a stretch from further back. */
 function drawRow({ item: row, extraData }: LegendListRenderItemProps<Row>) {
-  const { agentId, standings, byId, newestMine, flashing, today, openedAt, onReply, onPageShown } = extraData as Around;
-  if (isHole(row)) return <HoleRow agentId={agentId} after={row.after} />;
+  const { agentId, standings, byId, newestMine, flashing, today, openedAt, onReply, onPageShown, fills } = extraData as Around;
+  if (isHole(row)) return <HoleRow agentId={agentId} after={row.after} fills={fills} />;
   if (isDay(row)) {
     return (
       <p className="mt-4 px-4 text-center text-sm font-medium text-ink2" data-testid="day" data-day={row.id}>
@@ -115,12 +117,13 @@ function drawRow({ item: row, extraData }: LegendListRenderItemProps<Row>) {
   );
 }
 
-/** The hole after a stretch from further back, drawn as the person scrolls down to it, which fetches the run of the chat after the stretch, and again when the computer is back in reach. */
-function HoleRow({ agentId, after }: { agentId: string; after: string }) {
+/** The hole after a stretch from further back, drawn as the person scrolls down to it, which fetches the run of the chat after the stretch, and again when the computer is back in reach. The list can draw it a moment after the chat has let the stretch go, and then it fetches nothing. */
+function HoleRow({ agentId, after, fills }: { agentId: string; after: string; fills: boolean }) {
   const online = useOnline();
-  useEffect(() => void (online && loadOlder(agentId, after).catch(() => undefined)), [agentId, after, online]);
+  const open = useHole(agentId) === after;
+  useEffect(() => void (online && fills && open && loadOlder(agentId, after).catch(() => undefined)), [agentId, after, online, fills, open]);
   return (
-    <div className="grid h-16 place-items-center text-ink3">
+    <div className="grid h-16 place-items-center text-ink3" data-testid="hole">
       <Spinner label="Loading messages" />
     </div>
   );
@@ -200,6 +203,8 @@ export const Timeline = memo(function Timeline({
   const [behind, setBehind] = useState(false);
   const [loading, setLoading] = useState(messages.length === 0 && agent.latest !== null);
   const [flashing, setFlashing] = useState<string | null>(null);
+  // Whether the chat is on its way to a message it was opened at.
+  const [landing, setLanding] = useState(false);
   const [openedAt] = useState(() => Date.now() - CLOCK_SLACK_MS);
   // A chat that opens with messages, or with some to fetch, opens at its end. One with none has no end to open at, and a list still waiting to open at one draws the first row it is given a frame late, after the copy of the message on its way has gone.
   const [opensAtEnd] = useState(() => messages.length > 0 || agent.latest !== null);
@@ -248,8 +253,8 @@ export const Timeline = memo(function Timeline({
   const asksPerson = chat.some((message) => message.ask === "waiting" && message.agent_id === agent.id);
   const working = agent.working && online && !asksPerson && hole === undefined;
   const around = useMemo<Around>(
-    () => ({ agentId: agent.id, standings, byId, newestMine, flashing, today, openedAt, onReply, onPageShown: keep }),
-    [agent.id, standings, byId, newestMine, flashing, today, openedAt, onReply, keep],
+    () => ({ agentId: agent.id, standings, byId, newestMine, flashing, today, openedAt, onReply, onPageShown: keep, fills: !landing }),
+    [agent.id, standings, byId, newestMine, flashing, today, openedAt, onReply, keep, landing],
   );
 
   // Counts the chat's own scrolls and the person's, so a glide to the end that the person takes over, or that a later scroll follows, is left where it is.
@@ -302,14 +307,15 @@ export const Timeline = memo(function Timeline({
     let going = true;
     const frame = () => new Promise((resolve) => requestAnimationFrame(resolve));
     const isIt = (message: Message) => message.id === id;
-    (async () => {
+    setLanding(true);
+    void (async () => {
       if (!held.current.messages.some(isIt)) {
         if (held.current.chat.some(isIt)) backToNewest(agent.id);
         else await loadOlder(agent.id, id).catch(() => false);
         await frame();
       }
       if (going && held.current.messages[0]?.id === id) {
-        await loadOlder(agent.id).catch(() => false);
+        await fetchOlder();
         await frame();
       }
       const { messages, shown } = held.current;
@@ -325,11 +331,12 @@ export const Timeline = memo(function Timeline({
       if (!going) return;
       setFlashing(nearest.id);
       setTimeout(() => going && setFlashing(null), FLASH_MS);
-    })();
+    })().finally(() => going && setLanding(false));
     return () => {
       going = false;
+      setLanding(false);
     };
-  }, [opened, agent.id, loading]);
+  }, [opened, agent.id, loading, fetchOlder]);
 
   // The arrow keys move focus from message to message, the first time to the newest one on screen, so the keyboard reaches each message's Reply and menu.
   const stepFocus = (event: KeyboardEvent<HTMLDivElement>) => {
