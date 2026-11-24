@@ -141,7 +141,7 @@ export function AgentList() {
           renderItem={({ item }) =>
             item.found ? (
               <Animated.View entering={SHOW} exiting={HIDE}>
-                <AgentRow agent={item.agent} found={item.found} search={search} online={online} onPress={() => openChat(item.agent.id)} />
+                <AgentRow agent={item.agent} found={item.found} search={search} online={online} onPress={() => openChat(item.agent.id, item.found?.id)} />
               </Animated.View>
             ) : (
               swipeRow(item.agent)
