@@ -592,7 +592,7 @@ test("a run that comes after the chat asked for another, or went back to its new
   assert.equal(store.useHole("mochi"), undefined);
 });
 
-test("a run keeps the chat's own copy of the message it runs from, and a hole whose message has gone from the chat lets its stretch go", async (t) => {
+test("a run keeps the chat's copy of the message it runs from only when the stream changed it meanwhile, and a hole whose message has gone from the chat lets its stretch go", async (t) => {
   const { store, answers } = app(t, { messages: { mochi: [row("nine"), row("ten")] } });
   const ids = () => store.useMessages("mochi").map((message) => message.id);
   store.useMessages("mochi");
@@ -612,13 +612,23 @@ test("a run keeps the chat's own copy of the message it runs from, and a hole wh
   assert.equal(store.useMessages("mochi")[1].ask, "allowed");
   assert.equal(store.useHole("mochi"), undefined);
 
-  // The message a hole comes after has gone from the chat on the computer, so the run from it is empty.
-  answers["GET /agents/mochi/messages?before=one&through=zero"] = () => [row("zero")];
+  // An ask answered on another device while this one was away comes answered with the run, and the chat's copy from before gives way to it.
+  answers["GET /agents/mochi/messages?before=one&through=zero"] = () => [row("zero", { ask: "waiting" })];
   await store.loadOlder("mochi", "zero");
   assert.equal(store.useHole("mochi"), "zero");
-  answers["GET /agents/mochi/messages?before=one&through=zero"] = () => [];
-  assert.equal(await store.loadOlder("mochi", "zero"), false);
-  assert.deepEqual(ids(), ["one", "two", "three", "nine", "ten"]);
+  answers["GET /agents/mochi/messages?before=one&through=zero"] = () => [row("zero", { ask: "allowed" }), row("one")];
+  await store.loadOlder("mochi", "zero");
+  assert.deepEqual(ids(), ["zero", "one", "two", "three", "nine", "ten"]);
+  assert.equal(store.useMessages("mochi")[0].ask, "allowed");
+  assert.equal(store.useHole("mochi"), undefined);
+
+  // The message a hole comes after has gone from the chat on the computer, so the run from it is empty.
+  answers["GET /agents/mochi/messages?before=zero&through=minus"] = () => [row("minus")];
+  await store.loadOlder("mochi", "minus");
+  assert.equal(store.useHole("mochi"), "minus");
+  answers["GET /agents/mochi/messages?before=zero&through=minus"] = () => [];
+  assert.equal(await store.loadOlder("mochi", "minus"), false);
+  assert.deepEqual(ids(), ["zero", "one", "two", "three", "nine", "ten"]);
   assert.equal(store.useHole("mochi"), undefined);
 });
 

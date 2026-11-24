@@ -386,6 +386,8 @@ export function createStore<Picked>(platform: Platform<Picked>) {
     if (running && (through === undefined || running.run === runs.get(agentId))) return running.done;
     const run = (runs.get(agentId) ?? 0) + 1;
     if (through !== undefined) runs.set(agentId, run);
+    // The chat's copy of the message a run starts from, as it was when the run was asked for.
+    const from = known.find((message) => message.id === through);
     const done: Promise<boolean> = request<Message[]>(path)
       .finally(() => paging.get(path)?.done === done && paging.delete(path))
       .then((page) => {
@@ -401,13 +403,15 @@ export function createStore<Picked>(platform: Platform<Picked>) {
           if (through === state.holes[agentId]) backToNewest(agentId);
           return false;
         }
-        // A run from the last message before the hole keeps the stretch it ends, with the chat's own copy of that message, which the stream keeps current.
+        // A run from the last message before the hole keeps the stretch it ends. The run's copy of that message takes the chat's place, unless the stream changed the chat's copy while the run was on its way.
         const start = known.findIndex((message) => message.id === page[0].id);
-        const kept = start >= 0 && start < newest ? known.slice(0, start + 1) : [];
+        const holds = start >= 0 && start < newest;
         const joins = page.at(-1)!.id === oldest.id;
+        const rows = page.slice(0, joins ? -1 : undefined);
+        if (holds && rows.length && known[start] !== from) rows[0] = known[start];
         const { [agentId]: _hole, ...holes } = state.holes;
         set({
-          messages: { ...state.messages, [agentId]: [...kept, ...page.slice(kept.length ? 1 : 0, joins ? -1 : undefined), ...known.slice(newest)] },
+          messages: { ...state.messages, [agentId]: [...(holds ? known.slice(0, start) : []), ...rows, ...known.slice(newest)] },
           holes: joins ? holes : { ...holes, [agentId]: page.at(-1)!.id },
         });
         return true;
