@@ -48,7 +48,11 @@ export function relay(store: Store, origin: string, port: number, version?: stri
       const publicKey = privateKey.export({ format: "jwk" }).x!;
       const counts = store.counting() ? { version, ...store.counts() } : {};
       const response = await call("/machines", publicKey, privateKey, JSON.stringify({ port, ...counts }));
-      if (!response.ok) throw new Error(`The relay answered ${response.status} to registering.`);
+      if (!response.ok) {
+        // The relay says why in `error`.
+        const error = ((await response.json().catch(() => null)) as { error?: string } | null)?.error;
+        throw new Error(`The relay answered ${response.status} to registering${error ? `: ${error}` : "."}`);
+      }
       const { id, address, tunnelToken } = (await response.json()) as { id: string; address: string; tunnelToken: string };
       const machine = { privateKey: store.machine()!.privateKey, id, address, tunnelToken };
       store.setMachine(machine);

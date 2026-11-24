@@ -234,12 +234,9 @@ if (process.argv[2] === "status") {
       () => false,
     );
   const address = store.machine()?.address ?? null;
-  const running = await answers(`http://127.0.0.1:${port}`);
   const status = {
-    running,
+    running: await answers(`http://127.0.0.1:${port}`),
     address,
-    // Whether a phone reaches the server at its address, which leads to its port, so only a server that runs is asked there. Null until it has one.
-    reachable: address ? running && (await answers(`https://${address}`)) : null,
     // Whether any agent has a turn queued or running, which an update waits for before it restarts the server.
     working: store.people().some((person) => store.agentsFor(person.id).some((agent) => agent.working)),
     // Whether the server tells the relay how much it is used.
@@ -260,7 +257,8 @@ if (process.argv[2] === "status") {
     process.exit(0);
   }
   console.log(status.running ? `Sidebots is running on port ${port}.` : `Sidebots isn't running on port ${port}.`);
-  if (address) console.log(status.reachable ? `Phones reach it at ${address}.` : `Phones can't reach it at ${address}.`);
+  // Whether a phone reaches the server at its address, which leads to its port, so only a server that runs is asked there.
+  if (address) console.log(status.running && (await answers(`https://${address}`)) ? `Phones reach it at ${address}.` : `Phones can't reach it at ${address}.`);
   console.log(`Its usage counts are ${status.counting ? "on" : "off"}.`);
   for (const person of status.people) {
     for (const account of person.accounts) {
