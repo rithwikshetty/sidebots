@@ -105,6 +105,28 @@ test.describe("the sidebar's width and whether it shows", () => {
     await expect(edge).toHaveAttribute("aria-valuenow", "264");
   });
 
+  test("a drag that loses the pointer ends where it had got to, and gives the cursor back", async ({ page, restartApp }) => {
+    const edge = page.getByRole("separator", { name: "Sidebar width" });
+    const at = await box(edge);
+    const [x, y] = [at.x + at.width / 2, at.y + at.height / 2];
+    await page.mouse.move(x, y);
+    await page.mouse.down();
+    await page.mouse.move(x + 30, y, { steps: 4 });
+    await expect(edge).toHaveAttribute("aria-valuenow", "310");
+    // The pointer is taken from the edge with the button still down, as when the system swallows the release.
+    await edge.evaluate((handle) => handle.releasePointerCapture(1));
+    await page.mouse.move(x + 60, y, { steps: 4 });
+    await page.mouse.up();
+    await expect(edge).toHaveAttribute("aria-valuenow", "310");
+    await expect.poll(() => page.evaluate(() => getComputedStyle(document.body).cursor)).not.toBe("col-resize");
+    // The pointer passing over the edge afterwards doesn't move it.
+    await page.mouse.move(x + 30, y);
+    await page.mouse.move(x + 33, y);
+    await expect(edge).toHaveAttribute("aria-valuenow", "310");
+    const again = await restartApp();
+    await expect.poll(() => chatStart(again.page)).toBe(310);
+  });
+
   test("the sidebar's width and its collapse are kept across a restart", async ({ page, restartApp }) => {
     await dragEdge(page, 60);
     await expect.poll(() => chatStart(page)).toBe(340);

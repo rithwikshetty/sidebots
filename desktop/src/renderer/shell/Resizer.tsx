@@ -8,7 +8,8 @@ const STEP = 16;
  * The edge of a column that sets its width when dragged, on the column's
  * `side`. A double-click puts the width back to `initial`, and the arrow keys
  * move it once it has focus. `onResize` hears each width as it changes, with
- * `done` once the person lets go.
+ * `done` once the drag ends, as the person lets go or the pointer is taken
+ * from it.
  */
 export function Resizer({
   side,
@@ -36,20 +37,25 @@ export function Resizer({
     event.preventDefault();
     const handle = event.currentTarget;
     const from = event.clientX;
-    const toWidth = (x: number) => clamp(width + (side === "right" ? x - from : from - x));
+    // Where the drag has got to, which is where it ends.
+    let reached = width;
     handle.setPointerCapture(event.pointerId);
     document.documentElement.dataset.resizing = "";
-    const move = (moved: globalThis.PointerEvent) => onResize(toWidth(moved.clientX), false);
-    const end = (ended: globalThis.PointerEvent) => {
+    const move = (moved: globalThis.PointerEvent) => {
+      reached = clamp(width + (side === "right" ? moved.clientX - from : from - moved.clientX));
+      onResize(reached, false);
+    };
+    // The handle loses the pointer as the button is let go, and when the pointer is taken from it with the button still down, as when the system swallows the release.
+    const end = () => {
       handle.removeEventListener("pointermove", move);
-      handle.removeEventListener("pointerup", end);
-      handle.removeEventListener("pointercancel", end);
+      handle.removeEventListener("pointerup", move);
+      handle.removeEventListener("lostpointercapture", end);
       delete document.documentElement.dataset.resizing;
-      onResize(toWidth(ended.clientX), true);
+      onResize(reached, true);
     };
     handle.addEventListener("pointermove", move);
-    handle.addEventListener("pointerup", end);
-    handle.addEventListener("pointercancel", end);
+    handle.addEventListener("pointerup", move);
+    handle.addEventListener("lostpointercapture", end);
   }
 
   function key(event: KeyboardEvent<HTMLDivElement>) {
