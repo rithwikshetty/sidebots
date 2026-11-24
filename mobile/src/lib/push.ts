@@ -54,12 +54,19 @@ function follow(agents: AgentWithLatest[]): Promise<void> {
   return dismiss((agentId) => agentId !== "" && !unread.has(agentId));
 }
 
+// How many times the app has come to the front. Each time, the computer's stream brings it up to date.
+let fronts = 0;
+AppState.addEventListener("change", (state) => {
+  if (state === "active") fronts += 1;
+});
+
 // iOS wakes the app for that push, in the background and unseen, and the app asks the computer how the agents stand, and sets its icon's count. In front, the app follows the computer's stream already.
 TaskManager.defineTask(READ_ELSEWHERE, async () => {
   if (!isPaired() || AppState.currentState === "active") return;
+  const asked = fronts;
   const agents = await request<AgentWithLatest[]>("/agents").catch(() => null);
-  // The app may have come to the front while it asked, and then the stream knows better.
-  if (agents && AppState.currentState !== "active") await Promise.all([follow(agents), Notifications.setBadgeCountAsync(unreadIn(agents))]).catch(() => undefined);
+  // An answer that comes after the app has been in front is older than what the stream told it there.
+  if (agents && fronts === asked) await Promise.all([follow(agents), Notifications.setBadgeCountAsync(unreadIn(agents))]).catch(() => undefined);
 });
 
 /**
