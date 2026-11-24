@@ -36,7 +36,7 @@ Then count the machines that hold an address:
 (cd relay && npx wrangler d1 execute sidebots-relay --remote --command "select count(*) as machines from machines where tunnel_id is not null")
 ```
 
-Each takes one DNS record of the zone and one tunnel of the account. A zone on Cloudflare's Free plan holds 200 records, a few of them the zone's own, and the account holds 1,000 tunnels. Issue #157 has what each limit costs to lift.
+Each takes one DNS record of the zone and one tunnel of the account. `relay/README.md` says how many of each Cloudflare allows, and issue #157 what each limit costs to lift.
 
 ## 2. The Mac app
 

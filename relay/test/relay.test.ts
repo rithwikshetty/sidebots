@@ -340,9 +340,9 @@ test("a new machine is told the relay has no room when the zone or the account i
   const { env, server, outside, cloudflare } = setup();
   const errors = context.mock.method(console, "error", () => {});
   const logged = () => errors.mock.calls.map((call) => String(call.arguments[0]));
-  const another = async () => {
+  const another = async (send = outside) => {
     const { privateKey, publicKey } = generateKeyPairSync("ed25519");
-    const response = await handle(signed("POST", "/machines", publicKey.export({ format: "jwk" }).x!, privateKey), env, outside);
+    const response = await handle(signed("POST", "/machines", publicKey.export({ format: "jwk" }).x!, privateKey), env, send);
     return [response.status, ((await response.json()) as { error?: string }).error];
   };
 
@@ -353,23 +353,28 @@ test("a new machine is told the relay has no room when the zone or the account i
   assert.match(logged()[0], /Cloudflare answered 400 to POST \/zones\/\w+\/dns_records: Cloudflare's words\./);
   assert.equal(logged()[1], "The relay has no room for another machine. The zone holds 0 of 0 DNS records, and the account 0 of 1000 tunnels.");
 
+  // A machine that takes the zone's last record, and whose tunnel then fails to take its route, has its record all the same.
+  cloudflare.most.records = 1;
+  const unrouted = ((input, init) => (String(input).endsWith("/configurations") ? Response.json({ success: false }, { status: 500 }) : outside(input, init))) as typeof fetch;
+  assert.deepEqual(await another(unrouted), [502, "The relay couldn't make the machine's tunnel."]);
+
   // A zone with room again takes the machine as it tries again.
   cloudflare.most.records = 200;
   const { id } = await server.register();
 
   // Cloudflare refuses a tunnel while the zone and the account have room, which is some other failure.
-  cloudflare.most.tunnels = 1;
+  cloudflare.most.tunnels = 2;
   assert.deepEqual(await another(), [502, "The relay couldn't make the machine's tunnel."]);
 
   // The account has no tunnel left.
-  env.TUNNELS = "1";
+  env.TUNNELS = "2";
   assert.deepEqual(await another(), [503, "The relay has no room for another machine."]);
-  assert.equal(logged().at(-1), "The relay has no room for another machine. The zone holds 1 of 200 DNS records, and the account 1 of 1 tunnels.");
+  assert.equal(logged().at(-1), "The relay has no room for another machine. The zone holds 2 of 200 DNS records, and the account 2 of 2 tunnels.");
   assert.equal((await server.register()).id, id);
 
   const log = context.mock.method(console, "log", () => {});
   await logRoom(env, outside);
-  assert.deepEqual(log.mock.calls.map((call) => call.arguments[0]), ["The zone holds 1 of 200 DNS records, and the account 1 of 1 tunnels."]);
+  assert.deepEqual(log.mock.calls.map((call) => call.arguments[0]), ["The zone holds 2 of 200 DNS records, and the account 2 of 2 tunnels."]);
 });
 
 test("one network address registers three new machines a minute, and a machine it registered can always come back", async () => {

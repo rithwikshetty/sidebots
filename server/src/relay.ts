@@ -50,7 +50,7 @@ export function relay(store: Store, origin: string, port: number, version?: stri
       const response = await call("/machines", publicKey, privateKey, JSON.stringify({ port, ...counts }));
       if (!response.ok) {
         // The relay says why in `error`.
-        const { error } = (await response.json().catch(() => ({}))) as { error?: string };
+        const error = ((await response.json().catch(() => null)) as { error?: string } | null)?.error;
         throw new Error(`The relay answered ${response.status} to registering${error ? `: ${error}` : "."}`);
       }
       const { id, address, tunnelToken } = (await response.json()) as { id: string; address: string; tunnelToken: string };

@@ -6,7 +6,7 @@
   "compatibility_date": "2026-11-01",
   "routes": [{ "pattern": "relay.sidebots.app", "custom_domain": true }],
   "d1_databases": [{ "binding": "DB", "database_name": "sidebots-relay", "database_id": "77e61447-2164-455c-b419-9451cb4f39ce" }],
-  // Removes the machines that have gone quiet, once a day, and logs how full the zone and the account are.
+  // Logs how full the zone and the account are, once a day, and removes the machines that have gone quiet.
   "triggers": { "crons": ["17 3 * * *"] },
   // Keeps the lines the relay logs, to read in the Cloudflare dashboard, and not Cloudflare's own log of each request, which holds the network address a machine calls from.
   "observability": { "logs": { "enabled": true, "invocation_logs": false } },

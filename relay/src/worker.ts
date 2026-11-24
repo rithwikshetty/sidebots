@@ -160,7 +160,17 @@ export async function handle(request: Request<unknown, unknown>, env: Env, send:
     try {
       let tunnelId = tunnel_id;
       if (!tunnelId) {
-        const made = await makeTunnel(tunnelsOf(env), address, send);
+        let made: string;
+        try {
+          made = await makeTunnel(tunnelsOf(env), address, send);
+        } catch (failure) {
+          // Cloudflare refuses a new tunnel or DNS record when the account or the zone is full.
+          const room = await roomOf(env, send).catch(() => null);
+          if (!room?.full) throw failure;
+          console.error(failure);
+          console.error(`The relay has no room for another machine. ${room.said}`);
+          return answer({ error: "The relay has no room for another machine." }, 503);
+        }
         // Two registrations at once both make a tunnel, and the one that is saved first stays.
         const { meta } = await env.DB.prepare("update machines set tunnel_id = ?1 where id = ?2 and tunnel_id is null").bind(made, id).run();
         if (meta.changes === 0) await removeTunnel(tunnelsOf(env), made, address, send);
@@ -170,11 +180,7 @@ export async function handle(request: Request<unknown, unknown>, env: Env, send:
       return answer({ id, address, tunnelToken }, 201);
     } catch (failure) {
       console.error(failure);
-      // Cloudflare refuses a new machine's tunnel or DNS record when the account or the zone is full.
-      const room = tunnel_id ? null : await roomOf(env, send).catch(() => null);
-      if (!room?.full) return answer({ error: "The relay couldn't make the machine's tunnel." }, 502);
-      console.error(`The relay has no room for another machine. ${room.said}`);
-      return answer({ error: "The relay has no room for another machine." }, 503);
+      return answer({ error: "The relay couldn't make the machine's tunnel." }, 502);
     }
   }
 
@@ -237,7 +243,7 @@ export async function logRoom(env: Env, send: typeof fetch = fetch): Promise<voi
 export default {
   fetch: (request, env) => handle(request, env),
   scheduled: async (_controller, env) => {
+    await logRoom(env).catch((failure) => console.error(failure));
     await removeStale(env);
-    await logRoom(env);
   },
 } satisfies ExportedHandler<Env>;
