@@ -311,6 +311,8 @@ export function createStore<Picked>(platform: Platform<Picked>) {
   }
 
   const paging = new Map<string, Promise<boolean>>();
+  // How many runs each chat has asked for or let go of. A chat takes only the run it asked for last, so one that comes after another jump, or after Jump to latest, is dropped.
+  const runs = new Map<string, number>();
 
   /**
    * Fetches the page before the oldest message the app has of a chat. False
@@ -334,6 +336,8 @@ export function createStore<Picked>(platform: Platform<Picked>) {
     const path = `/agents/${agentId}/messages?before=${oldest.id}${through === undefined ? "" : `&through=${through}`}`;
     const running = paging.get(path);
     if (running) return running;
+    const run = (runs.get(agentId) ?? 0) + 1;
+    if (through !== undefined) runs.set(agentId, run);
     const done = request<Message[]>(path)
       .finally(() => paging.delete(path))
       .then((page) => {
@@ -343,7 +347,7 @@ export function createStore<Picked>(platform: Platform<Picked>) {
           return page.length > 0;
         }
         const newest = known.findIndex((message) => message.id === oldest.id);
-        if (!page.length || newest < 0) return page.length > 0;
+        if (runs.get(agentId) !== run || !page.length || newest < 0) return page.length > 0;
         // A run from the last message before the hole keeps the stretch it ends.
         const start = known.findIndex((message) => message.id === page[0].id);
         const kept = start >= 0 && start < newest ? known.slice(0, start) : [];
@@ -361,6 +365,7 @@ export function createStore<Picked>(platform: Platform<Picked>) {
 
   /** Lets go of the stretch from further back in a chat, and its hole, so the chat holds its newest messages again. */
   function backToNewest(agentId: string): void {
+    runs.set(agentId, (runs.get(agentId) ?? 0) + 1);
     const known = state.messages[agentId] ?? NO_MESSAGES;
     const hole = state.holes[agentId];
     if (hole !== undefined) set({ messages: { ...state.messages, [agentId]: known.slice(known.findIndex((message) => message.id === hole) + 1) } });

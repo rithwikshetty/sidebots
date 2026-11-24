@@ -1,9 +1,9 @@
 import { test, type TestContext } from "node:test";
 import assert from "node:assert/strict";
-import { CONTRACT_HEADER, CONTRACT_VERSION, KEEPALIVE_MS, PAGE, RUN, type AgentWithLatest, type Connected, type Message, type StreamEvent } from "../../server/src/contract.ts";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { CONTRACT_HEADER, CONTRACT_VERSION, KEEPALIVE_MS, PAGE, RUN, type AgentWithLatest, type Connected, type Message, type StreamEvent } from "../../server/src/contract.ts";
 import { openStore } from "../../server/src/store.ts";
 import { ApiError } from "../api.ts";
 import { createStore } from "../store.ts";
@@ -470,6 +470,33 @@ test("a message any distance back in a chat thousands long is a request or two a
   assert.equal(store.useHole(id), undefined);
   computer.close();
   store.stopSync();
+});
+
+test("a run that comes after the chat asked for another, or went back to its newest messages, is dropped", async (t) => {
+  const { store, answers } = app(t, { messages: { mochi: [row("nine"), row("ten")] } });
+  const ids = () => store.useMessages("mochi").map((message) => message.id);
+  const waiting: Record<string, (page: Message[]) => void> = {};
+  for (const from of ["one", "five"]) answers[`GET /agents/mochi/messages?before=nine&through=${from}`] = () => new Promise<Message[]>((resolve) => (waiting[from] = resolve));
+  store.useMessages("mochi");
+
+  // Opened at one message and then at another, the chat takes the second run whichever comes first.
+  const first = store.loadOlder("mochi", "one");
+  const second = store.loadOlder("mochi", "five");
+  waiting.five([row("five"), row("six")]);
+  await second;
+  waiting.one([row("one"), row("two")]);
+  await first;
+  assert.deepEqual(ids(), ["five", "six", "nine", "ten"]);
+  assert.equal(store.useHole("mochi"), "six");
+
+  // Back at the newest messages, the run fetched for the hole that was there doesn't bring it back.
+  answers["GET /agents/mochi/messages?before=nine&through=six"] = () => new Promise<Message[]>((resolve) => (waiting.six = resolve));
+  const filling = store.loadOlder("mochi", "six");
+  store.backToNewest("mochi");
+  waiting.six([row("six"), row("seven")]);
+  await filling;
+  assert.deepEqual(ids(), ["nine", "ten"]);
+  assert.equal(store.useHole("mochi"), undefined);
 });
 
 test("a change to an agent shows at once over what the server says, and changes go one at a time in the order they were made", async (t) => {

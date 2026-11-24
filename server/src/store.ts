@@ -852,8 +852,8 @@ export function openStore(home: string) {
     /**
      * A chat, oldest first: everything after a known message, the page before
      * one, or the latest page. With `through` as well as `before`, it is the
-     * run from the message `through` names on, through the one `before` names,
-     * or the first `RUN` of it when it is longer. What the agent and another
+     * run from the message `through` names to the one `before` names, both of
+     * them in it, or the first `RUN` of it when it is longer. What the agent and another
      * agent said to each other is in both their chats.
      */
     messages(agentId: string, { after, before, through }: { after?: string; before?: string; through?: string } = {}): Message[] {

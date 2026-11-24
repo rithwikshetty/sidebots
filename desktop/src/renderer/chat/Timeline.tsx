@@ -115,9 +115,10 @@ function drawRow({ item: row, extraData }: LegendListRenderItemProps<Row>) {
   );
 }
 
-/** The hole after a stretch from further back, drawn as the person scrolls down to it, which fetches the run of the chat after the stretch. */
+/** The hole after a stretch from further back, drawn as the person scrolls down to it, which fetches the run of the chat after the stretch, and again when the computer is back in reach. */
 function HoleRow({ agentId, after }: { agentId: string; after: string }) {
-  useEffect(() => void loadOlder(agentId, after).catch(() => undefined), [agentId, after]);
+  const online = useOnline();
+  useEffect(() => void (online && loadOlder(agentId, after).catch(() => undefined)), [agentId, after, online]);
   return (
     <div className="grid h-16 place-items-center text-ink3">
       <Spinner label="Loading messages" />
@@ -202,13 +203,13 @@ export const Timeline = memo(function Timeline({
   const [openedAt] = useState(() => Date.now() - CLOCK_SLACK_MS);
   // A chat that opens with messages, or with some to fetch, opens at its end. One with none has no end to open at, and a list still waiting to open at one draws the first row it is given a frame late, after the copy of the message on its way has gone.
   const [opensAtEnd] = useState(() => messages.length > 0 || agent.latest !== null);
-  // Whether the chat has messages before the oldest the window holds.
-  const older = useRef(true);
+  // The oldest message the window holds that has nothing before it, once a page fetched before it came back empty.
+  const first = useRef<string | null>(null);
   // The rows that have shown a page.
   const [kept, setKept] = useState<string[]>([]);
   const keep = useCallback((message: Message) => setKept((ids) => (ids.includes(message.id) ? ids : [...ids, message.id])), []);
-  // They stay drawn wherever the chat is scrolled to, so each page stays as the person left it. So does the newest row, as in T3 Code, so the list has measured the end before the chat glides to it.
-  const pinned = useMemo(() => ({ keys: kept, bottom: 1 }), [kept]);
+  // They stay drawn wherever the chat is scrolled to, so each page stays as the person left it. So does the newest row, as in T3 Code, so the list has measured the end before the chat glides to it, except a hole's, which is drawn only once the person scrolls down to it.
+  const pinned = useMemo(() => ({ keys: kept, bottom: hole === undefined ? 1 : 0 }), [kept, hole]);
 
   useEffect(() => {
     loadMessages(agent.id)
@@ -278,7 +279,8 @@ export const Timeline = memo(function Timeline({
 
   // The page before the oldest message the window holds. With none yet, as while the first page is on its way, there is nothing to fetch before.
   const fetchOlder = useCallback(() => {
-    if (older.current && held.current.messages.length > 0) return loadOlder(agent.id).then((more) => void (older.current = more), () => undefined);
+    const oldest = held.current.messages[0]?.id;
+    if (oldest && oldest !== first.current) return loadOlder(agent.id).then((more) => void (more || (first.current = oldest)), () => undefined);
   }, [agent.id]);
 
   // Something new at the end while the person reads further up shows the button that jumps to it, until they are back at the end.
