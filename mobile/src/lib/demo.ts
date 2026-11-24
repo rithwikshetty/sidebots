@@ -188,6 +188,7 @@ function addAgent(name: string, avatarId: string, at: number): Agent {
     color: null,
     session_id: null,
     read_at: at,
+    chat_changes: 0,
     created_at: at,
   };
   agents.push(agent);
@@ -227,7 +228,9 @@ function shown(agent: Agent): AgentWithLatest {
   };
 }
 
+/** Says on the event stream how an agent now stands, with the message that was added or changed in its chat, which counts as a change to the chat. */
 function tell(agent: Agent, said: Message | null): void {
+  if (said) agent.chat_changes++;
   hearing.forEach((hear) => hear({ message: said, agent: shown(agent) }));
 }
 
