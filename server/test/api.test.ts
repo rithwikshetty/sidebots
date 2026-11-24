@@ -589,7 +589,10 @@ test("an agent moved to another provider hands over: it saves its memory where i
   // A provider the person hasn't set up is refused, and so is a model of the provider the agent leaves.
   assert.equal((await call(ME, "PATCH", `/agents/${agent.id}`, { provider: "abacus" })).status, 400);
   assert.equal((await call(ME, "PATCH", `/agents/${agent.id}`, { provider: "codex", model: "opus" })).status, 400);
-  const moved = (await call(ME, "PATCH", `/agents/${agent.id}`, { provider: "codex" })).json;
+  // A Claude Code model sent from another device as the move lands is checked against the provider the agent has moved to.
+  const [move, late] = await Promise.all([call(ME, "PATCH", `/agents/${agent.id}`, { provider: "codex" }), call(ME, "PATCH", `/agents/${agent.id}`, { model: "haiku" })]);
+  assert.equal(late.status, 400);
+  const moved = move.json;
   const opus = { provider: "claude", model: "opus", effort: "medium", fast: false };
   const sol = { provider: "codex", model: "sol", effort: "medium", fast: false };
   assert.deepEqual([moved.provider, moved.model, moved.effort, moved.ran_on, moved.session_id], ["codex", "sol", "medium", opus, "session-1"]);
@@ -1550,6 +1553,24 @@ test("an ask closes unanswered when the person sends a message instead, takes to
   store.addMessage(agent.id, "agent", "Can I run this command?", "done", { ask: "waiting" });
   store.requeueInterrupted();
   assert.deepEqual((await asks()).at(-1), "unanswered");
+});
+
+test("a server that stops while an agent hands over to another provider hands over again, and the notice it left is no fresh start", async () => {
+  const { store, queue, call, say } = setup(async () => reply("sure"));
+  const agent = (await call(ME, "POST", "/agents", { name: "Tony", avatarId: "mochi" })).json;
+  const opus = { provider: "claude", model: "opus", effort: "medium", fast: false } as const;
+  const sol = { provider: "codex", model: "sol", effort: "medium", fast: false } as const;
+  store.addMessage(agent.id, "sidebots", "Switched from Claude Code Opus Medium to Codex Sol Medium", "running", { switched: { from: opus, to: sol } });
+  store.requeueInterrupted();
+  assert.equal(store.nextQueued(agent.id), undefined);
+  await say(ME, agent.id, "hi");
+  await queue.kick(agent.id);
+  const messages = (await call(ME, "GET", `/agents/${agent.id}/messages`)).json.map((m: { sender: string; body: string; status: string }) => [m.sender, m.body, m.status]);
+  assert.deepEqual(messages, [
+    ["sidebots", "Switched from Claude Code Opus Medium to Codex Sol Medium", "done"],
+    ["person", "hi", "done"],
+    ["agent", "sure", "done"],
+  ]);
 });
 
 /** A turn that works until it is stopped, as a provider's does: it then ends with no reply, in the session it had. */

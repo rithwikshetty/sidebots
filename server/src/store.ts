@@ -874,8 +874,14 @@ export function openStore(home: string) {
       return one(`select * from messages where ${FOR_AGENT} and status = 'queued' order by rowid limit 1`, agentId);
     },
 
-    /** Puts turns that a stopped server left running back in the queue, with the asks they left waiting closed, and lists the agents with queued turns. */
+    /**
+     * Puts turns that a stopped server left running back in the queue, with
+     * the asks they left waiting closed, and lists the agents with queued
+     * turns. A switch notice that was handing over is done with, since the
+     * turn it came before hands over again.
+     */
     requeueInterrupted(): string[] {
+      db.prepare("update messages set status = 'done' where status = 'running' and switched is not null").run();
       db.prepare("update messages set status = 'queued' where status = 'running'").run();
       db.prepare("update messages set ask = 'unanswered' where ask = 'waiting'").run();
       // A message one agent sent another waits in the other's queue.

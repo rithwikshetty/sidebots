@@ -110,8 +110,6 @@ export function createApi(store: Store, queue: Queue, connections: Connections, 
    * starts on there, and keeps its effort when the provider has it.
    */
   app.patch("/agents/:id", async (c) => {
-    const agent = ownAgent(c.var.person, c.req.param("id"));
-    if (!agent) return c.json({ error: "No such agent." }, 404);
     const { name, avatarId, provider, model, effort, fast, muted, hidden, color } = await c.req.json<{
       name?: string;
       avatarId?: string;
@@ -123,6 +121,9 @@ export function createApi(store: Store, queue: Queue, connections: Connections, 
       hidden?: boolean;
       color?: string | null;
     }>();
+    // The agent as it is once the body is in, so a change that came in meanwhile is checked against.
+    const agent = ownAgent(c.var.person, c.req.param("id"));
+    if (!agent) return c.json({ error: "No such agent." }, 404);
     const changes: AgentChanges = {};
     if (name !== undefined) {
       if (!name.trim()) return c.json({ error: "An agent needs a name." }, 400);
