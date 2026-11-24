@@ -154,7 +154,7 @@ test("what an agent's jobs sent since it last replied is the latest few of them,
 test("a turn counts on the day it ran by the computer's clock, and a day without one counts nothing", (t) => {
   t.mock.timers.enable({ apis: ["Date"], now: new Date(2026, 10, 10, 23, 59) });
   const { store, person, maya, theo } = withAgents();
-  const days = () => store.usage(person.id, []).days.map((day) => [day.day, day.cost, day.tokens]);
+  const days = () => store.usage(person.id).days.map((day) => [day.day, day.cost, day.tokens]);
   store.addUsage(maya.id, "reply", { sessionId: "evening", cost: 1, tokens: 1000 }, false);
   // Two minutes on, it is the next day.
   t.mock.timers.tick(2 * 60_000);
@@ -320,7 +320,7 @@ test("a database that counted turns without their tokens keeps the turns, and co
   // Nobody can tell how many of the session's 900,000 tokens the next turn used, so it counts from the one after.
   store.addUsage(agent.id, "reply", { sessionId: "chat", cost: 3, tokens: 900_000 }, true);
   store.addUsage(agent.id, "reply", { sessionId: "chat", cost: 3.5, tokens: 950_000 }, true);
-  assert.deepEqual(store.usage(person.id, []).used.map((used) => ({ ...used })), [{ agent_id: agent.id, kind: "reply", turns: 3, cost: 3.5, tokens: 50_000 }]);
+  assert.deepEqual(store.usage(person.id).used.map((used) => ({ ...used })), [{ agent_id: agent.id, kind: "reply", turns: 3, cost: 3.5, tokens: 50_000 }]);
 });
 
 test("a Codex session from before the connections' tools, or before those tools changed, gets a fresh start, since a Codex chat keeps the tools it started with", () => {

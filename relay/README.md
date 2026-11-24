@@ -10,7 +10,7 @@ The relay gives each Sidebots server an address under the zone, such as `<machin
 
 A notice is one of three things. A notification comes as `sealed`, which only the phone can read, with `messageId`. Word that the person read something on another device comes as `read`, which is `true` and names neither the chat nor the message: it reaches Apple as a background push that wakes the app, and the app asks its own computer what is left unread. The end of a Live Activity comes as `ended`, which is `resting`, `replied` or `failed`, the state the agent's avatar is left in. That one word is all the relay ever reads of an agent, and it goes to Apple under the topic `<app identifier>.push-type.liveactivity`, which the same push key covers.
 
-`src/worker.ts` describes how a server signs its requests. `src/cloudflare.ts` makes and removes tunnels and their DNS records. `src/apple.ts` sends to Apple's push service.
+`src/worker.ts` describes how a server signs its requests. `src/cloudflare.ts` makes, removes and counts tunnels and their DNS records. `src/apple.ts` sends to Apple's push service.
 
 ## Run your own
 
@@ -47,3 +47,7 @@ You need your own relay when you build your own copy of the app, since Apple del
 7. Start the server with `SIDEBOTS_RELAY=https://<the relay's address>`.
 
 The relay lets one network address register three new machines a minute, sends one machine at most `NOTICES_PER_DAY` notices a day, and once a day removes the machines it hasn't heard from in 60 days, with their tunnels and addresses. A running server registers again each day, so only a machine that has been off or away that long is removed. The relay keeps a removed machine's rows in `turns`.
+
+Each machine takes one DNS record of the zone and one tunnel of the account, and Cloudflare limits both. A zone on the Free plan holds 200 records, or 1,000 if it was made before September 2024, and a Pro or Business zone holds 3,500 ([DNS records quota](https://developers.cloudflare.com/dns/manage-dns-records/)). An account holds 1,000 tunnels and can buy more ([Tunnels for Platforms](https://developers.cloudflare.com/tunnel/features/tunnels-for-platforms/)), and `TUNNELS` in `wrangler.jsonc` is how many it holds. When Cloudflare refuses a new machine's tunnel or record and the zone or the account is full, the relay answers `503`, "The relay has no room for another machine." The machines that have an address keep it.
+
+Once a day the relay logs how full both are, as `The zone holds 9 of 200 DNS records, and the account 5 of 1000 tunnels.` It also logs each failure to make a tunnel, with Cloudflare's reason. Cloudflare keeps these lines for a few days, under the Worker's logs in its dashboard. It keeps no log of each request, since that would hold the network address a machine calls from.

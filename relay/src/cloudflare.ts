@@ -8,17 +8,25 @@ const API = "https://api.cloudflare.com/client/v4";
 /** What the relay needs to make tunnels: an API token that can edit tunnels on the account and DNS records on the zone. */
 export type Tunnels = { token: string; accountId: string; zoneId: string };
 
-/** Calls Cloudflare's API and returns the call's result. Removing something that is already gone counts as done. `send` is how the relay reaches Cloudflare. */
-export async function cloudflare<T>(token: string, send: typeof fetch, method: string, path: string, body?: object): Promise<T> {
+/** Cloudflare's answer to a call: its result, and for a list how many there are in all. */
+type Answer<T> = { result: T; result_info?: { total_count: number } };
+
+/** Calls Cloudflare's API and returns its answer. Removing something that is already gone counts as done. `send` is how the relay reaches Cloudflare. */
+async function ask<T>(token: string, send: typeof fetch, method: string, path: string, body?: object): Promise<Answer<T>> {
   const response = await send(`${API}${path}`, {
     method,
     headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
     body: body && JSON.stringify(body),
   });
-  if (method === "DELETE" && response.status === 404) return null as T;
-  const answer = await response.json<{ success: boolean; result: T; errors?: { message: string }[] }>().catch(() => null);
+  if (method === "DELETE" && response.status === 404) return { result: null as T };
+  const answer = await response.json<Answer<T> & { success: boolean; errors?: { message: string }[] }>().catch(() => null);
   if (!answer?.success) throw new Error(`Cloudflare answered ${response.status} to ${method} ${path}: ${answer?.errors?.map((error) => error.message).join(" ") ?? ""}`);
-  return answer.result;
+  return answer;
+}
+
+/** Calls Cloudflare's API and returns the call's result. */
+export async function cloudflare<T>(token: string, send: typeof fetch, method: string, path: string, body?: object): Promise<T> {
+  return (await ask<T>(token, send, method, path, body)).result;
 }
 
 /** Makes a tunnel for the machine and points `address` at it. Returns the tunnel's id. */
@@ -52,4 +60,14 @@ export async function removeTunnel(tunnels: Tunnels, tunnelId: string, address: 
   // A machine whose `cloudflared` is still running holds connections, which go first.
   await cloudflare(token, send, "DELETE", `/accounts/${accountId}/cfd_tunnel/${tunnelId}/connections`);
   await cloudflare(token, send, "DELETE", `/accounts/${accountId}/cfd_tunnel/${tunnelId}`);
+}
+
+/** How many DNS records the zone holds and may hold, and how many tunnels the account holds. A zone whose records count against its account's quota has none of its own. */
+export async function capacity(tunnels: Tunnels, send: typeof fetch): Promise<{ records: number; recordsMost: number; tunnels: number }> {
+  const { token, accountId, zoneId } = tunnels;
+  const [records, made] = await Promise.all([
+    cloudflare<{ record_usage: number; record_quota: number | null }>(token, send, "GET", `/zones/${zoneId}/dns_records/usage`),
+    ask(token, send, "GET", `/accounts/${accountId}/cfd_tunnel?is_deleted=false&per_page=1`),
+  ]);
+  return { records: records.record_usage, recordsMost: records.record_quota ?? Infinity, tunnels: made.result_info!.total_count };
 }

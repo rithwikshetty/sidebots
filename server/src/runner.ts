@@ -245,7 +245,7 @@ const FIRST_UPDATE_MS = 60_000;
 const UPDATE_GAP_MS = 3 * 60_000;
 // How long an ask waits for the person.
 const ASK_WAIT_MS = 30 * 60_000;
-// How long what a provider said of a plan's limits stands before it is asked again, and how long it is given to answer: half as long as the phone waits for Usage.
+// How long what a provider said of a plan's limits stands before it is asked again, and how long it is given to answer.
 const LIMITS_FRESH_MS = 60_000;
 const LIMITS_WAIT_MS = 5_000;
 /** What a job's run replies when it has nothing to tell the person. */
@@ -391,10 +391,8 @@ export function createQueue(store: Store, drivers: Drivers, connections: Connect
   const arrivals = new Map<string, () => void>();
   // The asks that wait for the person, by the message that asks: whose agent's it is, the connection it asks for when it asks for one, what to call with the person's answer, and what closes it unanswered, with what the agent is told.
   const asks = new Map<string, { agentId: string; connection?: Connection; answer: (allow: boolean) => void; close: (words: string) => void }>();
-  // The last time each person's provider was asked where the limits of their plan stand: when, and the ask itself, which ends once what it said is kept.
-  const limitsAsked = new Map<string, { at: number; done: Promise<void> }>();
-  // The logins a provider last said are API keys, each as the person and the provider.
-  const keyLogins = new Set<string>();
+  // When each person's provider was last asked where the limits of their plan stand.
+  const limitsAsked = new Map<string, number>();
   /** Closes the asks an agent has waiting, unanswered. */
   const stopWaiting = (agentId: string, words: string) => {
     for (const ask of [...asks.values()]) if (ask.agentId === agentId) ask.close(words);
@@ -767,35 +765,23 @@ export function createQueue(store: Store, drivers: Drivers, connections: Connect
     /**
      * Asks each provider the person's agents sign in to with the login in
      * their config folder where the limits of that login's plan stand, and
-     * keeps what it says. A provider asked in the last minute isn't asked
-     * again: a call made while that ask is out waits for it. One that fails
-     * or doesn't answer in time leaves what it last said. Answers the
-     * providers whose login is an API key, which has no plan.
+     * keeps what it says, which the store tells the person's devices. A
+     * provider asked in the last minute isn't asked again. One that fails or
+     * doesn't answer in time leaves what it last said.
      */
-    async askLimits(personId: string): Promise<Provider[]> {
-      const accounts = store.accounts(personId);
-      await Promise.all(
-        accounts.map(async ({ provider, config_dir }) => {
-          if (store.apiKey(personId, provider) !== undefined) return;
-          const key = `${personId} ${provider}`;
-          const last = limitsAsked.get(key);
-          if (last && now() - last.at < LIMITS_FRESH_MS) return last.done;
-          const giveUp = AbortSignal.timeout(LIMITS_WAIT_MS);
-          const late = new Promise<never>((_, reject) => giveUp.addEventListener("abort", () => reject(giveUp.reason)));
-          const done = Promise.race([drivers[provider].limits(config_dir, giveUp), late]).then(
-            (limits) => {
-              if (limits) {
-                keyLogins.delete(key);
-                store.setLimits(personId, provider, limits);
-              } else keyLogins.add(key);
-            },
-            () => undefined,
-          );
-          limitsAsked.set(key, { at: now(), done });
-          return done;
-        }),
-      );
-      return accounts.map(({ provider }) => provider).filter((provider) => keyLogins.has(`${personId} ${provider}`));
+    askLimits(personId: string): void {
+      for (const { provider, config_dir } of store.accounts(personId)) {
+        if (store.apiKey(personId, provider) !== undefined) continue;
+        const key = `${personId} ${provider}`;
+        const last = limitsAsked.get(key);
+        if (last !== undefined && now() - last < LIMITS_FRESH_MS) continue;
+        limitsAsked.set(key, now());
+        const giveUp = AbortSignal.timeout(LIMITS_WAIT_MS);
+        const late = new Promise<never>((_, reject) => giveUp.addEventListener("abort", () => reject(giveUp.reason)));
+        void Promise.race([drivers[provider].limits(config_dir, giveUp), late])
+          .then((limits) => store.setLimits(personId, provider, limits))
+          .catch(() => undefined);
+      }
     },
 
     /** Starts the clock that runs each job when its time comes. Returns a function that stops it. */

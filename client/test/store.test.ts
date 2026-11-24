@@ -1,6 +1,6 @@
 import { test, type TestContext } from "node:test";
 import assert from "node:assert/strict";
-import { CONTRACT_HEADER, CONTRACT_VERSION, KEEPALIVE_MS, PAGE, type AgentWithLatest, type Connected, type Message, type StreamEvent } from "../../server/src/contract.ts";
+import { CONTRACT_HEADER, CONTRACT_VERSION, KEEPALIVE_MS, PAGE, type AgentWithLatest, type Connected, type Message, type StreamEvent, type Usage } from "../../server/src/contract.ts";
 import { ApiError } from "../api.ts";
 import { createStore } from "../store.ts";
 
@@ -225,6 +225,63 @@ test("an agent the app has that the stream brings with no message keeps its plac
   events.say({ message: null, agent: agent("ember") });
   await settle();
   assert.deepEqual(store.useAgents().map((each) => each.id), ["ember", "mochi", "cog", "pip"]);
+  store.stopSync();
+});
+
+test("a provider's plan from the stream takes its place in the usage the app has, and an event the app doesn't know is passed over", async (t) => {
+  const { store, answers, streams, tick } = app(t);
+  answers["GET /agents"] = () => [agent("mochi")];
+  const events = stream();
+  streams.push(() => events.response);
+  const told: number[] = [];
+  store.onAgents((agents) => told.push(agents.length));
+  store.startSync();
+  await settle();
+  const weekly = { name: "Weekly limit", used: 0.4, resets_at: 100, at: 1 };
+
+  // An app that hasn't fetched usage has none to change.
+  events.say({ plan: { provider: "claude", apiKey: false, limits: [weekly] } });
+  await settle();
+  assert.equal(store.useUsage(), null);
+
+  // A plan the stream brings while usage is on its way is newer than what the computer answers with.
+  const codex = { provider: "codex" as const, apiKey: false, limits: [] };
+  let answer!: (usage: Usage) => void;
+  answers["GET /usage"] = () => new Promise((resolve) => (answer = resolve));
+  const loading = store.loadUsage();
+  await settle();
+  events.say({ plan: { provider: "claude", apiKey: false, limits: [weekly] } });
+  await settle();
+  answer({ used: [], days: [], accounts: [{ provider: "claude", apiKey: false, limits: [] }, codex] });
+  await loading;
+  assert.deepEqual(store.useUsage()?.accounts, [{ provider: "claude", apiKey: false, limits: [weekly] }, codex]);
+
+  events.say({ plan: { provider: "codex", apiKey: true, limits: [] } });
+  await settle();
+  assert.deepEqual(store.useUsage()?.accounts, [{ provider: "claude", apiKey: false, limits: [weekly] }, { provider: "codex", apiKey: true, limits: [] }]);
+
+  // A plan that waits for a fetch may name a limit that resets meanwhile, which is left out, as the computer leaves it out.
+  const reset = { name: "5-hour limit", used: 1, resets_at: 4, at: 1 };
+  const refetched = store.loadUsage();
+  await settle();
+  events.say({ plan: { provider: "claude", apiKey: false, limits: [reset, weekly] } });
+  await settle();
+  tick(5);
+  answer({ used: [], days: [], accounts: [{ provider: "claude", apiKey: false, limits: [weekly] }, codex] });
+  await refetched;
+  assert.deepEqual(store.useUsage()?.accounts[0], { provider: "claude", apiKey: false, limits: [weekly] });
+  // So is one in a plan that comes late.
+  events.say({ plan: { provider: "claude", apiKey: false, limits: [reset, weekly] } });
+  await settle();
+  assert.deepEqual(store.useUsage()?.accounts[0], { provider: "claude", apiKey: false, limits: [weekly] });
+
+  // What a newer computer might send, which this app reads nothing of, and the stream goes on.
+  events.write(`event: news\ndata: ${JSON.stringify({ news: "something new" })}\n\n`);
+  events.say({ message: null, agent: agent("mochi", { name: "Mochi" }) });
+  await settle();
+  assert.equal(store.useAgent("mochi")?.name, "Mochi");
+  assert.equal(events.closed(), false);
+  assert.deepEqual(told, [1, 1]);
   store.stopSync();
 });
 

@@ -3,7 +3,7 @@
 // the test controls do what they say. Each drives the server over HTTP as a
 // phone of Tester's would.
 
-import type { About, AgentWithLatest, Connected, Message, Usage } from "../../server/src/contract.ts";
+import { CONTRACT_VERSION, type About, type AgentWithLatest, type Connected, type Message, type Usage } from "../../server/src/contract.ts";
 import { expect, test, type TestServer } from "./fixtures.ts";
 
 /** Reads `read` until `done` holds, and resolves to what it read last. */
@@ -389,7 +389,7 @@ test.describe("the test controls", () => {
     await server.control("outage", { ms: 60_000 });
     const refused = await server.api("/agents");
     expect(refused.status).toBe(503);
-    expect(refused.headers.get("Sidebots-Contract")).toBe("5");
+    expect(refused.headers.get("Sidebots-Contract")).toBe(String(CONTRACT_VERSION));
     await server.control("outage", { ms: 0 });
     expect((await server.api("/agents")).status).toBe(200);
 
@@ -403,9 +403,9 @@ test.describe("the test controls", () => {
     expect(again.status).toBe(200);
     await again.close();
 
-    for (const [version, header] of [["older", "4"], ["newer", "6"], [null, "5"]] as const) {
+    for (const [version, header] of [["older", CONTRACT_VERSION - 1], ["newer", CONTRACT_VERSION + 1], [null, CONTRACT_VERSION]] as const) {
       await server.control("contract", { version });
-      expect((await server.api("/agents")).headers.get("Sidebots-Contract")).toBe(header);
+      expect((await server.api("/agents")).headers.get("Sidebots-Contract")).toBe(String(header));
     }
   });
 
