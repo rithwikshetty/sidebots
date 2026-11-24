@@ -3,8 +3,8 @@
 
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
-import { CONNECTIONS, MESSAGE_BYTES, PROVIDERS, fenced, scheduleWords } from "./contract.ts";
-import type { Agent, Ask, Connection, Effort, Found, Job, Limit, Message, Model, Provider, Question, Schedule, TurnKind } from "./contract.ts";
+import { CONNECTIONS, MESSAGE_BYTES, PROVIDERS, fenced, runsFast, sameSelection, scheduleWords, selectionOf, selectionWords } from "./contract.ts";
+import type { Agent, Ask, Connection, Effort, Found, Job, Limit, Message, Model, Provider, Question, Schedule, Selection, Switched, TurnKind } from "./contract.ts";
 import { CONNECTION_TOOLS, type Connections, type Servers } from "./connections.ts";
 import type { Person, Store, Upload } from "./store.ts";
 
@@ -42,6 +42,8 @@ export type Turn = {
   apiKey?: string;
   model: Model;
   effort: Effort;
+  /** Whether the turn runs in the provider's fast mode, which its model then has. */
+  fast: boolean;
   /** False for a job's run, whose session nothing comes back to. */
   keepSession: boolean;
   /** Stops the turn part way, when the person stops it or its agent is deleted. */
@@ -223,6 +225,10 @@ export function toolsFor(turn: Turn): Tool[] {
 
 /** What a fresh start shows in the chat. */
 const FRESH_START = "Fresh start";
+/** What a change of what the agent answers with shows in the chat, in an app that doesn't draw it. */
+export function switchedWords({ from, to }: Switched): string {
+  return `Switched from ${selectionWords(from, to).join(" ")} to ${selectionWords(to, from).join(" ")}`;
+}
 /** What a stopped turn shows in the chat. */
 const STOPPED = "Stopped";
 // A session this large gets a fresh start once its reply is in.
@@ -265,7 +271,7 @@ function asking({ title, what, facts, detail, why }: Question): string {
   return [`${title}: ${what}`, lines, detail.trim() && fenced(detail), why?.trim() && `> ${why.trim().replace(/\s+/g, " ")}`].filter(Boolean).join("\n\n");
 }
 
-/** What the agent is asked before its session is replaced. */
+/** What the agent is asked before its session is replaced: by a fresh one, or by one on another provider. */
 function remember(person: Person): string {
   return `This session is about to be replaced by a fresh one. Save what is worth keeping from it to your memory now: what you are in the middle of, what was decided, and what you learned about ${person.name}. Then reply "Saved."`;
 }
@@ -355,6 +361,14 @@ function fromAgent(message: Message, person: Person, { recent, quoted }: { recen
  * order they came, and then any job whose time has come. A message the person
  * sends during a turn goes into that turn instead of waiting for the next.
  *
+ * A turn runs on what the agent answers with as the turn starts, which the
+ * agent keeps as `ran_on`. When the person has picked something else since
+ * the agent's last turn, the chat says so first. A session doesn't cross to
+ * another provider, so an agent moved to one is handed over as for a fresh
+ * start: it saves what is worth keeping to its memory in the session it had,
+ * and starts a new one on the new provider
+ * with the latest of the chat.
+ *
  * An agent can ask another of the person's agents something. What it asks
  * waits in the other's queue as a message, and the other's reply comes back
  * the same way, so each agent's turn ends before the other's begins and
@@ -398,16 +412,20 @@ export function createQueue(store: Store, drivers: Drivers, connections: Connect
         for (const id of read) store.setStatus(id, asksMe(store.message(agent.id, id)) ? "failed" : "done");
         for (const id of unread) store.setStatus(id, "failed");
       };
-      const driver = drivers[agent.provider];
-      const account = store.account(person.id, agent.provider);
-      const apiKey = store.apiKey(person.id, agent.provider);
+      // How the person's agents run on a provider: its driver, the person's config folder for it, and their API key when they gave one.
+      const signedIn = (provider: Provider) => ({ driver: drivers[provider], account: store.account(person.id, provider), apiKey: store.apiKey(person.id, provider) });
+      const { driver, apiKey } = signedIn(agent.provider);
+      // What the agent's session is on: what its last turn ran on.
+      const ranOn = agent.ran_on ?? selectionOf(agent);
       const message = store.nextQueued(agentId);
       const job = message ? undefined : store.dueJob(agentId, now());
       // The files the agent has asked to send, which its next message takes.
       const files: Upload[] = [];
       const others = () => store.agentsFor(person.id).filter((each) => each.id !== agent.id);
-      const turn = async (text: string, rest: Pick<Turn, "followUps" | "seen" | "replied" | "sendUpdate"> & { id?: string; kind: TurnKind }) => {
-        if (!account) throw new Error(`${person.name} hasn't set up ${PROVIDERS[agent.provider].name} on this computer.`);
+      // Runs a turn on what the agent answers with, or on `on` when its session is still on something else.
+      const turn = async (text: string, rest: Pick<Turn, "followUps" | "seen" | "replied" | "sendUpdate"> & { id?: string; kind: TurnKind }, on: Selection = agent) => {
+        const { driver, account, apiKey } = signedIn(on.provider);
+        if (!account) throw new Error(`${person.name} hasn't set up ${PROVIDERS[on.provider].name} on this computer.`);
         const ask = (question: Question, withdrawn: AbortSignal) =>
           new Promise<Answer>((resolve) => {
             // An ask raised while working on what another agent asked shows in that agent's chat too, where the person may be.
@@ -439,14 +457,15 @@ export function createQueue(store: Store, drivers: Drivers, connections: Connect
           replied: rest.replied,
           sendUpdate: rest.sendUpdate,
           ask,
-          limits: (limits) => store.setLimits(person.id, agent.provider, limits),
+          limits: (limits) => store.setLimits(person.id, on.provider, limits),
           cwd: store.agentHome(agent.id),
           sessionId,
           spent: { cost: before?.cost ?? 0, tokens: before?.tokens ?? 0 },
           configDir: account.config_dir,
           apiKey,
-          model: agent.model,
-          effort: agent.effort,
+          model: on.model,
+          effort: on.effort,
+          fast: runsFast(on),
           keepSession: rest.kind !== "job",
           stop,
           searchHistory: (search) => found(store.searchMessages(person.id, search)),
@@ -506,6 +525,26 @@ export function createQueue(store: Store, drivers: Drivers, connections: Connect
         return apiKey ? words.replaceAll(apiKey, "your API key") : words;
       };
 
+      // A fresh start is no turn of the agent's own, so what the person picked waits for the turn after it.
+      const startsTurn = job !== undefined || (message !== undefined && message.sender !== "sidebots");
+      if (startsTurn && !sameSelection(ranOn, agent)) {
+        const handsOver = ranOn.provider !== agent.provider && agent.session_id !== null;
+        const switched = { from: ranOn, to: selectionOf(agent) };
+        const notice = store.addMessage(agent.id, "sidebots", switchedWords(switched), handsOver ? "running" : "done", { switched });
+        if (handsOver) {
+          // The session goes even when the agent couldn't save first, as for a fresh start.
+          await turn(remember(person), { kind: "memory", seen: () => undefined, replied: () => undefined }, ranOn).catch(() => undefined);
+          store.setSession(agent.id, null);
+          store.setStatus(notice.id, "done");
+        }
+        store.setRanOn(agent.id, agent);
+        // Stopped while it handed over, the turn it was for doesn't run.
+        if (stop.signal.aborted) stopped();
+        continue;
+      }
+
+      if (startsTurn && agent.ran_on === null) store.setRanOn(agent.id, agent);
+
       if (job) {
         try {
           const replies: string[] = [];
@@ -530,7 +569,7 @@ export function createQueue(store: Store, drivers: Drivers, connections: Connect
         // A fresh start. The session goes even when the agent couldn't save
         // first, since the chat itself is still there to search.
         store.setStatus(message.id, "running");
-        if (agent.session_id) await turn(remember(person), { kind: "memory", seen: () => undefined, replied: () => undefined }).catch(() => undefined);
+        if (agent.session_id) await turn(remember(person), { kind: "memory", seen: () => undefined, replied: () => undefined }, ranOn).catch(() => undefined);
         if (stop.signal.aborted) {
           // Stopped, a fresh start is called off, and the session stays.
           stopped([message.id]);
@@ -705,14 +744,13 @@ export function createQueue(store: Store, drivers: Drivers, connections: Connect
       for (const ask of [...asks.values()]) if (ask.connection === connection && store.agent(ask.agentId)?.person_id === personId) ask.answer(true);
     },
 
-    /** Stops whatever the agent is running, waits for it to end, and removes the sessions its provider keeps for it, as the agent is deleted. */
+    /** Stops whatever the agent is running, waits for it to end, and removes the sessions each provider it ran on keeps for it, as the agent is deleted. */
     async remove(agent: Agent): Promise<void> {
       removed.add(agent.id);
       stops.get(agent.id)?.abort();
       await busy.get(agent.id)?.catch(() => undefined);
-      const account = store.account(agent.person_id, agent.provider);
       try {
-        if (account) await drivers[agent.provider].forget(store.agentHome(agent.id), account.config_dir);
+        for (const { provider, config_dir } of store.accounts(agent.person_id)) await drivers[provider].forget(store.agentHome(agent.id), config_dir);
       } finally {
         removed.delete(agent.id);
       }

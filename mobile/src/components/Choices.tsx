@@ -10,8 +10,8 @@ const GAP = 4;
 const MAX_SCALE = 1.3;
 
 /**
- * A row of choices where one is in effect, as for an agent's model or
- * effort. The mark behind the choice in effect slides to a new one as it is
+ * A row of choices where one is in effect, as for a new agent's provider.
+ * The mark behind the choice in effect slides to a new one as it is
  * picked, as the system's segmented control does. The mark is the app's
  * colour; a `plain` row, as for tabs, has a raised light mark instead, so it
  * reads as a place to go rather than a setting.

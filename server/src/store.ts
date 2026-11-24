@@ -6,8 +6,8 @@ import { basename, join, resolve } from "node:path";
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
 
-import { COLOR, PROVIDERS, USAGE_DAYS, betweenAgents, readableColor } from "./contract.ts";
-import type { About, Agent, AgentWithLatest, Ask, Avatar, Connection, Day, Found, Job, Limit, Memory, Message, Provider, PushToken, Question, Schedule, Sender, Status, TurnKind, Usage, Used } from "./contract.ts";
+import { COLOR, PROVIDERS, USAGE_DAYS, betweenAgents, readableColor, selectionOf } from "./contract.ts";
+import type { About, Agent, AgentWithLatest, Ask, Avatar, Connection, Day, Found, Job, Limit, Memory, Message, Provider, PushToken, Question, Schedule, Selection, Sender, Status, Switched, TurnKind, Usage, Used } from "./contract.ts";
 
 export type Person = { id: string; name: string };
 /** How a person's agents sign in to a provider: the provider's config folder of the person's own, which holds their login, rules, skills and sessions. */
@@ -22,10 +22,10 @@ export type PushTarget = PushToken & { notificationKey: string };
 export type Kept = { account: string; token: string };
 /** A file as it arrives with a message. */
 export type Upload = { name: string; bytes: Uint8Array };
-/** What a message can carry besides its text: files, the message it answers, the job that sent it, when it is an ask, where the ask stands and what it asks, and the other agent when it is between two. */
-export type Extras = { files?: Upload[]; replyTo?: string; jobId?: string; interim?: boolean; ask?: Ask; question?: Question; peerId?: string };
+/** What a message can carry besides its text: files, the message it answers, the job that sent it, when it is an ask, where the ask stands and what it asks, the other agent when it is between two, and the change it tells of when it is a notice of one. */
+export type Extras = { files?: Upload[]; replyTo?: string; jobId?: string; interim?: boolean; ask?: Ask; question?: Question; peerId?: string; switched?: Switched };
 /** What the person can change about an agent. */
-export type AgentChanges = Partial<Pick<Agent, "name" | "avatar_id" | "model" | "effort" | "muted" | "hidden" | "color">>;
+export type AgentChanges = Partial<Pick<Agent, "name" | "avatar_id" | "provider" | "model" | "effort" | "fast" | "muted" | "hidden" | "color">>;
 /** What the store tells its listeners about: a message that was added, changed status or had its ask closed, or an agent that was added, changed or deleted. */
 export type Change = { message: Message } | { agent: Agent; deleted: boolean };
 /** How this server is known to the relay: its signing key, and the id, the address phones reach it at and the token its tunnel runs with, which the relay gives it once it has registered. */
@@ -67,6 +67,11 @@ const TABLE_CHANGES: (string | { table: string; change: string })[] = [
   "alter table devices add column kind text not null default 'phone' check (kind in ('phone', 'desktop'))",
   // A Codex session from before `calendar_event` and `calendar_list`, and before the calendar's tools took the calendar an event is on, gets a fresh start too, unless one waits for it already.
   "insert into messages (id, agent_id, sender, body, status, created_at) select lower(hex(randomblob(16))), id, 'sidebots', 'Fresh start', 'queued', cast(unixepoch('subsec') * 1000 as integer) from agents where provider = 'codex' and session_id is not null and not exists (select 1 from messages where agent_id = agents.id and sender = 'sidebots' and status in ('queued', 'running'))",
+  "alter table agents add column fast integer not null default 0",
+  "alter table agents add column ran_on text",
+  "alter table messages add column switched text",
+  // An agent in the middle of a session ran its last turn on what it answers with now.
+  "update agents set ran_on = json_object('provider', provider, 'model', model, 'effort', effort, 'fast', json('false')) where session_id is not null",
 ];
 
 const SCHEMA = `
@@ -88,6 +93,8 @@ create table if not exists agents (
   provider    text not null default 'claude',
   model       text not null default 'opus',
   effort      text not null default 'medium',
+  fast        integer not null default 0,
+  ran_on      text,
   muted       integer not null default 0,
   hidden      integer not null default 0,
   color       text,
@@ -109,6 +116,7 @@ create table if not exists messages (
   ask         text check (ask in ('waiting', 'allowed', 'refused', 'unanswered')),
   question    text,
   peer_id     text references agents(id),
+  switched    text,
   created_at  integer not null
 );
 create table if not exists jobs (
@@ -192,17 +200,24 @@ const IN_CHAT = "(agent_id = ?1 or peer_id = ?1)";
 // What waits on an agent: the messages in its chat that aren't for another agent, and other agents' messages to it.
 const FOR_AGENT = "((agent_id = ?1 and peer_id is null) or (peer_id = ?1 and ask is null))";
 
-/** A message as SQLite holds it, with its attachments and its question as JSON text and yes and no as 1 and 0. */
-type Row = Omit<Message, "attachments" | "interim" | "question"> & { attachments: string; interim: number; question: string | null };
+/** A message as SQLite holds it, with its attachments, its question and its change as JSON text and yes and no as 1 and 0. */
+type Row = Omit<Message, "attachments" | "interim" | "question" | "switched"> & { attachments: string; interim: number; question: string | null; switched: string | null };
 const toMessage = (row: Row): Message => ({
   ...row,
   attachments: JSON.parse(row.attachments) as string[],
   interim: row.interim === 1,
   question: row.question === null ? null : (JSON.parse(row.question) as Question),
+  switched: row.switched === null ? null : (JSON.parse(row.switched) as Switched),
 });
-/** An agent as SQLite holds it, with yes and no as 1 and 0. */
-type AgentRow = Omit<Agent, "muted" | "hidden"> & { muted: number; hidden: number };
-const toAgent = (row: AgentRow): Agent => ({ ...row, muted: row.muted === 1, hidden: row.hidden === 1 });
+/** An agent as SQLite holds it, with yes and no as 1 and 0 and what it last answered with as JSON text. */
+type AgentRow = Omit<Agent, "fast" | "muted" | "hidden" | "ran_on"> & { fast: number; muted: number; hidden: number; ran_on: string | null };
+const toAgent = (row: AgentRow): Agent => ({
+  ...row,
+  fast: row.fast === 1,
+  muted: row.muted === 1,
+  hidden: row.hidden === 1,
+  ran_on: row.ran_on === null ? null : (JSON.parse(row.ran_on) as Selection),
+});
 type JobRow = Omit<Job, "schedule"> & { schedule: string };
 const toJob = (row: JobRow): Job => ({ ...row, schedule: JSON.parse(row.schedule) as Schedule });
 
@@ -432,6 +447,8 @@ export function openStore(home: string) {
         provider,
         model: PROVIDERS[provider].model,
         effort: PROVIDERS[provider].effort,
+        fast: false,
+        ran_on: null,
         muted: false,
         hidden: false,
         color: null,
@@ -476,18 +493,31 @@ export function openStore(home: string) {
         .sort((a, b) => (b.latest?.created_at ?? b.created_at) - (a.latest?.created_at ?? a.created_at));
     },
 
-    /** Changes an agent's name, avatar, model, effort, or whether it is muted or hidden. A new name is written into the agent's instructions where they say who it is. */
+    /**
+     * Changes an agent's name, avatar or colour, what it answers with, or
+     * whether it is muted or hidden. A new name is written into the agent's
+     * instructions where they say who it is. An agent moved to another
+     * provider takes its instructions with it, in the file that provider
+     * reads.
+     */
     updateAgent(agent: Agent, changes: AgentChanges): void {
       const columns = Object.keys(changes) as (keyof AgentChanges)[];
       if (columns.length === 0) return;
+      const next = { ...agent, ...changes };
       const values = columns.map((column) => (typeof changes[column] === "boolean" ? Number(changes[column]) : changes[column]!));
       db.prepare(`update agents set ${columns.map((column) => `${column} = ?`).join(", ")} where id = ?`).run(...values, agent.id);
-      if (changes.name !== undefined && changes.name !== agent.name) {
-        const path = join(agentHome(agent.id), PROVIDERS[agent.provider].instructions);
-        const text = readFileSync(path, "utf8");
-        writeFileSync(path, text.replace(`# ${agent.name}\n`, `# ${changes.name}\n`).replace(`You are ${agent.name},`, `You are ${changes.name},`));
+      const instructions = (provider: Provider) => join(agentHome(agent.id), PROVIDERS[provider].instructions);
+      if (next.provider !== agent.provider && existsSync(instructions(agent.provider))) renameSync(instructions(agent.provider), instructions(next.provider));
+      if (next.name !== agent.name) {
+        const text = readFileSync(instructions(next.provider), "utf8");
+        writeFileSync(instructions(next.provider), text.replace(`# ${agent.name}\n`, `# ${next.name}\n`).replace(`You are ${agent.name},`, `You are ${next.name},`));
       }
-      changed({ agent: { ...agent, ...changes }, deleted: false });
+      changed({ agent: next, deleted: false });
+    },
+
+    /** Records what the agent's turn runs on, as the turn starts. */
+    setRanOn(agentId: string, selection: Selection): void {
+      db.prepare("update agents set ran_on = ? where id = ?").run(JSON.stringify(selectionOf(selection)), agentId);
     },
 
     /** Removes an agent and everything Sidebots kept for it: its messages, its jobs, what it used and its home folder. */
@@ -685,7 +715,7 @@ export function openStore(home: string) {
      * agent back to the home screen, unless the agent is muted. An update while
      * the agent works doesn't, and neither does what it says to another agent.
      */
-    addMessage(agentId: string, sender: Sender, body: string, status: Status, { files = [], replyTo, jobId, interim = false, ask, question, peerId }: Extras = {}): Message {
+    addMessage(agentId: string, sender: Sender, body: string, status: Status, { files = [], replyTo, jobId, interim = false, ask, question, peerId, switched }: Extras = {}): Message {
       const attachments = files.map((file) => {
         // A name keeps its letters, digits, dots and dashes. Anything else becomes a dash, as does a %20 the phone wrote for a space.
         const name = `${randomUUID().slice(0, 8)}-${basename(file.name).replace(/(?:%[0-9a-f]{2}|[^\w.-])+/gi, "-")}`;
@@ -706,9 +736,10 @@ export function openStore(home: string) {
         ask: ask ?? null,
         question: question ?? null,
         peer_id: peerId ?? null,
+        switched: switched ?? null,
         created_at: Date.now(),
       };
-      db.prepare("insert into messages (id, agent_id, sender, body, attachments, status, reply_to, job_id, interim, ask, question, peer_id, created_at) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)").run(
+      db.prepare("insert into messages (id, agent_id, sender, body, attachments, status, reply_to, job_id, interim, ask, question, peer_id, switched, created_at) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)").run(
         message.id,
         message.agent_id,
         message.sender,
@@ -721,6 +752,7 @@ export function openStore(home: string) {
         message.ask,
         question ? JSON.stringify(question) : null,
         message.peer_id,
+        switched ? JSON.stringify(switched) : null,
         message.created_at,
       );
       if ((sender === "agent" && !interim && !betweenAgents(message)) || (sender === "sidebots" && status === "failed")) {
@@ -844,8 +876,14 @@ export function openStore(home: string) {
       return one(`select * from messages where ${FOR_AGENT} and status = 'queued' order by rowid limit 1`, agentId);
     },
 
-    /** Puts turns that a stopped server left running back in the queue, with the asks they left waiting closed, and lists the agents with queued turns. */
+    /**
+     * Puts turns that a stopped server left running back in the queue, with
+     * the asks they left waiting closed, and lists the agents with queued
+     * turns. A switch notice that was handing over is done with, since the
+     * turn it came before hands over again.
+     */
     requeueInterrupted(): string[] {
+      db.prepare("update messages set status = 'done' where status = 'running' and switched is not null").run();
       db.prepare("update messages set status = 'queued' where status = 'running'").run();
       db.prepare("update messages set ask = 'unanswered' where ask = 'waiting'").run();
       // A message one agent sent another waits in the other's queue.

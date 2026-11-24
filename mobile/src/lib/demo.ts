@@ -167,6 +167,7 @@ function message(agentId: string, sender: Sender, body: string, at: number, stat
     ask: null,
     question: null,
     peer_id: null,
+    switched: null,
     created_at: at,
   };
 }
@@ -180,6 +181,8 @@ function addAgent(name: string, avatarId: string, at: number): Agent {
     provider: "claude",
     model: "opus",
     effort: "medium",
+    fast: false,
+    ran_on: null,
     muted: false,
     hidden: false,
     color: null,

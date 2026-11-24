@@ -28,7 +28,7 @@ type State = {
 };
 
 /** What the person can change about an agent. */
-export type AgentChanges = { name?: string; avatarId?: string; model?: Model; effort?: Effort; muted?: boolean; hidden?: boolean; color?: string | null };
+export type AgentChanges = { name?: string; avatarId?: string; provider?: Provider; model?: Model; effort?: Effort; fast?: boolean; muted?: boolean; hidden?: boolean; color?: string | null };
 
 /** What a store needs of the app that makes it. `Picked` is a file as that app's pickers give it. */
 export type Platform<Picked> = {

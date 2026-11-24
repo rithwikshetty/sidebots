@@ -18,7 +18,7 @@ import {
   type SDKUserMessage,
 } from "@anthropic-ai/claude-agent-sdk";
 import type { Servers } from "./connections.ts";
-import { CONNECTIONS, type Connection, type Limit, type Question } from "./contract.ts";
+import { CONNECTIONS, PROVIDERS, type Connection, type Limit, type Question } from "./contract.ts";
 import { environment, inFolder, program } from "./programs.ts";
 import { SHOW, short, toolQuestion, toolsFor, type Driver, type Prompt, type RunTurn } from "./runner.ts";
 
@@ -196,7 +196,7 @@ const remote = (servers: Servers) => Object.fromEntries(Object.entries(servers).
  * is left for the next turn.
  */
 const runTurn: RunTurn = async (turn) => {
-  const { prompt, followUps, seen, replied, ask, limits, cwd, sessionId, configDir, apiKey, model, effort, keepSession, stop } = turn;
+  const { prompt, followUps, seen, replied, ask, limits, cwd, sessionId, configDir, apiKey, model, effort, fast, keepSession, stop } = turn;
   const [claudeCode, env, servers] = [await program("claude"), await environment(), await turn.servers()];
   // A turn that was stopped while a connection's token was asked for never starts.
   if (stop.signal.aborted) throw new Error("The turn was stopped before it started");
@@ -256,7 +256,8 @@ const runTurn: RunTurn = async (turn) => {
       resume: sessionId ?? undefined,
       persistSession: keepSession,
       model,
-      effort,
+      // A Claude Code agent's effort is one of Claude Code's own, since the API takes no other for it. Claude Code runs a model that hasn't that level at the highest it has.
+      effort: effort as keyof typeof PROVIDERS.claude.efforts,
       abortController: end,
       pathToClaudeCodeExecutable: claudeCode,
       // Claude Code uses a key in its environment ahead of a login in the config folder.
@@ -267,7 +268,8 @@ const runTurn: RunTurn = async (turn) => {
       // Claude Code's own memory, kept in the agent's folder so it outlives
       // every session. It is on for a Sidebots agent even when its owner has
       // turned it off for their own Claude Code.
-      settings: { autoMemoryEnabled: true, autoMemoryDirectory: join(cwd, "memory"), env: { CLAUDE_CODE_DISABLE_AUTO_MEMORY: "0" } },
+      // Fast mode is the agent's own too, whatever its owner's Claude Code has it at.
+      settings: { autoMemoryEnabled: true, autoMemoryDirectory: join(cwd, "memory"), env: { CLAUDE_CODE_DISABLE_AUTO_MEMORY: "0" }, fastMode: fast },
       skills: "all",
       mcpServers: { sidebots, ...remote(servers) },
       allowedTools: tools.filter((each) => !each.checked).map((each) => `mcp__sidebots__${each.name}`),

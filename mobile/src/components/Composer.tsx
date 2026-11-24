@@ -2,8 +2,10 @@ import { useEffect, useRef, useState } from "react";
 import { PixelRatio, Pressable, StyleSheet, Text, TextInput, View, type TextInputInstance, type TextStyle } from "react-native";
 import Animated, { FadeIn, LayoutAnimationConfig, useAnimatedStyle, useReducedMotion, withTiming } from "react-native-reanimated";
 import { ArrowUp, Mic, Plus, Square } from "lucide-react-native";
+import { PROVIDERS, runsFast, type AgentWithLatest, type Offered } from "@server/contract";
 import { MessageMenuView, type MessageMenuAction } from "../../modules/message-menu/src";
 import { AttachmentTray, TRAY_HEIGHT, TRAY_TILE_EXIT_MS } from "@/components/AttachmentTray";
+import { BrandLogo } from "@/components/BrandLogo";
 import { BUTTONS_ENTERING, BUTTONS_EXITING, DICTATION_ENTERING, DICTATION_EXITING, DictationBar, useFlipAway } from "@/components/DictationBar";
 import { IconButton } from "@/components/IconButton";
 import { canDictate, useDictation } from "@/lib/dictation";
@@ -20,8 +22,8 @@ const FIELD_MAX_SCALE = 2;
 const INSET = 6;
 const BUTTON = 36;
 const RADIUS = 24;
-// The bottom right holds Send, with the microphone before it on a phone that can dictate.
-const TRAILING = canDictate ? BUTTON * 2 + 4 : BUTTON;
+// The bottom right holds the model and Send, with the microphone between them on a phone that can dictate.
+const TRAILING = canDictate ? BUTTON * 3 + 8 : BUTTON * 2 + 4;
 // Where the text sits in each shape. At rest it shares one line with the
 // buttons; while typing it fills the card above them.
 const TEXT_FRAME = {
@@ -41,17 +43,21 @@ const ATTACH_ACTIONS: (MessageMenuAction & { id: PickSource })[] = [
 /**
  * The message field, as Assist's: + at the bottom left, which opens a menu
  * of Photos, Camera and Files, and the round Send at the bottom right, with
- * the microphone before it on iOS 26 and later. At rest it is one slim line
- * between the buttons. While the person types, or once something is
- * attached, it opens into a card with the text above the buttons, growing
- * with the text up to about six lines, then scrolling; picked photos and
- * files sit in a tray above the text. A message can go with only photos or
- * files. While the agent works and there is nothing to send, Send is Stop,
- * so stopping is one tap on the button the person already uses. A tap on the
- * microphone turns the buttons away for the dictation row, whose ✓ adds what
- * the person said to the end of the text.
+ * the microphone before it on iOS 26 and later and the agent's model before
+ * that. The model is a square button with its provider's logo, which opens
+ * the drawer where what the agent answers with is chosen. At rest the field
+ * is one slim line between the buttons. While the person types, or
+ * once something is attached, it opens into a card with the text above the
+ * buttons, growing with the text up to about six lines, then scrolling;
+ * picked photos and files sit in a tray above the text. A message can go
+ * with only photos or files. While the agent works and there is nothing to
+ * send, Send is Stop, so stopping is one tap on the button the person
+ * already uses. A tap on the microphone turns the buttons away for the
+ * dictation row, whose ✓ adds what the person said to the end of the text.
  */
 export function Composer({
+  agent,
+  onModel,
   value,
   onChangeText,
   onSend,
@@ -62,6 +68,9 @@ export function Composer({
   onRemoveAttachment,
   attachDisabled = false,
 }: {
+  agent: AgentWithLatest;
+  /** Opens the drawer where what the agent answers with is chosen. */
+  onModel: () => void;
   value: string;
   onChangeText: (text: string) => void;
   onSend: () => void;
@@ -77,6 +86,7 @@ export function Composer({
 }) {
   const theme = useTheme();
   const reduceMotion = useReducedMotion();
+  const provider: Offered = PROVIDERS[agent.provider];
   const inputRef = useRef<TextInputInstance>(null);
   const [typing, setTyping] = useState(false);
   // The tray keeps its room until its last tile has faded out, then the card
@@ -216,6 +226,14 @@ export function Composer({
               </MessageMenuView>
             </Animated.View>
             <Animated.View entering={turn(BUTTONS_ENTERING)} exiting={turn(BUTTONS_EXITING)} style={[styles.corner, styles.trailing]}>
+              <Pressable
+                onPress={onModel}
+                accessibilityRole="button"
+                accessibilityLabel={`Model: ${provider.models[agent.model]}, ${provider.efforts[agent.effort]} effort${runsFast(agent) ? ", fast" : ""}`}
+                hitSlop={4}
+                style={({ pressed }) => [styles.model, { backgroundColor: pressed ? theme.field : "transparent" }]}>
+                <BrandLogo logo={provider.logo} size={18} />
+              </Pressable>
               {canDictate ? <IconButton icon={Mic} label="Dictate" iconSize={19} color={theme.ink2} onPress={() => void dictation.start()} /> : null}
               <Animated.View style={sendStyle}>
                 <Pressable
@@ -275,6 +293,7 @@ const styles = StyleSheet.create({
   // The + takes a full 44pt tap around its 36pt button, reaching past it into the card's edge.
   attach: { width: 44, height: 44, margin: -4, alignItems: "center", justifyContent: "center" },
   trailing: { right: INSET, gap: 4 },
+  model: { width: BUTTON, height: BUTTON, borderRadius: 10, borderCurve: "continuous", alignItems: "center", justifyContent: "center" },
   dictation: { position: "absolute", left: INSET, right: INSET, bottom: INSET },
   round: { width: BUTTON, height: BUTTON, borderRadius: BUTTON / 2, alignItems: "center", justifyContent: "center" },
   glyph: { position: "absolute" },

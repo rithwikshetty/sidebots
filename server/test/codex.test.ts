@@ -4,15 +4,30 @@ import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { codexOn, costOf, limitsIn, newest, question } from "../src/codex.ts";
+import { codexOn, costOf, effortOn, limitsIn, newest, question, tierOn } from "../src/codex.ts";
 import type { FollowUps, Prompt, Turn } from "../src/runner.ts";
 import type { Limit, Question } from "../src/contract.ts";
 
 test("a kind of model is the newest version of it that Codex offers", () => {
   const offered = ["gpt-6-sol", "gpt-6.2-sol", "gpt-6.10-sol", "gpt-6.1-sol", "gpt-6.2-astra", "gpt-reserve"].map((model) => ({ model }));
-  assert.equal(newest(offered, "sol"), "gpt-6.10-sol");
-  assert.equal(newest(offered, "astra"), "gpt-6.2-astra");
+  assert.equal(newest(offered, "sol")?.model, "gpt-6.10-sol");
+  assert.equal(newest(offered, "astra")?.model, "gpt-6.2-astra");
   assert.equal(newest(offered, "luna"), undefined);
+});
+
+test("a turn runs at the agent's effort, or at the highest its model has when it hasn't that one", () => {
+  const luna = { model: "gpt-6-luna", supportedReasoningEfforts: ["low", "medium", "high", "xhigh", "max"].map((reasoningEffort) => ({ reasoningEffort })) };
+  assert.equal(effortOn(luna, "xhigh"), "xhigh");
+  assert.equal(effortOn(luna, "ultra"), "max");
+});
+
+test("a fast turn answers at the mildest of its model's faster tiers, and any other at its standard one", () => {
+  const efforts = [{ reasoningEffort: "medium" }];
+  const sol = { model: "gpt-6.2-sol", supportedReasoningEfforts: efforts, serviceTiers: [{ id: "priority" }, { id: "ultrafast" }] };
+  assert.equal(tierOn(sol, true), "priority");
+  assert.equal(tierOn(sol, false), "default");
+  // A model with no faster tier answers at its standard one.
+  assert.equal(tierOn({ model: "gpt-5-sol", supportedReasoningEfforts: efforts }, true), "default");
 });
 
 test("a plan's limits are the windows Codex gives its own limit, named for how long each runs", () => {
@@ -75,6 +90,7 @@ function setup({ signedIn = true, keyLogin = false } = {}) {
     configDir,
     model: "sol",
     effort: "medium",
+    fast: false,
     keepSession: true,
     stop: new AbortController(),
     searchHistory: (search) => `Found ${search}.`,
@@ -142,7 +158,14 @@ test("a turn starts a thread with the agent's tools, on the newest model of its 
   assert.match(started.developerInstructions, /memory\/MEMORY\.md/);
   // The agent is told when its reply comes with something to look at.
   assert.match(started.developerInstructions, /better seen than read/);
-  assert.equal(requests().find((each) => each.method === "turn/start")!.params.effort, "medium");
+  const first = requests().find((each) => each.method === "turn/start")!.params;
+  assert.deepEqual([first.effort, first.serviceTier], ["medium", "default"]);
+});
+
+test("a fast turn asks Codex for its model's fast tier", async () => {
+  const { driver, turn, requests } = setup();
+  await driver.runTurn(turn("hello", { fast: true }));
+  assert.equal(requests().find((each) => each.method === "turn/start")!.params.serviceTier, "priority");
 });
 
 test("a later turn resumes the thread, and a job's run has a thread that isn't kept", async () => {
@@ -262,7 +285,7 @@ test("a failed turn says why in words for the phone", async () => {
 
   const { driver, turn } = setup();
   assert.equal(await words(driver.runTurn(turn("fail")), driver), "Your Codex usage limit is reached. It resets at 3:37 PM.");
-  assert.equal(await words(driver.runTurn(turn("hello", { model: "astra" })), driver), "Codex offers this account no Astra model.");
+  assert.equal(await words(driver.runTurn(turn("hello", { model: "astra" })), driver), "Codex offers this account no GPT-6.2 Astra model.");
   assert.equal(driver.failure("Incorrect API key provided: sk-12345."), "OpenAI refused your API key. Save a new one on your computer.");
   assert.equal(driver.failure("stream disconnected before completion"), "stream disconnected before completion");
 });

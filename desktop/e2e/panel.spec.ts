@@ -46,16 +46,16 @@ test.describe("an agent's page", () => {
     await openAgentPage(page, atlas.id);
     const panel = page.getByTestId("panel");
     await expect(panel.getByTestId("agent-page-name")).toHaveText("Atlas");
-    await expect(panel.getByTestId("agent-page-caption")).toHaveText("Opus · High effort");
+    await expect(panel.getByTestId("agent-page-caption")).toHaveText("Claude Opus 5.5 · High effort");
     await expect(panel.getByRole("button", { name: "Edit" })).toBeVisible();
     await expect(panel.getByRole("radio", { name: "Settings" })).toBeChecked();
   });
 
   test("the caption says when an agent is muted, and when it is hidden", async ({ page, server }) => {
     await openAgentPage(page, (await agentNamed(server, "Scout")).id);
-    await expect(page.getByTestId("agent-page-caption")).toHaveText("Sonnet · Low effort · Muted");
+    await expect(page.getByTestId("agent-page-caption")).toHaveText("Claude Sonnet 5.5 · Low effort · Muted");
     await openAgentPage(page, (await agentNamed(server, "Archive")).id);
-    await expect(page.getByTestId("agent-page-caption")).toHaveText("Haiku · Low effort · Hidden");
+    await expect(page.getByTestId("agent-page-caption")).toHaveText("Claude Haiku 5.5 · Low effort · Hidden");
   });
 
   test("Edit renames the agent, sending only the name, and the chat and the sidebar take the new name at once", async ({ page, server }) => {
@@ -167,28 +167,14 @@ test.describe("an agent's page", () => {
     expect((await agentNamed(server, "Atlas")).id).toBe(atlas.id);
   });
 
-  test("the model and the effort chosen are saved, and are still chosen after the app opens again", async ({ page, server, restartApp }) => {
+  test("the caption follows the model and the effort chosen in the chat", async ({ page, server }) => {
     const atlas = await agentNamed(server, "Atlas");
     await openAgentPage(page, atlas.id);
-    const model = page.getByRole("radiogroup", { name: "Model" });
-    const effort = page.getByRole("radiogroup", { name: "Effort" });
-    await expect(model.getByRole("radio")).toHaveText(Object.values(PROVIDERS.claude.models));
-    await model.getByRole("radio", { name: "Sonnet" }).click();
-    await effort.getByRole("radio", { name: "Low" }).click();
-    await expect(page.getByTestId("agent-page-caption")).toHaveText("Sonnet · Low effort");
-    await until(() => agentNamed(server, "Atlas"), (agent) => agent.model === "sonnet" && agent.effort === "low");
-    const again = await restartApp();
-    await openAgentPage(again.page, atlas.id);
-    await expect(again.page.getByTestId("agent-page-caption")).toHaveText("Sonnet · Low effort");
-    await expect(again.page.getByRole("radiogroup", { name: "Model" }).getByRole("radio", { name: "Sonnet" })).toBeChecked();
-    await expect(again.page.getByRole("radiogroup", { name: "Effort" }).getByRole("radio", { name: "Low" })).toBeChecked();
-  });
-
-  test("a Codex agent offers Codex's models", async ({ page, server }) => {
-    const patch = await agentNamed(server, "Patch");
-    await openAgentPage(page, patch.id);
-    await expect(page.getByRole("radiogroup", { name: "Model" }).getByRole("radio")).toHaveText(Object.values(PROVIDERS.codex.models));
-    await expect(page.getByTestId("agent-model")).toContainText("What it answers with on Codex");
+    await expect(page.getByTestId("agent-page-caption")).toHaveText("Claude Opus 5.5 · High effort");
+    await page.getByTestId("model").click();
+    await page.getByRole("radio", { name: "Claude Sonnet 5.5" }).click();
+    await page.getByRole("radio", { name: "Low" }).click();
+    await expect(page.getByTestId("agent-page-caption")).toHaveText("Claude Sonnet 5.5 · Low effort");
   });
 
   test("Usage, last 7 days shows each kind of turn the agent ran, with its count and cost", async ({ page, server }) => {
@@ -218,12 +204,12 @@ test.describe("an agent's page", () => {
     await openAgentPage(page, atlas.id);
     await page.getByRole("switch", { name: "Mute" }).click();
     await expect(page.getByRole("switch", { name: "Mute" })).toBeChecked();
-    await expect(page.getByTestId("agent-page-caption")).toHaveText("Opus · High effort · Muted");
+    await expect(page.getByTestId("agent-page-caption")).toHaveText("Claude Opus 5.5 · High effort · Muted");
     await expect(page.getByTestId("chat-agent").getByRole("img", { name: "Muted" })).toBeVisible();
     await expect(page.getByTestId(`agent-${atlas.id}`).getByRole("img", { name: "Muted" })).toBeVisible();
     await until(() => agentNamed(server, "Atlas"), (agent) => agent.muted);
     await page.getByRole("switch", { name: "Mute" }).click();
-    await expect(page.getByTestId("agent-page-caption")).toHaveText("Opus · High effort");
+    await expect(page.getByTestId("agent-page-caption")).toHaveText("Claude Opus 5.5 · High effort");
     await until(() => agentNamed(server, "Atlas"), (agent) => !agent.muted);
   });
 
@@ -233,7 +219,7 @@ test.describe("an agent's page", () => {
     await expect(page.getByTestId("hidden-agents")).toHaveText(/Hidden · 1/);
     await page.getByRole("switch", { name: "Hide" }).click();
     await expect(page.getByTestId("hidden-agents")).toHaveText(/Hidden · 2/);
-    await expect(page.getByTestId("agent-page-caption")).toHaveText("Opus · High effort · Hidden");
+    await expect(page.getByTestId("agent-page-caption")).toHaveText("Claude Opus 5.5 · High effort · Hidden");
     await until(() => agentNamed(server, "Atlas"), (agent) => agent.hidden);
     // The open chat stays open while its agent is hidden.
     await expect(page.getByTestId("chat-name")).toHaveText("Atlas");
@@ -271,7 +257,7 @@ test.describe("an agent's page", () => {
     await openAgentPage(page, atlas.id);
     await server.api(`/agents/${atlas.id}`, { method: "PATCH", body: JSON.stringify({ name: "Atlas Prime", muted: true, model: "haiku" }) });
     await expect(page.getByTestId("agent-page-name")).toHaveText("Atlas Prime");
-    await expect(page.getByTestId("agent-page-caption")).toHaveText("Haiku · High effort · Muted");
+    await expect(page.getByTestId("agent-page-caption")).toHaveText("Claude Haiku 5.5 · High effort · Muted");
     await expect(page.getByRole("switch", { name: "Mute" })).toBeChecked();
   });
 

@@ -1,9 +1,9 @@
 import { useEffect, useRef, useState } from "react";
 import type { Connected } from "@server/contract.ts";
 import { ApiError } from "@client/api.ts";
-import { ConnectionLogo } from "../chat/AskCard.tsx";
 import { confirmRemoveConnection, problem } from "../lib/alerts.ts";
 import { UPDATE, connect, loadConnections, useConnections } from "../lib/store.ts";
+import { BrandLogo } from "../ui/BrandLogo.tsx";
 import { Button } from "../ui/Button.tsx";
 import { Spinner } from "../ui/Spinner.tsx";
 import { Failure, Group, Loading, SectionTitle } from "./Group.tsx";
@@ -68,7 +68,7 @@ function ConnectionRow({ connected }: { connected: Connected }) {
   };
   return (
     <div className="flex items-center gap-3 px-3.5 py-3" data-testid={`connection-${connected.connection}`}>
-      <ConnectionLogo logo={connected.logo} size={24} />
+      <BrandLogo logo={connected.logo} size={24} />
       <div className="flex min-w-0 flex-1 flex-col gap-0.5">
         <span className="truncate text-sm font-medium">{connected.name}</span>
         {waiting ? (

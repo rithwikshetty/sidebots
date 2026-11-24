@@ -1,12 +1,17 @@
 // The chat's composer, driven as a person drives it: typing and sending,
-// what comes back, Stop, the chat's menu, and the keyboard. Each test starts
+// what comes back, the agent's model, Stop, the chat's menu, and the keyboard. Each test starts
 // from Tester with no agents and adds the agents it talks to, so nothing else
 // in the chat moves while it looks.
 
 import type { Locator } from "@playwright/test";
 import { LINES } from "../../client/lines.ts";
+import { PROVIDERS } from "../../server/src/contract.ts";
 import { expect, test } from "./fixtures.ts";
 import { addAgent, agentOf, field, idle, messagesOf, mine, notices, openChat, payload, said, sendFromApp, serverPid, theirs, toast, until } from "./chat-helpers.ts";
+
+/** A provider's models in the model's panel, and the efforts beside them. */
+const models = (page: Parameters<typeof openChat>[0], provider: keyof typeof PROVIDERS) => page.getByRole("radiogroup", { name: `${PROVIDERS[provider].name} models` });
+const efforts = (page: Parameters<typeof openChat>[0]) => page.getByRole("radiogroup", { name: "Effort" });
 
 /** Adds an agent called `name` and opens its chat. */
 async function chatWith(page: Parameters<typeof openChat>[0], server: Parameters<typeof openChat>[1], name = "Echo") {
@@ -318,12 +323,12 @@ const drawn = (part: Locator) =>
   });
 
 test.describe("the card's shape", () => {
-  test("empty, the card is one round line with the text between + and Send, and it opens with the text above them while it holds text", async ({ page, server }) => {
+  test("empty, the card is one round line with the text between + and the model beside Send, and it opens with the text above them while it holds text", async ({ page, server }) => {
     await chatWith(page, server);
     const card = page.getByTestId("composer-card");
     const parts = async () => {
-      const [whole, text, add, send] = await Promise.all([drawn(card), drawn(field(page)), drawn(page.getByTestId("add-files")), drawn(page.getByTestId("send"))]);
-      return { whole, text, add, send };
+      const [whole, text, add, model, send] = await Promise.all([drawn(card), drawn(field(page)), drawn(page.getByTestId("add-files")), drawn(page.getByTestId("model")), drawn(page.getByTestId("send"))]);
+      return { whole, text, add, model, send };
     };
 
     // One line: the card is as tall as its corners are round, and the text and the buttons share its middle.
@@ -331,10 +336,11 @@ test.describe("the card's shape", () => {
     expect(await card.evaluate((element) => getComputedStyle(element).borderRadius)).toBe("22px");
     const resting = await parts();
     expect(resting.add.middle).toBe(resting.whole.middle);
+    expect(resting.model.middle).toBe(resting.whole.middle);
     expect(resting.send.middle).toBe(resting.whole.middle);
     expect(resting.text.middle).toBe(resting.whole.middle);
     expect(resting.text.left).toBeGreaterThanOrEqual(resting.add.right);
-    expect(resting.text.right).toBeLessThanOrEqual(resting.send.left);
+    expect(resting.text.right).toBeLessThanOrEqual(resting.model.left);
 
     // Open: the text runs across the card above the buttons, which keep to its bottom corners.
     await field(page).pressSequentially("Hi");
@@ -343,10 +349,12 @@ test.describe("the card's shape", () => {
     expect(open.text.bottom).toBeLessThanOrEqual(open.add.top);
     expect(open.text.left).toBeLessThan(open.add.right);
     expect(open.text.right).toBeGreaterThan(open.send.left);
-    for (const { whole, add, send } of [resting, open]) {
+    for (const { whole, add, model, send } of [resting, open]) {
       expect(add.left - whole.left).toBe(6);
+      expect(model.right).toBeLessThanOrEqual(send.left);
       expect(whole.right - send.right).toBe(6);
       expect(whole.bottom - add.bottom).toBe(6);
+      expect(whole.bottom - model.bottom).toBe(6);
       expect(whole.bottom - send.bottom).toBe(6);
     }
     await expect(field(page)).toBeFocused();
@@ -378,6 +386,91 @@ test.describe("the card's shape", () => {
     expect((await drawn(page.getByTestId("tray"))).bottom).toBeLessThanOrEqual((await drawn(field(page))).top);
     await page.getByTestId("remove-file").click();
     await expect.poll(async () => (await drawn(page.getByTestId("composer-card"))).height).toBe(44);
+  });
+});
+
+test.describe("the model", () => {
+  test("the model and the effort chosen are saved, and are still chosen after the app opens again", async ({ page, server, restartApp }) => {
+    const id = await chatWith(page, server);
+    const model = page.getByTestId("model");
+    await expect(model).toHaveAccessibleName("Model: Claude Opus 5.5 · Medium effort");
+    await model.click();
+    await expect(models(page, "claude").getByRole("radio")).toHaveText(Object.values(PROVIDERS.claude.models));
+    await expect(efforts(page).getByRole("radio")).toHaveText(Object.values(PROVIDERS.claude.efforts));
+    await expect(models(page, "claude").getByRole("radio", { name: "Claude Opus 5.5" })).toBeChecked();
+    await expect(efforts(page).getByRole("radio", { name: "Medium" })).toBeChecked();
+    // The panel stays open for the next choice, and leaves the person where they write once it closes.
+    await models(page, "claude").getByRole("radio", { name: "Claude Sonnet 5.5" }).click();
+    await expect(model).toHaveAccessibleName("Model: Claude Sonnet 5.5 · Medium effort");
+    await efforts(page).getByRole("radio", { name: "Low" }).click();
+    await until(() => agentOf(server, id), (agent) => agent.model === "sonnet" && agent.effort === "low");
+    await page.keyboard.press("Escape");
+    await expect(page.getByTestId("model-picker")).toHaveCount(0);
+    await expect(field(page)).toBeFocused();
+
+    const again = await restartApp();
+    await openChat(again.page, server, "Echo");
+    await expect(again.page.getByTestId("model")).toHaveAccessibleName("Model: Claude Sonnet 5.5 · Low effort");
+    await again.page.getByTestId("model").click();
+    await expect(models(again.page, "claude").getByRole("radio", { name: "Claude Sonnet 5.5" })).toBeChecked();
+    await expect(efforts(again.page).getByRole("radio", { name: "Low" })).toBeChecked();
+  });
+
+  test("a Codex agent offers Codex's models", async ({ page, server }) => {
+    await addAgent(page, server, "Ledger", "codex");
+    await openChat(page, server, "Ledger");
+    await expect(page.getByTestId("model")).toHaveAccessibleName("Model: GPT-6.2 Sol · Medium effort");
+    await page.getByTestId("model").click();
+    await expect(page.getByRole("tab", { name: "Codex" })).toHaveAttribute("aria-selected", "true");
+    await expect(models(page, "codex").getByRole("radio")).toHaveText(Object.values(PROVIDERS.codex.models));
+    await expect(efforts(page).getByRole("radio")).toHaveText(Object.values(PROVIDERS.codex.efforts));
+  });
+
+  test("only a model with a fast mode can answer fast, and the button says so while it does", async ({ page, server }) => {
+    const id = await chatWith(page, server);
+    const model = page.getByTestId("model");
+    await model.click();
+    const speed = page.getByRole("radiogroup", { name: "Speed" });
+    const picker = page.getByTestId("model-picker");
+    await expect(speed.getByRole("radio", { name: "Standard" })).toBeChecked();
+    await expect(picker).not.toContainText("Fast uses more of your plan");
+    await speed.getByRole("radio", { name: "Fast" }).click();
+    await expect(picker).toContainText("Fast uses more of your plan");
+    await expect(model).toHaveAccessibleName("Model: Claude Opus 5.5 · Medium effort · Fast");
+    await until(() => agentOf(server, id), (agent) => agent.fast === true);
+    // Sonnet has none, so it answers at its usual speed and the choice is out of reach.
+    await models(page, "claude").getByRole("radio", { name: "Claude Sonnet 5.5" }).click();
+    await expect(model).toHaveAccessibleName("Model: Claude Sonnet 5.5 · Medium effort");
+    await expect(speed.getByRole("radio", { name: "Standard" })).toBeChecked();
+    await expect(speed.getByRole("radio", { name: "Fast" })).toBeDisabled();
+    await expect(picker).not.toContainText("Fast uses more of your plan");
+  });
+
+  test("a model of another provider moves the agent there, and the chat says so before its next reply", async ({ page, server }) => {
+    const id = await chatWith(page, server);
+    await sendFromApp(page, "Hi there");
+    await expect(said(page, "Hi Tester! What can I help with today?")).toBeVisible();
+    const model = page.getByTestId("model");
+    await model.click();
+    // The rail lists Codex's models without changing anything until one is picked.
+    await page.getByRole("tab", { name: "Codex" }).click();
+    await expect(models(page, "codex").getByRole("radio", { checked: true })).toHaveCount(0);
+    await expect(model).toHaveAccessibleName("Model: Claude Opus 5.5 · Medium effort");
+    await models(page, "codex").getByRole("radio", { name: "GPT-6.1 Terra" }).click();
+    await expect(model).toHaveAccessibleName("Model: GPT-6.1 Terra · Medium effort");
+    await expect(efforts(page).getByRole("radio")).toHaveText(Object.values(PROVIDERS.codex.efforts));
+    await until(() => agentOf(server, id), (agent) => agent.provider === "codex" && agent.model === "terra");
+    await page.keyboard.press("Escape");
+    await expect(notices(page)).toHaveCount(0);
+
+    await sendFromApp(page, "Still there?");
+    const notice = notices(page).filter({ hasText: "GPT-6.1 Terra" });
+    await expect(notice).toHaveAccessibleName("Switched from Claude Opus 5.5 Medium to GPT-6.1 Terra Medium");
+    await expect(notice).toHaveText("Claude Opus 5.5 · MediumGPT-6.1 Terra · Medium");
+    await expect(notice).toHaveAttribute("data-status", "done");
+    await expect(theirs(page)).toHaveCount(2);
+    const sent = await messagesOf(server, id);
+    expect(sent.map(({ sender }) => sender)).toEqual(["person", "agent", "person", "sidebots", "agent"]);
   });
 });
 
@@ -481,7 +574,7 @@ test.describe("keyboard and focus", () => {
     await expect(field(page)).toBeFocused();
   });
 
-  test("Tab moves through the composer in order: Cancel reply, the files, +, the field, Send", async ({ page, server }) => {
+  test("Tab moves through the composer in order: Cancel reply, the files, +, the field, the model, Send", async ({ page, server }) => {
     await chatWith(page, server);
     await sendFromApp(page, "Hi");
     const answer = said(page, "Hi Tester!");
@@ -492,11 +585,12 @@ test.describe("keyboard and focus", () => {
     await field(page).fill("with a file");
     await page.getByTestId("cancel-reply").focus();
     const order: (string | null)[] = [];
-    for (let step = 0; step < 4; step++) {
+    for (let step = 0; step < 5; step++) {
       await page.keyboard.press("Tab");
       order.push(await page.evaluate(() => document.activeElement?.getAttribute("data-testid") ?? document.activeElement?.getAttribute("aria-label") ?? null));
     }
-    expect(order).toEqual(["remove-file", "add-files", "message-field", "send"]);
+    expect(order).toEqual(["remove-file", "add-files", "message-field", "model", "send"]);
+    await page.keyboard.press("Shift+Tab");
     await page.keyboard.press("Shift+Tab");
     await expect(field(page)).toBeFocused();
   });

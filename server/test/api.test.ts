@@ -579,6 +579,131 @@ test("a fresh start has the agent save its memory, then gives the next message a
   );
 });
 
+test("an agent moved to another provider hands over: it saves its memory where it was, and answers in a new session there that is shown the chat so far", async () => {
+  const turns: Turn[] = [];
+  const { home, store, queue, call, say } = setup(async (turn) => {
+    turns.push(turn);
+    return reply("sure", `session-${turns.length}`);
+  });
+  store.addAccount(store.personByName(ME)!.id, "codex", "/config/alex-codex");
+  const agent = (await call(ME, "POST", "/agents", { name: "Theo", avatarId: "mochi" })).json;
+  await say(ME, agent.id, "book the band");
+  await queue.kick(agent.id);
+
+  // A provider the person hasn't set up is refused, and so is a model of the provider the agent leaves.
+  assert.equal((await call(ME, "PATCH", `/agents/${agent.id}`, { provider: "abacus" })).status, 400);
+  assert.equal((await call(ME, "PATCH", `/agents/${agent.id}`, { provider: "codex", model: "opus" })).status, 400);
+  // A Claude Code model sent from another device as the move lands is checked against the provider the agent has moved to.
+  const [move, late] = await Promise.all([call(ME, "PATCH", `/agents/${agent.id}`, { provider: "codex" }), call(ME, "PATCH", `/agents/${agent.id}`, { model: "haiku" })]);
+  assert.equal(late.status, 400);
+  const moved = move.json;
+  const opus = { provider: "claude", model: "opus", effort: "medium", fast: false };
+  const sol = { provider: "codex", model: "sol", effort: "medium", fast: false };
+  assert.deepEqual([moved.provider, moved.model, moved.effort, moved.ran_on, moved.session_id], ["codex", "sol", "medium", opus, "session-1"]);
+  // Its instructions went with it, to the file Codex reads.
+  assert.match(readFileSync(join(home, "agents", agent.id, "AGENTS.md"), "utf8"), /^# Theo\n/);
+  assert.equal(existsSync(join(home, "agents", agent.id, "CLAUDE.md")), false);
+  // Nothing in the chat says so until a turn runs on it.
+  assert.equal((await call(ME, "GET", `/agents/${agent.id}/messages`)).json.length, 2);
+
+  await say(ME, agent.id, "any news?");
+  await queue.kick(agent.id);
+  // The memory is saved in the session on Claude Code, and the reply comes from a new one on Codex.
+  assert.deepEqual(
+    turns.map((turn) => [turn.configDir, turn.model, turn.sessionId]),
+    [
+      ["/config/alex", "opus", null],
+      ["/config/alex", "opus", "session-1"],
+      ["/config/alex-codex", "sol", null],
+    ],
+  );
+  assert.match(turns[1].prompt.text, /Save what is worth keeping/);
+  assert.equal(
+    turns[2].prompt.text,
+    "This is a fresh session in a chat that was already going. The latest messages in it:\n\nAlex: book the band\n\nYou: sure\n\nAlex's new message:\n\nany news?",
+  );
+  const messages = (await call(ME, "GET", `/agents/${agent.id}/messages`)).json;
+  assert.deepEqual(
+    messages.map((m: { sender: string; body: string; status: string }) => [m.sender, m.body, m.status]),
+    [
+      ["person", "book the band", "done"],
+      ["agent", "sure", "done"],
+      ["person", "any news?", "done"],
+      ["sidebots", "Switched from Claude Opus 5.5 Medium to GPT-6.2 Sol Medium", "done"],
+      ["agent", "sure", "done"],
+    ],
+  );
+  assert.deepEqual(messages[3].switched, { from: opus, to: sol });
+  const [after] = (await call(ME, "GET", "/agents")).json;
+  assert.deepEqual([after.ran_on, after.session_id], [sol, "session-3"]);
+});
+
+test("a move to another provider while a turn runs hands over before the next turn, as the session is the old provider's", async () => {
+  const turns: Turn[] = [];
+  const { store, queue, call, say } = setup(async (turn) => {
+    turns.push(turn);
+    // The person picks Claude Code as the agent's first reply arrives, before its turn on Codex has ended.
+    if (turns.length === 1) await call(ME, "PATCH", `/agents/${agent.id}`, { provider: "claude" });
+    return reply("sure", `session-${turns.length}`);
+  });
+  store.addAccount(store.personByName(ME)!.id, "codex", "/config/alex-codex");
+  const agent = (await call(ME, "POST", "/agents", { name: "Tony", avatarId: "mochi", provider: "codex" })).json;
+  await say(ME, agent.id, "hi");
+  await queue.kick(agent.id);
+  await say(ME, agent.id, "hi again");
+  await queue.kick(agent.id);
+  // The Codex thread is saved to on Codex and never handed to Claude Code.
+  assert.deepEqual(
+    turns.map((turn) => [turn.configDir, turn.sessionId]),
+    [
+      ["/config/alex-codex", null],
+      ["/config/alex-codex", "session-1"],
+      ["/config/alex", null],
+    ],
+  );
+  const notices = (await call(ME, "GET", `/agents/${agent.id}/messages`)).json.filter((m: { sender: string }) => m.sender === "sidebots");
+  assert.deepEqual(notices.map((m: { body: string; status: string }) => [m.body, m.status]), [["Switched from GPT-6.2 Sol Medium to Claude Opus 5.5 Medium", "done"]]);
+});
+
+test("another model, effort or speed on the same provider keeps the session, and the chat says what changed before the turn that first runs on it", async () => {
+  const turns: Turn[] = [];
+  const { queue, call, say } = setup(async (turn) => {
+    turns.push(turn);
+    return reply("sure");
+  });
+  const agent = (await call(ME, "POST", "/agents", { name: "Theo", avatarId: "mochi" })).json;
+  // An agent that has yet to answer has nothing to switch from.
+  assert.equal((await call(ME, "PATCH", `/agents/${agent.id}`, { model: "sonnet" })).json.ran_on, null);
+  await call(ME, "PATCH", `/agents/${agent.id}`, { model: "opus" });
+  await say(ME, agent.id, "book the band");
+  await queue.kick(agent.id);
+  const notices = async () => (await call(ME, "GET", `/agents/${agent.id}/messages`)).json.filter((m: { sender: string }) => m.sender === "sidebots").map((m: { body: string }) => m.body);
+
+  // A choice the person takes back before a turn runs on it changes nothing.
+  await call(ME, "PATCH", `/agents/${agent.id}`, { model: "haiku" });
+  await call(ME, "PATCH", `/agents/${agent.id}`, { model: "opus" });
+  // Several choices before the next turn are one change.
+  await call(ME, "PATCH", `/agents/${agent.id}`, { effort: "high" });
+  await call(ME, "PATCH", `/agents/${agent.id}`, { fast: true });
+  await say(ME, agent.id, "any news?");
+  await queue.kick(agent.id);
+  assert.deepEqual(await notices(), ["Switched from Medium Standard to High Fast"]);
+  assert.deepEqual(
+    turns.map((turn) => [turn.model, turn.effort, turn.fast, turn.sessionId]),
+    [
+      ["opus", "medium", false, null],
+      ["opus", "high", true, "session-1"],
+    ],
+  );
+
+  // Sonnet has no fast mode, so its turns run without it.
+  await call(ME, "PATCH", `/agents/${agent.id}`, { model: "sonnet" });
+  await say(ME, agent.id, "and now?");
+  await queue.kick(agent.id);
+  assert.deepEqual((await notices()).at(-1), "Switched from Claude Opus 5.5 Fast to Claude Sonnet 5.5 Standard");
+  assert.deepEqual([turns[2].model, turns[2].fast], ["sonnet", false]);
+});
+
 test("a session that has grown large gets a fresh start by itself after its reply", async () => {
   const sessions: (string | null)[] = [];
   const { queue, call, say } = setup(async (turn) => {
@@ -809,6 +934,9 @@ test("an agent's name, avatar, model and effort can be changed, and its turns ru
 
   assert.equal((await call(ME, "PATCH", `/agents/${agent.id}`, { model: "gpt" })).status, 400);
   assert.equal((await call(ME, "PATCH", `/agents/${agent.id}`, { effort: "ultracode" })).status, 400);
+  // Each provider has its own efforts: Claude Code goes up to Max, and Ultra is Codex's alone.
+  assert.equal((await call(ME, "PATCH", `/agents/${agent.id}`, { effort: "max" })).json.effort, "max");
+  assert.equal((await call(ME, "PATCH", `/agents/${agent.id}`, { effort: "ultra" })).status, 400);
   assert.equal((await call(ME, "PATCH", `/agents/${agent.id}`, { avatarId: "dragon" })).status, 400);
   assert.equal((await call(HER, "PATCH", `/agents/${agent.id}`, { name: "Mine" })).status, 404);
 });
@@ -1468,6 +1596,24 @@ test("an ask closes unanswered when the person sends a message instead, takes to
   store.addMessage(agent.id, "agent", "Can I run this command?", "done", { ask: "waiting" });
   store.requeueInterrupted();
   assert.deepEqual((await asks()).at(-1), "unanswered");
+});
+
+test("the switch notice a server leaves when it stops mid hand-over is done with, and not taken for a fresh start", async () => {
+  const { store, queue, call, say } = setup(async () => reply("sure"));
+  const agent = (await call(ME, "POST", "/agents", { name: "Tony", avatarId: "mochi" })).json;
+  const opus = { provider: "claude", model: "opus", effort: "medium", fast: false } as const;
+  const sol = { provider: "codex", model: "sol", effort: "medium", fast: false } as const;
+  store.addMessage(agent.id, "sidebots", "Switched from Claude Opus 5.5 Medium to GPT-6.2 Sol Medium", "running", { switched: { from: opus, to: sol } });
+  store.requeueInterrupted();
+  assert.equal(store.nextQueued(agent.id), undefined);
+  await say(ME, agent.id, "hi");
+  await queue.kick(agent.id);
+  const messages = (await call(ME, "GET", `/agents/${agent.id}/messages`)).json.map((m: { sender: string; body: string; status: string }) => [m.sender, m.body, m.status]);
+  assert.deepEqual(messages, [
+    ["sidebots", "Switched from Claude Opus 5.5 Medium to GPT-6.2 Sol Medium", "done"],
+    ["person", "hi", "done"],
+    ["agent", "sure", "done"],
+  ]);
 });
 
 /** A turn that works until it is stopped, as a provider's does: it then ends with no reply, in the session it had. */

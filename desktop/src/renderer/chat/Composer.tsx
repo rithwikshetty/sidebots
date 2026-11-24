@@ -1,32 +1,36 @@
 import { useRef, type ClipboardEvent, type KeyboardEvent, type RefObject } from "react";
 import { ArrowUp, Plus, Reply, Square, X } from "lucide-react";
-import type { Message } from "@server/contract.ts";
+import type { AgentWithLatest, Message } from "@server/contract.ts";
 import { MAX_FILES, fileKind, fileMeta, isImage } from "@client/files.ts";
 import { preview } from "@client/messages.ts";
 import { cn } from "../lib/cn.ts";
+import type { AgentChanges } from "../lib/store.ts";
 import { IconButton } from "../ui/Button.tsx";
 import { Tooltip } from "../ui/Tooltip.tsx";
 import { FileTile } from "./Attachments.tsx";
 import { FILE_ICONS, usePreviews } from "./files.ts";
+import { ModelPicker } from "./ModelPicker.tsx";
 
 /**
  * The message field at the foot of the chat: a round card with + at its
- * start, which opens the system's file picker, and the round Send at its end
- * in the chat's colour. Empty, it is one line, the text between the two
- * buttons, with a name too long for it cut short. With text or files in it,
- * it opens: the text across its top, which grows from one line to about
- * eight and then scrolls, and the buttons in a row beneath. Enter sends and
- * Shift+Enter starts a new line; Enter while an input method is still
- * composing a character does neither. Picked files sit in a tray above the
- * text, each with a button that removes it, and a message can go with only
- * files. While the agent works and there is nothing to send, Send is Stop.
- * While Sidebots is out of reach nothing can be sent, and a line above the
- * card says so. A reply shows what it answers above the card, which Cancel
- * or Esc lets go of.
+ * start, which opens the system's file picker, and at its end what the agent
+ * answers with, which opens the panel that changes it, and the round Send in
+ * the chat's colour. Empty, the card is one line, the
+ * text between the buttons, with a name too long for it cut short. With text
+ * or files in it, it opens: the text across its top, which grows from one
+ * line to about eight and then scrolls, and the buttons in a row beneath.
+ * Enter sends and Shift+Enter starts a new line; Enter while an input method
+ * is still composing a character does neither. Picked files sit in a tray
+ * above the text, each with a button that removes it, and a message can go
+ * with only files. While the agent works and there is nothing to send, Send
+ * is Stop. While Sidebots is out of reach nothing can be sent, and a line
+ * above the card says so. A reply shows what it answers above the card,
+ * which Cancel or Esc lets go of.
  */
 export function Composer({
   field,
-  name,
+  agent,
+  onSet,
   value,
   onChange,
   files,
@@ -39,8 +43,9 @@ export function Composer({
   online,
 }: {
   field: RefObject<HTMLTextAreaElement | null>;
-  /** The agent's name, for the field's placeholder and the reply's words. */
-  name: string;
+  agent: AgentWithLatest;
+  /** Changes what the agent answers with. */
+  onSet: (changes: AgentChanges) => void;
   value: string;
   onChange: (text: string) => void;
   files: File[];
@@ -53,6 +58,7 @@ export function Composer({
   onStop?: () => void;
   online: boolean;
 }) {
+  const { name } = agent;
   const picker = useRef<HTMLInputElement>(null);
   // With something in it, the card is open: the text across its top and the buttons in a row beneath.
   const open = value.length > 0 || files.length > 0;
@@ -115,40 +121,45 @@ export function Composer({
           }}
           data-testid="file-input"
         />
-        {/* The room around the text is the buttons': beside it while the card is one line, beneath it once it opens. */}
-        <div
-          onClick={(event) => event.target === event.currentTarget && field.current?.focus()}
-          className={cn("flex cursor-text transition-[padding] duration-200 ease-out", open ? "px-2.5 pt-3 pb-10.5" : "px-10.5 py-2.75")}
-        >
-          <textarea
-            ref={field}
-            value={value}
-            onChange={(event) => onChange(event.target.value)}
-            onKeyDown={keyDown}
-            onPaste={paste}
-            rows={1}
-            placeholder={`Message ${name}`}
-            aria-label={`Message ${name}`}
-            className="field-sizing-content max-h-[8lh] min-w-0 flex-1 resize-none bg-transparent px-1 text-message text-ink outline-none placeholder:truncate placeholder:text-ink3"
-            data-testid="message-field"
-          />
-        </div>
-        <Tooltip label={stops ? "Stop" : "Send"} shortcut={stops ? undefined : ["↩"]} side="top">
-          <button
-            type="button"
-            onClick={() => (stops ? onStop?.() : canSend && onSend())}
-            disabled={!canSend && !stops}
-            aria-label={stops ? "Stop" : "Send message"}
-            className="absolute right-1.5 bottom-1.5 grid size-8 place-items-center rounded-full bg-chat text-on-tint transition-[opacity,filter,scale] duration-150 ease-out hover:brightness-110 active:scale-95 disabled:opacity-40"
-            data-testid={stops ? "stop" : "send"}
+        {/* The text and the buttons at the card's end share one row. While the card is one line the text keeps to its own column, so it stops short of them; once it opens the text runs under both columns, with room beneath it for the buttons. */}
+        <div className="grid grid-cols-[minmax(0,1fr)_auto]">
+          <div
+            onClick={(event) => event.target === event.currentTarget && field.current?.focus()}
+            className={cn("col-start-1 row-start-1 flex cursor-text transition-[padding] duration-200 ease-out", open ? "col-span-2 px-2.5 pt-3 pb-10.5" : "py-2.75 pr-1 pl-10.5")}
           >
-            {stops ? (
-              <Square key="stop" aria-hidden className="size-3 animate-fade-in fill-current" strokeWidth={2.5} />
-            ) : (
-              <ArrowUp key="send" aria-hidden className="size-[18px] animate-fade-in" strokeWidth={2.5} />
-            )}
-          </button>
-        </Tooltip>
+            <textarea
+              ref={field}
+              value={value}
+              onChange={(event) => onChange(event.target.value)}
+              onKeyDown={keyDown}
+              onPaste={paste}
+              rows={1}
+              placeholder={`Message ${name}`}
+              aria-label={`Message ${name}`}
+              className="field-sizing-content max-h-[8lh] min-w-0 flex-1 resize-none bg-transparent px-1 text-message text-ink outline-none placeholder:truncate placeholder:text-ink3"
+              data-testid="message-field"
+            />
+          </div>
+          <div className="col-start-2 row-start-1 mr-1.5 mb-1.5 flex items-center gap-1 self-end">
+            <ModelPicker agent={agent} onSet={onSet} returnTo={field} />
+            <Tooltip label={stops ? "Stop" : "Send"} shortcut={stops ? undefined : ["↩"]} side="top">
+              <button
+                type="button"
+                onClick={() => (stops ? onStop?.() : canSend && onSend())}
+                disabled={!canSend && !stops}
+                aria-label={stops ? "Stop" : "Send message"}
+                className="grid size-8 place-items-center rounded-full bg-chat text-on-tint transition-[opacity,filter,scale] duration-150 ease-out hover:brightness-110 active:scale-95 disabled:opacity-40"
+                data-testid={stops ? "stop" : "send"}
+              >
+                {stops ? (
+                  <Square key="stop" aria-hidden className="size-3 animate-fade-in fill-current" strokeWidth={2.5} />
+                ) : (
+                  <ArrowUp key="send" aria-hidden className="size-[18px] animate-fade-in" strokeWidth={2.5} />
+                )}
+              </button>
+            </Tooltip>
+          </div>
+        </div>
       </div>
     </div>
   );

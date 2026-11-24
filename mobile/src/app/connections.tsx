@@ -4,7 +4,7 @@ import { useRouter } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import Animated, { LayoutAnimationConfig } from "react-native-reanimated";
 import type { Connected } from "@server/contract";
-import { ConnectionLogo } from "@/components/ConnectionLogo";
+import { BrandLogo } from "@/components/BrandLogo";
 import { FadingText } from "@/components/FadingText";
 import { Rule, Section } from "@/components/Section";
 import { confirmRemoveConnection, problem } from "@/lib/alerts";
@@ -78,7 +78,7 @@ function ConnectionRow({ connected }: { connected: Connected }) {
   };
   return (
     <View style={styles.row}>
-      <ConnectionLogo logo={connected.logo} size={LOGO} />
+      <BrandLogo logo={connected.logo} size={LOGO} />
       <View style={styles.about}>
         <Text style={[styles.name, { color: theme.ink }]}>{connected.name}</Text>
         <FadingText style={[styles.note, { color: theme.ink2 }]}>{connected.account ? `Connected as ${connected.account}` : connected.allows}</FadingText>

@@ -55,12 +55,26 @@ export function costOf(tokens: Tokens, model: string): number {
  * name for it, as `gpt-6.2-sol` is for `sol`. Codex names a model for its
  * version and its kind, and offers the older versions beside the newest.
  */
-export function newest(models: { model: string }[], kind: string): string | undefined {
-  const versions = models.flatMap(({ model }) => {
-    const version = new RegExp(`^gpt-([\\d.]+)-${kind}$`).exec(model)?.[1];
-    return version ? [{ model, version }] : [];
+export function newest<Offered extends { model: string }>(models: Offered[], kind: string): Offered | undefined {
+  const versions = models.flatMap((offered) => {
+    const version = new RegExp(`^gpt-([\\d.]+)-${kind}$`).exec(offered.model)?.[1];
+    return version ? [{ offered, version }] : [];
   });
-  return versions.sort((a, b) => later(b.version, a.version))[0]?.model;
+  return versions.sort((a, b) => later(b.version, a.version))[0]?.offered;
+}
+
+/** A model as Codex offers it: its name, the efforts it can think at, lowest first, and the tiers it answers sooner at, the mildest first, which Codex names Fast. */
+type Offer = { model: string; supportedReasoningEfforts: { reasoningEffort: string }[]; serviceTiers?: { id: string }[] };
+
+/** The effort a turn on a model runs at: the agent's, or the highest the model has when it hasn't that one, as Luna has no Ultra. */
+export function effortOn(model: Offer, effort: string): string {
+  const has = model.supportedReasoningEfforts.map((each) => each.reasoningEffort);
+  return has.includes(effort) ? effort : (has.at(-1) ?? effort);
+}
+
+/** The tier a turn on a model answers at: for a fast turn the mildest of its faster ones, when it has any, and otherwise its standard one, whatever the person's own Codex is set to. */
+export function tierOn(model: Offer, fast: boolean): string {
+  return (fast && model.serviceTiers?.[0]?.id) || "default";
 }
 
 type Window = { usedPercent: number; windowDurationMins: number | null; resetsAt: number | null };
@@ -237,7 +251,7 @@ const said = (words: string, success = true) => ({ contentItems: [{ type: "input
  * stopped. The thread stays whole, so the next turn resumes it.
  */
 const runTurn = (start: () => Promise<Start>): RunTurn => async (turn) => {
-  const { prompt, followUps, seen, replied, ask, limits, cwd, sessionId, spent, configDir, apiKey, model, effort, keepSession, stop } = turn;
+  const { prompt, followUps, seen, replied, ask, limits, cwd, sessionId, spent, configDir, apiKey, model, effort, fast, keepSession, stop } = turn;
   const codex = connect(await start(), configDir, apiKey !== undefined);
   // The thread the turn runs in, and whether Codex has anything of it to come back to: a new one is kept from its first turn.
   let threadId: string | null = null;
@@ -276,11 +290,11 @@ const runTurn = (start: () => Promise<Start>): RunTurn => async (turn) => {
       const { account, requiresOpenaiAuth } = await codex.request<{ account: object | null; requiresOpenaiAuth: boolean }>("account/read", { refreshToken: false });
       if (!account && requiresOpenaiAuth) throw new Error("Not logged in");
     }
-    const name = newest((await codex.request<{ data: { model: string }[] }>("model/list", {})).data, model);
-    if (!name) throw new Error(`Codex offers this account no ${PROVIDERS.codex.models[model as keyof typeof PRICES]} model.`);
+    const offered = newest((await codex.request<{ data: Offer[] }>("model/list", {})).data, model);
+    if (!offered) throw new Error(`Codex offers this account no ${PROVIDERS.codex.models[model as keyof typeof PRICES]} model.`);
     const settings = {
       cwd,
-      model: name,
+      model: offered.model,
       approvalPolicy: "on-request",
       approvalsReviewer: "auto_review",
       sandbox: "workspace-write",
@@ -367,7 +381,7 @@ const runTurn = (start: () => Promise<Start>): RunTurn => async (turn) => {
       answer = "";
       taken.set(first.id, first);
       const ended = new Promise<Ended>((resolve) => (finish = resolve));
-      const started = await codex.request<{ turn: { id: string } }>("turn/start", { threadId, clientUserMessageId: first.id, input: text(first.text), effort });
+      const started = await codex.request<{ turn: { id: string } }>("turn/start", { threadId, clientUserMessageId: first.id, input: text(first.text), effort: effortOn(offered, effort), serviceTier: tierOn(offered, fast) });
       running = started.turn.id;
       mine.add(running);
       kept = true;

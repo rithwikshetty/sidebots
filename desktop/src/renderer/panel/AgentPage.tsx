@@ -103,12 +103,12 @@ function useLoading(load: () => Promise<void>, key: string): Loading {
  * An agent's page, in the panel. It opens on the agent's avatar, large, with
  * its name and the model it answers with. Edit turns the name into a field
  * and brings up the avatars and the colours of its chat to choose from, and
- * Save keeps what changed. Below are two tabs. Settings holds the model and
- * effort, what the agent used in the last days, Mute and Hide, and Delete.
- * Jobs & memory holds what the agent works from: its jobs, which can be
- * removed here, the instructions it follows and what it remembers, each of
- * which opens to read in full. The agent writes those three itself, as it is
- * told things in its chat. Every change but the edit's takes effect at once.
+ * Save keeps what changed. Below are two tabs. Settings holds what the agent
+ * used in the last days, Mute and Hide, and Delete. Jobs & memory holds what
+ * the agent works from: its jobs, which can be removed here, the instructions
+ * it follows and what it remembers, each of which opens to read in full. The
+ * agent writes those three itself, as it is told things in its chat. Every
+ * change but the edit's takes effect at once.
  */
 export function AgentPage({ agentId }: { agentId: string }) {
   const agent = useAgent(agentId);
@@ -278,19 +278,8 @@ function EditAgent({ agent, onDone, change }: { agent: AgentWithLatest; onDone: 
 }
 
 function SettingsTab({ agent, change, usage }: { agent: AgentWithLatest; change: (changes: AgentChanges) => void; usage: Loading }) {
-  const provider: Offered = PROVIDERS[agent.provider];
   return (
     <>
-      <Section
-        bare
-        title="Model"
-        note={`What it answers with on ${provider.name}, and how hard it thinks first. A more capable model and more effort are slower, and use more of your plan or API credit.`}
-        testId="agent-model"
-      >
-        <Segmented label="Model" options={provider.models} value={agent.model} onChange={(model) => change({ model })} />
-        <Segmented label="Effort" options={provider.efforts} value={agent.effort} onChange={(effort) => change({ effort })} />
-      </Section>
-
       <UsedSection agentId={agent.id} loading={usage} />
 
       <Section>

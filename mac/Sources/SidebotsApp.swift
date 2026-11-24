@@ -250,7 +250,7 @@ struct MenuContent: View {
     HStack(spacing: 10) {
       Image(nsImage: NSApp.applicationIconImage).resizable().frame(width: 36, height: 36)
       VStack(alignment: .leading, spacing: 2) {
-        Text("Sidebots").font(.headline)
+        Text(Server.name).font(.headline)
         HStack(spacing: 5) {
           Circle().fill(state.color).frame(width: 7, height: 7)
           Text(state.words).font(.callout).foregroundStyle(.secondary)

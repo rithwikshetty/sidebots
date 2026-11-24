@@ -14,13 +14,15 @@ import { FileCard, FileTile, PageCard, Photos } from "./Attachments.tsx";
 import { Bubble } from "./Bubble.tsx";
 import { FILE_ICONS, usePreviews } from "./files.ts";
 import { Markdown } from "./Markdown.tsx";
+import { SwitchNotice } from "./SwitchNotice.tsx";
 
 /** How a row comes into the chat: as it is, rising into place as a new message does, or settling from its faded copy as the person's own does. */
 export type Arrival = "none" | "rise" | "settle";
 
 /**
  * A message in the chat, as the phone draws it: a notice from Sidebots as a
- * small grey line, nothing at all for a message with nothing to show, as a
+ * small grey line, or as a line across the chat when it tells of a change of
+ * what the agent answers with, nothing at all for a message with nothing to show, as a
  * turn that ended without a reply, and anything else as its pictures, pages
  * and files above its bubble, at the end of the column for the person's and
  * at the start for the agent's. The bubble quotes the message it answers at its top, with
@@ -54,6 +56,7 @@ export const MessageRow = memo(function MessageRow({
   const row = useRef<HTMLDivElement>(null);
   // The Reply button is there only while the pointer or focus is on the message, so a long chat holds one, not one for each message.
   const [near, setNear] = useState(false);
+  if (message.switched) return <SwitchNotice message={message} switched={message.switched} className={cn(arrival !== "none" && "animate-rise-in", flashing && "animate-flash")} />;
   if (message.sender === "sidebots") {
     return (
       <p

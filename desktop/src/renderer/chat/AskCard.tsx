@@ -1,10 +1,11 @@
 import { useState } from "react";
 import { Cable, ChevronRight, FilePenLine, Globe, Plug, Terminal } from "lucide-react";
-import { fenced, type Ask, type Logo, type Message, type Question } from "@server/contract.ts";
+import { fenced, type Ask, type Message, type Question } from "@server/contract.ts";
 import { problem } from "../lib/alerts.ts";
 import { cn } from "../lib/cn.ts";
 import { answerAsk, connect, useAgent, useConnections } from "../lib/store.ts";
 import { Avatar } from "../ui/Avatar.tsx";
+import { BrandLogo } from "../ui/BrandLogo.tsx";
 import { Button } from "../ui/Button.tsx";
 import { Markdown } from "./Markdown.tsx";
 
@@ -39,7 +40,7 @@ export function AskCard({ question, from }: { question: Question; from?: string 
         </div>
       ) : null}
       <div className="flex items-center gap-1.5 text-ink2">
-        {logo ? <ConnectionLogo logo={logo} size={14} /> : <Icon aria-hidden className="size-3.5 shrink-0" strokeWidth={2.25} />}
+        {logo ? <BrandLogo logo={logo} size={14} /> : <Icon aria-hidden className="size-3.5 shrink-0" strokeWidth={2.25} />}
         <span className="text-sm font-semibold">{question.title}</span>
       </div>
       <p className="mt-px mb-1.5 text-message font-semibold">{question.what}</p>
@@ -68,15 +69,6 @@ export function AskCard({ question, from }: { question: Question; from?: string 
         </div>
       ) : null}
     </div>
-  );
-}
-
-/** A connection's logo: its brand's mark, in the brand's colour. A mark with no colour of its own takes the text's, so it shows in light and dark. */
-export function ConnectionLogo({ logo, size }: { logo: Logo; size: number }) {
-  return (
-    <svg aria-hidden width={size} height={size} viewBox="0 0 24 24" className="shrink-0">
-      <path d={logo.path} fill={logo.color ?? "currentColor"} />
-    </svg>
   );
 }
 
