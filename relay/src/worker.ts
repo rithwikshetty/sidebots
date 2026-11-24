@@ -20,7 +20,7 @@
 // covers `<method> <path>\n<time>\n<sha256 of the body, in hex>`.
 
 import { ENDED, endActivity, notify, tellRead, type Ended, type PushKey } from "./apple.ts";
-import { makeTunnel, removeTunnel, routeTunnel, type Tunnels } from "./cloudflare.ts";
+import { capacity, makeTunnel, removeTunnel, routeTunnel, type Tunnels } from "./cloudflare.ts";
 
 export type Env = {
   DB: D1Database;
@@ -38,6 +38,8 @@ export type Env = {
   /** The Cloudflare account the zone and the tunnels are in, and an API token that can edit its tunnels and the zone's DNS records. */
   CLOUDFLARE_ACCOUNT_ID: string;
   CLOUDFLARE_API_TOKEN: string;
+  /** How many tunnels the account may hold: the 1,000 Cloudflare gives every account, and any it bought. */
+  TUNNELS: string;
   /** Limits how many new machines one network address registers in a minute. */
   NEW_MACHINES: RateLimit;
 };
@@ -102,6 +104,13 @@ async function signedBy(publicKey: string, request: Request<unknown, unknown>, p
   }
 }
 
+/** How full the zone and the account are, in a sentence, and whether either has no room for another machine. Each machine takes one of the zone's DNS records and one of the account's tunnels. */
+async function roomOf(env: Env, send: typeof fetch): Promise<{ full: boolean; said: string }> {
+  const { records, recordsMost, tunnels } = await capacity(tunnelsOf(env), send);
+  const tunnelsMost = Number(env.TUNNELS);
+  return { full: records >= recordsMost || tunnels >= tunnelsMost, said: `The zone holds ${records} of ${recordsMost} DNS records, and the account ${tunnels} of ${tunnelsMost} tunnels.` };
+}
+
 /** Removes a machine with its tunnel and its address. */
 async function forget(env: Env, machine: { id: string; tunnel_id: string | null }, send: typeof fetch): Promise<void> {
   if (machine.tunnel_id) await removeTunnel(tunnelsOf(env), machine.tunnel_id, addressOf(machine.id, env), send);
@@ -161,7 +170,11 @@ export async function handle(request: Request<unknown, unknown>, env: Env, send:
       return answer({ id, address, tunnelToken }, 201);
     } catch (failure) {
       console.error(failure);
-      return answer({ error: "The relay couldn't make the machine's tunnel." }, 502);
+      // Cloudflare refuses a new machine's tunnel or DNS record when the account or the zone is full.
+      const room = tunnel_id ? null : await roomOf(env, send).catch(() => null);
+      if (!room?.full) return answer({ error: "The relay couldn't make the machine's tunnel." }, 502);
+      console.error(`The relay has no room for another machine. ${room.said}`);
+      return answer({ error: "The relay has no room for another machine." }, 503);
     }
   }
 
@@ -216,7 +229,15 @@ export async function removeStale(env: Env, send: typeof fetch = fetch, now = Da
   for (const machine of results) await forget(env, machine, send).catch((failure) => console.error(failure));
 }
 
+/** Says in the relay's log how full the zone and the account are, so their owner sees a limit coming. */
+export async function logRoom(env: Env, send: typeof fetch = fetch): Promise<void> {
+  console.log((await roomOf(env, send)).said);
+}
+
 export default {
   fetch: (request, env) => handle(request, env),
-  scheduled: async (_controller, env) => removeStale(env),
+  scheduled: async (_controller, env) => {
+    await removeStale(env);
+    await logRoom(env);
+  },
 } satisfies ExportedHandler<Env>;

@@ -5,7 +5,7 @@ import { mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
-import { handle, removeStale, type Env } from "../src/worker.ts";
+import { handle, logRoom, removeStale, type Env } from "../src/worker.ts";
 import { openStore } from "../../server/src/store.ts";
 import { relay } from "../../server/src/relay.ts";
 import { seal, type Notice } from "../../server/src/push.ts";
@@ -34,18 +34,23 @@ const API_TOKEN = "cloudflare-api-token";
 // The ids in Cloudflare's paths: the account's and the zone's, then a tunnel's or a record's.
 const IDS = /[0-9a-f-]{32,36}/g;
 
-/** Cloudflare's API as the relay uses it, keeping tunnels and DNS records in memory. */
+/** Cloudflare's API as the relay uses it, keeping tunnels and DNS records in memory, and refusing one past `most`, as a full account or zone does. */
 function fakeCloudflare() {
   const tunnels = new Map<string, { name: string; ingress?: { hostname?: string; service: string }[] }>();
   const records = new Map<string, { type: string; name: string; content: string; proxied: boolean }>();
-  const reply = (result: unknown, status = 200) => Response.json({ success: status < 300, result, errors: [] }, { status });
+  const most = { tunnels: 1000, records: 200 };
+  const reply = (result: unknown, status = 200, total?: number) =>
+    Response.json({ success: status < 300, result, result_info: { total_count: total }, errors: status < 300 ? [] : [{ message: "Cloudflare's words." }] }, { status });
   const answer = async (request: Request): Promise<Response> => {
     assert.equal(request.headers.get("Authorization"), `Bearer ${API_TOKEN}`);
     const { pathname, searchParams } = new URL(request.url);
     const route = `${request.method} ${pathname.replace("/client/v4", "").replace(IDS, ":id")}`;
     const last = [...pathname.matchAll(IDS)].at(-1)?.[0] ?? "";
     switch (route) {
+      case "GET /accounts/:id/cfd_tunnel":
+        return reply([...tunnels.keys()].slice(0, 1).map((id) => ({ id })), 200, tunnels.size);
       case "POST /accounts/:id/cfd_tunnel": {
+        if (tunnels.size >= most.tunnels) return reply(null, 400);
         const tunnelId = randomUUID();
         tunnels.set(tunnelId, { name: ((await request.json()) as { name: string }).name });
         return reply({ id: tunnelId });
@@ -61,7 +66,10 @@ function fakeCloudflare() {
         if (route === "DELETE /accounts/:id/cfd_tunnel/:id") tunnels.delete(last);
         return reply({});
       }
+      case "GET /zones/:id/dns_records/usage":
+        return reply({ record_usage: records.size, record_quota: most.records });
       case "POST /zones/:id/dns_records": {
+        if (records.size >= most.records) return reply(null, 400);
         const recordId = randomUUID();
         records.set(recordId, (await request.json()) as never);
         return reply({ id: recordId });
@@ -73,7 +81,7 @@ function fakeCloudflare() {
     }
     return reply(null, 404);
   };
-  return { tunnels, records, answer };
+  return { tunnels, records, most, answer };
 }
 
 /** A relay with a fresh database and Apple and Cloudflare faked, and a Sidebots server that sends through it. */
@@ -92,6 +100,7 @@ function setup(answerFromApple: () => Response = () => new Response(null, { stat
     ZONE_ID: "0123456789abcdef0123456789abcdef",
     CLOUDFLARE_ACCOUNT_ID: "a3214a4eaf739e455f2179a537fdf54b",
     CLOUDFLARE_API_TOKEN: API_TOKEN,
+    TUNNELS: "1000",
     NEW_MACHINES: NEW_MACHINES as RateLimit,
   };
   const cloudflare = fakeCloudflare();
@@ -325,6 +334,42 @@ test("a server says how much it is used as it registers, a day's count only grow
   const other = (await (await handle(signed("POST", "/machines", publicKey.export({ format: "jwk" }).x!, privateKey, undefined, said), env, outside)).json()) as { id: string };
   assert.deepEqual(await kept(other.id), { version: null, agents: null, phones: null });
   assert.deepEqual(await ran(other.id), [{ day, provider: "codex", kind: "reply", turns: 4 }]);
+});
+
+test("a new machine is told the relay has no room when the zone or the account is full, a machine with its tunnel registers all the same, and the relay logs how full both are", async (context) => {
+  const { env, server, outside, cloudflare } = setup();
+  const errors = context.mock.method(console, "error", () => {});
+  const logged = () => errors.mock.calls.map((call) => String(call.arguments[0]));
+  const another = async () => {
+    const { privateKey, publicKey } = generateKeyPairSync("ed25519");
+    const response = await handle(signed("POST", "/machines", publicKey.export({ format: "jwk" }).x!, privateKey), env, outside);
+    return [response.status, ((await response.json()) as { error?: string }).error];
+  };
+
+  // The zone has no DNS record left, so the server's own log says why it has no address.
+  cloudflare.most.records = 0;
+  await assert.rejects(server.register(), { message: "The relay answered 503 to registering: The relay has no room for another machine." });
+  assert.equal(cloudflare.tunnels.size, 0);
+  assert.match(logged()[0], /Cloudflare answered 400 to POST \/zones\/\w+\/dns_records: Cloudflare's words\./);
+  assert.equal(logged()[1], "The relay has no room for another machine. The zone holds 0 of 0 DNS records, and the account 0 of 1000 tunnels.");
+
+  // A zone with room again takes the machine as it tries again.
+  cloudflare.most.records = 200;
+  const { id } = await server.register();
+
+  // Cloudflare refuses a tunnel while the zone and the account have room, which is some other failure.
+  cloudflare.most.tunnels = 1;
+  assert.deepEqual(await another(), [502, "The relay couldn't make the machine's tunnel."]);
+
+  // The account has no tunnel left.
+  env.TUNNELS = "1";
+  assert.deepEqual(await another(), [503, "The relay has no room for another machine."]);
+  assert.equal(logged().at(-1), "The relay has no room for another machine. The zone holds 1 of 200 DNS records, and the account 1 of 1 tunnels.");
+  assert.equal((await server.register()).id, id);
+
+  const log = context.mock.method(console, "log", () => {});
+  await logRoom(env, outside);
+  assert.deepEqual(log.mock.calls.map((call) => call.arguments[0]), ["The zone holds 1 of 200 DNS records, and the account 1 of 1 tunnels."]);
 });
 
 test("one network address registers three new machines a minute, and a machine it registered can always come back", async () => {
