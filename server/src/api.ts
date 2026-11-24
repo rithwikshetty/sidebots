@@ -6,13 +6,12 @@ import { Readable } from "node:stream";
 import { Hono } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import { streamSSE } from "hono/streaming";
-import { COLOR, CONNECTIONS, CONTRACT_HEADER, CONTRACT_VERSION, MESSAGE_BYTES, PROVIDERS, effortMoved } from "./contract.ts";
+import { COLOR, CONNECTIONS, CONTRACT_HEADER, CONTRACT_VERSION, KEEPALIVE_MS, MESSAGE_BYTES, PROVIDERS, effortMoved } from "./contract.ts";
 import type { Connection, Effort, Model, Paired, Provider, PushToken, StreamEvent } from "./contract.ts";
 import type { Connections } from "./connections.ts";
 import type { AgentChanges, Device, Person, Store } from "./store.ts";
 import type { Queue } from "./runner.ts";
 
-const KEEPALIVE_MS = 25_000;
 // A token of Apple's as the phone reports it, in hex: 32 bytes for a phone today and 128 for a Live Activity, with room for Apple to lengthen either.
 const DEVICE_TOKEN = /^[0-9a-f]{64,512}$/;
 // An app's bundle identifier, as Apple allows it.
@@ -89,6 +88,14 @@ export function createApi(store: Store, queue: Queue, connections: Connections, 
     const agent = store.agent(id);
     return agent && agent.person_id === person.id ? agent : undefined;
   };
+
+  /**
+   * The cheapest thing to ask the server: it answers a paired device with
+   * nothing. An answer says the server is up and which version of the
+   * contract it speaks, and whether it is a refusal says whether the server
+   * knows the key that asked.
+   */
+  app.get("/status", (c) => c.body(null, 204));
 
   app.get("/agents", (c) => c.json(store.agentsFor(c.var.person.id)));
 

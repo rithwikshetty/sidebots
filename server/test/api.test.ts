@@ -118,6 +118,11 @@ test("a phone pairs once with a code, and only a paired phone is let in", async 
   assert.equal((await call({ Authorization: `Bearer ${code}` }, "GET", "/agents")).status, 401);
   assert.deepEqual((await call({ Authorization: `Bearer ${paired.json.key}` }, "GET", "/agents")).json, []);
 
+  // Asked how it stands, the server answers a paired phone with nothing, and anyone with the version of the contract it speaks.
+  const [known, unknown] = await Promise.all([paired.json.key, "made-up"].map((key) => app.request("/status", { headers: { Authorization: `Bearer ${key}` } })));
+  assert.deepEqual([known.status, await known.text(), unknown.status], [204, "", 401]);
+  for (const answer of [known, unknown]) assert.equal(answer.headers.get("Sidebots-Contract"), String(CONTRACT_VERSION));
+
   const late = store.addPairing(alex.id);
   assert.equal(late.expiresAt, Date.now() + 10 * 60_000);
   t.mock.timers.tick(10 * 60_000);

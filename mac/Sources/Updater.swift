@@ -34,8 +34,10 @@ import Sparkle
     controller.checkForUpdates(nil)
   }
 
-  /// Installs a waiting update if no agent is in the middle of a turn.
-  func installIfIdle() {
+  /// Installs a waiting update if no agent is in the middle of a turn, as the server says now.
+  func installIfIdle() async {
+    guard install != nil else { return }
+    await server.readStatus()
     guard let install, server.status?.working != true else { return }
     self.install = nil
     install()
@@ -51,7 +53,7 @@ import Sparkle
   nonisolated func updater(_ updater: SPUUpdater, willInstallUpdateOnQuit item: SUAppcastItem, immediateInstallationBlock: @escaping () -> Void) -> Bool {
     MainActor.assumeIsolated {
       install = immediateInstallationBlock
-      installIfIdle()
+      Task { await installIfIdle() }
     }
     return true
   }

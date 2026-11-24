@@ -93,14 +93,15 @@ struct PairView: View {
   private func watch() async {
     pairing = nil
     copied = false
+    await server.readPhones()
     let before = Set(server.phones.map(\.id))
     while !Task.isCancelled {
-      await server.refresh()
       if let phone = server.phones.first(where: { !before.contains($0.id) }) {
         paired = phone
         return
       }
       // A computer gets the address phones reach it at from the relay, once it is online. It can't make a code before then.
+      if server.status?.address == nil { await server.readStatus() }
       let expired = pairing.map { $0.expiresAt <= Date.now.timeIntervalSince1970 * 1000 } ?? true
       if server.status?.address != nil, expired {
         do {
@@ -113,6 +114,7 @@ struct PairView: View {
         }
       }
       try? await Task.sleep(for: .seconds(2))
+      await server.readPhones()
     }
   }
 
