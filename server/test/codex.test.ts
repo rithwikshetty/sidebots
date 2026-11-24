@@ -4,7 +4,7 @@ import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { codexOn, costOf, effortOn, limitsIn, newest, question } from "../src/codex.ts";
+import { codexOn, costOf, effortOn, limitsIn, newest, question, tierOn } from "../src/codex.ts";
 import type { FollowUps, Prompt, Turn } from "../src/runner.ts";
 import type { Limit, Question } from "../src/contract.ts";
 
@@ -19,6 +19,15 @@ test("a turn runs at the agent's effort, or at the highest its model has when it
   const luna = { model: "gpt-6-luna", supportedReasoningEfforts: ["low", "medium", "high", "xhigh", "max"].map((reasoningEffort) => ({ reasoningEffort })) };
   assert.equal(effortOn(luna, "xhigh"), "xhigh");
   assert.equal(effortOn(luna, "ultra"), "max");
+});
+
+test("a fast turn answers at the mildest of its model's faster tiers, and any other at its standard one", () => {
+  const efforts = [{ reasoningEffort: "medium" }];
+  const sol = { model: "gpt-6.2-sol", supportedReasoningEfforts: efforts, serviceTiers: [{ id: "priority" }, { id: "ultrafast" }] };
+  assert.equal(tierOn(sol, true), "priority");
+  assert.equal(tierOn(sol, false), "default");
+  // A model with no faster tier answers at its standard one.
+  assert.equal(tierOn({ model: "gpt-5-sol", supportedReasoningEfforts: efforts }, true), "default");
 });
 
 test("a plan's limits are the windows Codex gives its own limit, named for how long each runs", () => {
@@ -81,6 +90,7 @@ function setup({ signedIn = true, keyLogin = false } = {}) {
     configDir,
     model: "sol",
     effort: "medium",
+    fast: false,
     keepSession: true,
     stop: new AbortController(),
     searchHistory: (search) => `Found ${search}.`,
@@ -148,7 +158,14 @@ test("a turn starts a thread with the agent's tools, on the newest model of its 
   assert.match(started.developerInstructions, /memory\/MEMORY\.md/);
   // The agent is told when its reply comes with something to look at.
   assert.match(started.developerInstructions, /better seen than read/);
-  assert.equal(requests().find((each) => each.method === "turn/start")!.params.effort, "medium");
+  const first = requests().find((each) => each.method === "turn/start")!.params;
+  assert.deepEqual([first.effort, first.serviceTier], ["medium", "default"]);
+});
+
+test("a fast turn asks Codex for its model's fast tier", async () => {
+  const { driver, turn, requests } = setup();
+  await driver.runTurn(turn("hello", { fast: true }));
+  assert.equal(requests().find((each) => each.method === "turn/start")!.params.serviceTier, "priority");
 });
 
 test("a later turn resumes the thread, and a job's run has a thread that isn't kept", async () => {

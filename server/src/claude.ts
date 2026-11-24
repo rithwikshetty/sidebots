@@ -189,7 +189,7 @@ const remote = (servers: Servers) => Object.fromEntries(Object.entries(servers).
  * is left for the next turn.
  */
 const runTurn: RunTurn = async (turn) => {
-  const { prompt, followUps, seen, replied, ask, limits, cwd, sessionId, configDir, apiKey, model, effort, keepSession, stop } = turn;
+  const { prompt, followUps, seen, replied, ask, limits, cwd, sessionId, configDir, apiKey, model, effort, fast, keepSession, stop } = turn;
   const [claudeCode, env, servers] = [await program("claude"), await environment(), await turn.servers()];
   // A turn that was stopped while a connection's token was asked for never starts.
   if (stop.signal.aborted) throw new Error("The turn was stopped before it started");
@@ -261,7 +261,8 @@ const runTurn: RunTurn = async (turn) => {
       // Claude Code's own memory, kept in the agent's folder so it outlives
       // every session. It is on for a Sidebots agent even when its owner has
       // turned it off for their own Claude Code.
-      settings: { autoMemoryEnabled: true, autoMemoryDirectory: join(cwd, "memory"), env: { CLAUDE_CODE_DISABLE_AUTO_MEMORY: "0" } },
+      // Fast mode is the agent's own too, whatever its owner's Claude Code has it at.
+      settings: { autoMemoryEnabled: true, autoMemoryDirectory: join(cwd, "memory"), env: { CLAUDE_CODE_DISABLE_AUTO_MEMORY: "0" }, fastMode: fast },
       skills: "all",
       mcpServers: { sidebots, ...remote(servers) },
       allowedTools: tools.filter((each) => !each.checked).map((each) => `mcp__sidebots__${each.name}`),

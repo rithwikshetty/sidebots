@@ -100,15 +100,25 @@ export function createApi(store: Store, queue: Queue, connections: Connections, 
     return c.json(store.createAgent(c.var.person, name.trim(), avatarId.trim(), account.provider), 201);
   });
 
-  /** Changes any of an agent's name, avatar, model, effort and colour, and whether it is muted or hidden. A colour of null takes the avatar's. */
+  /**
+   * Changes any of an agent's name, avatar and colour, what it answers with,
+   * and whether it is muted or hidden. A colour of null takes the avatar's.
+   * What it answers with is its provider, which is one the person has set
+   * up, one of the provider's models, an effort, and whether it answers in
+   * fast mode, and takes effect from the agent's next turn. An agent moved
+   * to another provider without a model named starts on the one a new agent
+   * starts on there, and keeps its effort when the provider has it.
+   */
   app.patch("/agents/:id", async (c) => {
     const agent = ownAgent(c.var.person, c.req.param("id"));
     if (!agent) return c.json({ error: "No such agent." }, 404);
-    const { name, avatarId, model, effort, muted, hidden, color } = await c.req.json<{
+    const { name, avatarId, provider, model, effort, fast, muted, hidden, color } = await c.req.json<{
       name?: string;
       avatarId?: string;
+      provider?: string;
       model?: string;
       effort?: string;
+      fast?: boolean;
       muted?: boolean;
       hidden?: boolean;
       color?: string | null;
@@ -122,14 +132,22 @@ export function createApi(store: Store, queue: Queue, connections: Connections, 
       if (!store.avatarSheet(avatarId)) return c.json({ error: "No such avatar." }, 400);
       changes.avatar_id = avatarId;
     }
+    if (provider !== undefined && provider !== agent.provider) {
+      if (!Object.hasOwn(PROVIDERS, provider) || !store.account(c.var.person.id, provider as Provider)) return c.json({ error: "That isn't set up on your computer." }, 400);
+      changes.provider = provider as Provider;
+      changes.model = PROVIDERS[changes.provider].model;
+      if (!Object.hasOwn(PROVIDERS[changes.provider].efforts, agent.effort)) changes.effort = PROVIDERS[changes.provider].effort;
+    }
+    const offered = PROVIDERS[changes.provider ?? agent.provider];
     if (model !== undefined) {
-      if (!Object.hasOwn(PROVIDERS[agent.provider].models, model)) return c.json({ error: "No such model." }, 400);
+      if (!Object.hasOwn(offered.models, model)) return c.json({ error: "No such model." }, 400);
       changes.model = model as Model;
     }
     if (effort !== undefined) {
-      if (!Object.hasOwn(PROVIDERS[agent.provider].efforts, effort)) return c.json({ error: "No such effort." }, 400);
+      if (!Object.hasOwn(offered.efforts, effort)) return c.json({ error: "No such effort." }, 400);
       changes.effort = effort as Effort;
     }
+    if (typeof fast === "boolean") changes.fast = fast;
     if (typeof muted === "boolean") changes.muted = muted;
     if (typeof hidden === "boolean") changes.hidden = hidden;
     if (color !== undefined) {

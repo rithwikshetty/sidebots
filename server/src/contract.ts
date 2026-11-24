@@ -87,6 +87,14 @@ export type Message = {
    * message between an agent and the person.
    */
   peer_id: string | null;
+  /**
+   * For a notice that the agent answers with something else from here on:
+   * what it answered with before and what it answers with now. The notice is
+   * `running` while the agent hands over to another provider, and `done` once
+   * the change is in effect. The message's `body` says the same in words.
+   * Null for every other message.
+   */
+  switched: Switched | null;
   created_at: number;
 };
 
@@ -104,9 +112,10 @@ export const MESSAGE_BYTES = 95 * 1024 * 1024;
  * and the name the app shows, and what a new agent starts on. A more capable
  * model and more effort are slower and use more of the person's plan or API
  * credit. The efforts are every level the provider has, lowest first, and a
- * model that hasn't the agent's runs at the highest it has. `instructions`
- * is the file in the agent's folder that the program reads the agent's
- * instructions from.
+ * model that hasn't the agent's runs at the highest it has. `fast` are the
+ * models with a fast mode, which answers sooner and uses more of the plan or
+ * credit. `instructions` is the file in the agent's folder that the program
+ * reads the agent's instructions from.
  */
 export const PROVIDERS = {
   claude: {
@@ -116,6 +125,7 @@ export const PROVIDERS = {
     efforts: { low: "Low", medium: "Medium", high: "High", xhigh: "Extra high", max: "Max" },
     model: "opus",
     effort: "medium",
+    fast: ["opus"],
     instructions: "CLAUDE.md",
   },
   codex: {
@@ -125,6 +135,7 @@ export const PROVIDERS = {
     efforts: { low: "Low", medium: "Medium", high: "High", xhigh: "Extra high", max: "Max", ultra: "Ultra" },
     model: "sol",
     effort: "medium",
+    fast: ["astra", "sol", "terra", "luna"],
     instructions: "AGENTS.md",
   },
 } as const;
@@ -132,8 +143,8 @@ export type Provider = keyof typeof PROVIDERS;
 /** A model of any provider. Each name always means the newest model of its kind. */
 export type Model = { [P in Provider]: keyof (typeof PROVIDERS)[P]["models"] }[Provider];
 export type Effort = { [P in Provider]: keyof (typeof PROVIDERS)[P]["efforts"] }[Provider];
-/** What a provider offers, read for an agent whichever provider it runs on: its name, its logo, and the names the app shows for its models and efforts. */
-export type Offered = { name: string; logo: Logo; models: Partial<Record<Model, string>>; efforts: Partial<Record<Effort, string>> };
+/** What a provider offers, read for an agent whichever provider it runs on: its name, its logo, the names the app shows for its models and efforts, and its models with a fast mode. */
+export type Offered = { name: string; logo: Logo; models: Partial<Record<Model, string>>; efforts: Partial<Record<Effort, string>>; fast: readonly Model[] };
 
 /**
  * A brand's mark: one shape in a box 24 by 24, as Simple Icons draws a
@@ -181,10 +192,13 @@ export type Connected = { connection: Connection; name: string; allows: string; 
 export type SignIn = { url: string; redirect: string };
 
 /**
- * `read_at` is the time up to which the person has read the chat. A `muted`
- * agent sends no notifications. A `hidden` one is kept off the home screen
- * until it next has something to say. `color` fills the person's messages in
- * the agent's chat, as `#RRGGBB`; null takes the colour of its avatar.
+ * `fast` has the agent answer in its provider's fast mode, on a model that
+ * has one. `read_at` is the time up to which the person has read the chat. A
+ * `muted` agent sends no notifications. A `hidden` one is kept off the home
+ * screen until it next has something to say. `color` fills the person's
+ * messages in the agent's chat, as `#RRGGBB`; null takes the colour of its
+ * avatar. `switched_from` is what the agent answered with on its last turn,
+ * while the person has picked something else since and no turn has run on it.
  */
 export type Agent = {
   id: string;
@@ -194,6 +208,8 @@ export type Agent = {
   provider: Provider;
   model: Model;
   effort: Effort;
+  fast: boolean;
+  switched_from: Selection | null;
   muted: boolean;
   hidden: boolean;
   color: string | null;
@@ -201,6 +217,44 @@ export type Agent = {
   read_at: number;
   created_at: number;
 };
+/**
+ * What an agent answers with: the provider it runs on, one of the provider's
+ * models, how hard it thinks before it answers, and whether it answers in
+ * the provider's fast mode.
+ */
+export type Selection = Pick<Agent, "provider" | "model" | "effort" | "fast">;
+/** A change of what an agent answers with. */
+export type Switched = { from: Selection; to: Selection };
+
+/** Whether a selection answers in its provider's fast mode, which only a model that has one does. */
+export function runsFast({ provider, model, fast }: Selection): boolean {
+  return fast && (PROVIDERS[provider] as Offered).fast.includes(model);
+}
+
+/** Whether two selections answer alike: on the same provider and model, at the same effort and speed. */
+export function sameSelection(one: Selection, other: Selection): boolean {
+  return one.provider === other.provider && one.model === other.model && one.effort === other.effort && runsFast(one) === runsFast(other);
+}
+
+/**
+ * A selection in the words the apps show: its model, its effort, and "Fast"
+ * when it answers in fast mode. Beside `other`, the selection it changed
+ * from or to, it is only the parts the two differ in, where a speed that
+ * changed is "Standard" or "Fast", and on another provider it is all of it
+ * after the provider's name.
+ */
+export function selectionWords(selection: Selection, other?: Selection): string[] {
+  const { name, models, efforts }: Offered = PROVIDERS[selection.provider];
+  const all = other === undefined || other.provider !== selection.provider;
+  const fast = runsFast(selection);
+  return [
+    ...(other !== undefined && all ? [name] : []),
+    ...(all || other.model !== selection.model ? [models[selection.model] ?? selection.model] : []),
+    ...(all || other.effort !== selection.effort ? [efforts[selection.effort] ?? selection.effort] : []),
+    ...(all ? (fast ? ["Fast"] : []) : runsFast(other) !== fast ? [fast ? "Fast" : "Standard"] : []),
+  ];
+}
+
 /**
  * An agent as the home screen shows it. `working` is true while it has a turn
  * queued or running. `unread` counts the replies, the asks still waiting and

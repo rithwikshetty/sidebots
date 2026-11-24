@@ -100,12 +100,16 @@ test("several that open a new database at once all open it", async () => {
   }
 });
 
+// Takes a database back to before an agent had a fast mode, and to before `devices.kind`, the change before that.
+const BEFORE_FAST = "alter table agents drop column fast; alter table agents drop column switched_from; alter table messages drop column switched;";
+const BEFORE_KIND = `alter table devices drop column kind; ${BEFORE_FAST}`;
+
 test("two that open an older database at once make its changes once", async () => {
   const home = mkdtempSync(join(tmpdir(), "sidebots-store-test-"));
   openStore(home).close();
   // The database as it was before its last change, in the hands of one that has begun to make the change.
   const first = new DatabaseSync(join(home, "sidebots.sqlite"));
-  first.exec("alter table devices drop column kind; pragma user_version = 11; begin immediate");
+  first.exec(`${BEFORE_KIND} pragma user_version = 11; begin immediate`);
   // Another process opens the database meanwhile, as the Mac app's `status` command does beside the server.
   const opens = `import { openStore } from ${JSON.stringify(new URL("../src/store.ts", import.meta.url).href)}; console.log("opening"); openStore(${JSON.stringify(home)}).close();`;
   const second = spawn(process.execPath, ["--input-type=module", "--eval", opens], { stdio: ["ignore", "pipe", "pipe"] });
@@ -131,7 +135,7 @@ test("a database that counted turns without their tokens keeps the turns, and co
   old.exec(`
     alter table usage drop column tokens;
     alter table usage drop column session_tokens;
-    alter table devices drop column kind;
+    ${BEFORE_KIND}
     insert into usage values ('${agent.id}', 'reply', 2, 'chat', 2, ${Date.now()});
     pragma user_version = 8;
   `);
@@ -156,7 +160,7 @@ test("a Codex session from before the connections' tools, or before those tools 
   fresh.close();
   // The database as it was before the fresh starts: without them, and without the change made after them.
   const old = new DatabaseSync(join(home, "sidebots.sqlite"));
-  old.exec("alter table devices drop column kind; pragma user_version = 10");
+  old.exec(`${BEFORE_KIND} pragma user_version = 10`);
   old.close();
 
   const store = openStore(home);
@@ -170,7 +174,7 @@ test("a Codex session from before the connections' tools, or before those tools 
 
   // The database as it was once the session had its fresh start and went on, before the tools changed.
   const later = new DatabaseSync(join(home, "sidebots.sqlite"));
-  later.exec("update messages set status = 'done'; pragma user_version = 12");
+  later.exec(`update messages set status = 'done'; ${BEFORE_FAST} pragma user_version = 12`);
   later.close();
   assert.equal(openStore(home).messages(maya.id).length, 2);
 });

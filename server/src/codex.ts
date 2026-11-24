@@ -63,13 +63,18 @@ export function newest<Offered extends { model: string }>(models: Offered[], kin
   return versions.sort((a, b) => later(b.version, a.version))[0]?.offered;
 }
 
-/** A model as Codex offers it: its name, and the efforts it can think at, lowest first. */
-type Offer = { model: string; supportedReasoningEfforts: { reasoningEffort: string }[] };
+/** A model as Codex offers it: its name, the efforts it can think at, lowest first, and the tiers it answers sooner at, the mildest first, which Codex names Fast. */
+type Offer = { model: string; supportedReasoningEfforts: { reasoningEffort: string }[]; serviceTiers?: { id: string }[] };
 
 /** The effort a turn on a model runs at: the agent's, or the highest the model has when it hasn't that one, as Luna has no Ultra. */
 export function effortOn(model: Offer, effort: string): string {
   const has = model.supportedReasoningEfforts.map((each) => each.reasoningEffort);
   return has.includes(effort) ? effort : (has.at(-1) ?? effort);
+}
+
+/** The tier a turn on a model answers at: for a fast turn the mildest of its faster ones, when it has any, and otherwise its standard one, whatever the person's own Codex is set to. */
+export function tierOn(model: Offer, fast: boolean): string {
+  return (fast && model.serviceTiers?.[0]?.id) || "default";
 }
 
 type Window = { usedPercent: number; windowDurationMins: number | null; resetsAt: number | null };
@@ -246,7 +251,7 @@ const said = (words: string, success = true) => ({ contentItems: [{ type: "input
  * stopped. The thread stays whole, so the next turn resumes it.
  */
 const runTurn = (start: () => Promise<Start>): RunTurn => async (turn) => {
-  const { prompt, followUps, seen, replied, ask, limits, cwd, sessionId, spent, configDir, apiKey, model, effort, keepSession, stop } = turn;
+  const { prompt, followUps, seen, replied, ask, limits, cwd, sessionId, spent, configDir, apiKey, model, effort, fast, keepSession, stop } = turn;
   const codex = connect(await start(), configDir, apiKey !== undefined);
   // The thread the turn runs in, and whether Codex has anything of it to come back to: a new one is kept from its first turn.
   let threadId: string | null = null;
@@ -376,7 +381,7 @@ const runTurn = (start: () => Promise<Start>): RunTurn => async (turn) => {
       answer = "";
       taken.set(first.id, first);
       const ended = new Promise<Ended>((resolve) => (finish = resolve));
-      const started = await codex.request<{ turn: { id: string } }>("turn/start", { threadId, clientUserMessageId: first.id, input: text(first.text), effort: effortOn(offered, effort) });
+      const started = await codex.request<{ turn: { id: string } }>("turn/start", { threadId, clientUserMessageId: first.id, input: text(first.text), effort: effortOn(offered, effort), serviceTier: tierOn(offered, fast) });
       running = started.turn.id;
       mine.add(running);
       kept = true;

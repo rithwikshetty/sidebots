@@ -575,6 +575,98 @@ test("a fresh start has the agent save its memory, then gives the next message a
   );
 });
 
+test("an agent moved to another provider hands over: it saves its memory where it was, and answers in a new session there that is shown the chat so far", async () => {
+  const turns: Turn[] = [];
+  const { home, store, queue, call, say } = setup(async (turn) => {
+    turns.push(turn);
+    return reply("sure", `session-${turns.length}`);
+  });
+  store.addAccount(store.personByName(ME)!.id, "codex", "/config/alex-codex");
+  const agent = (await call(ME, "POST", "/agents", { name: "Theo", avatarId: "mochi" })).json;
+  await say(ME, agent.id, "book the band");
+  await queue.kick(agent.id);
+
+  // A provider the person hasn't set up is refused, and so is a model of the provider the agent leaves.
+  assert.equal((await call(ME, "PATCH", `/agents/${agent.id}`, { provider: "abacus" })).status, 400);
+  assert.equal((await call(ME, "PATCH", `/agents/${agent.id}`, { provider: "codex", model: "opus" })).status, 400);
+  const moved = (await call(ME, "PATCH", `/agents/${agent.id}`, { provider: "codex" })).json;
+  const opus = { provider: "claude", model: "opus", effort: "medium", fast: false };
+  const sol = { provider: "codex", model: "sol", effort: "medium", fast: false };
+  assert.deepEqual([moved.provider, moved.model, moved.effort, moved.switched_from, moved.session_id], ["codex", "sol", "medium", opus, "session-1"]);
+  // Its instructions went with it, to the file Codex reads.
+  assert.match(readFileSync(join(home, "agents", agent.id, "AGENTS.md"), "utf8"), /^# Theo\n/);
+  assert.equal(existsSync(join(home, "agents", agent.id, "CLAUDE.md")), false);
+  // Nothing in the chat says so until a turn runs on it.
+  assert.equal((await call(ME, "GET", `/agents/${agent.id}/messages`)).json.length, 2);
+
+  await say(ME, agent.id, "any news?");
+  await queue.kick(agent.id);
+  // The memory is saved in the session on Claude Code, and the reply comes from a new one on Codex.
+  assert.deepEqual(
+    turns.map((turn) => [turn.configDir, turn.model, turn.sessionId]),
+    [
+      ["/config/alex", "opus", null],
+      ["/config/alex", "opus", "session-1"],
+      ["/config/alex-codex", "sol", null],
+    ],
+  );
+  assert.match(turns[1].prompt.text, /Save what is worth keeping/);
+  assert.equal(
+    turns[2].prompt.text,
+    "This is a fresh session in a chat that was already going. The latest messages in it:\n\nAlex: book the band\n\nYou: sure\n\nAlex's new message:\n\nany news?",
+  );
+  const messages = (await call(ME, "GET", `/agents/${agent.id}/messages`)).json;
+  assert.deepEqual(
+    messages.map((m: { sender: string; body: string; status: string }) => [m.sender, m.body, m.status]),
+    [
+      ["person", "book the band", "done"],
+      ["agent", "sure", "done"],
+      ["person", "any news?", "done"],
+      ["sidebots", "Switched from Claude Code Opus Medium to Codex Sol Medium", "done"],
+      ["agent", "sure", "done"],
+    ],
+  );
+  assert.deepEqual(messages[3].switched, { from: opus, to: sol });
+  const [after] = (await call(ME, "GET", "/agents")).json;
+  assert.deepEqual([after.switched_from, after.session_id], [null, "session-3"]);
+});
+
+test("another model, effort or speed on the same provider keeps the session, and the chat says what changed before the turn that first runs on it", async () => {
+  const turns: Turn[] = [];
+  const { queue, call, say } = setup(async (turn) => {
+    turns.push(turn);
+    return reply("sure");
+  });
+  const agent = (await call(ME, "POST", "/agents", { name: "Theo", avatarId: "mochi" })).json;
+  await say(ME, agent.id, "book the band");
+  await queue.kick(agent.id);
+  const notices = async () => (await call(ME, "GET", `/agents/${agent.id}/messages`)).json.filter((m: { sender: string }) => m.sender === "sidebots").map((m: { body: string }) => m.body);
+
+  // A choice the person takes back before a turn runs on it changes nothing.
+  await call(ME, "PATCH", `/agents/${agent.id}`, { model: "haiku" });
+  assert.equal((await call(ME, "PATCH", `/agents/${agent.id}`, { model: "opus" })).json.switched_from, null);
+  // Several choices before the next turn are one change.
+  await call(ME, "PATCH", `/agents/${agent.id}`, { effort: "high" });
+  await call(ME, "PATCH", `/agents/${agent.id}`, { fast: true });
+  await say(ME, agent.id, "any news?");
+  await queue.kick(agent.id);
+  assert.deepEqual(await notices(), ["Switched from Medium Standard to High Fast"]);
+  assert.deepEqual(
+    turns.map((turn) => [turn.model, turn.effort, turn.fast, turn.sessionId]),
+    [
+      ["opus", "medium", false, null],
+      ["opus", "high", true, "session-1"],
+    ],
+  );
+
+  // Sonnet has no fast mode, so its turns run without it.
+  await call(ME, "PATCH", `/agents/${agent.id}`, { model: "sonnet" });
+  await say(ME, agent.id, "and now?");
+  await queue.kick(agent.id);
+  assert.deepEqual((await notices()).at(-1), "Switched from Opus Fast to Sonnet Standard");
+  assert.deepEqual([turns[2].model, turns[2].fast], ["sonnet", false]);
+});
+
 test("a session that has grown large gets a fresh start by itself after its reply", async () => {
   const sessions: (string | null)[] = [];
   const { queue, call, say } = setup(async (turn) => {
