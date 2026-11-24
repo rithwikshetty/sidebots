@@ -187,7 +187,8 @@ function ChatWith({ agent }: { agent: AgentWithLatest }) {
   }, [opened, agent.id, loading]);
 
   // The end of a stretch from further back fetches the run of the chat after it while it is on screen, and again when the computer is back in reach. While the chat lands on a message it was opened at, the list can be at that end for a moment on its way.
-  useEffect(() => void (online && newestShown === hole && !landing && hole !== undefined && loadOlder(agent.id, hole).catch(() => undefined)), [agent.id, online, newestShown, landing, hole]);
+  const newestDrawn = newestFirst[0]?.id;
+  useEffect(() => void (online && newestShown === newestDrawn && !landing && hole !== undefined && loadOlder(agent.id, hole).catch(() => undefined)), [agent.id, online, newestShown, newestDrawn, landing, hole]);
 
   // Scrolling up to the oldest message the app has fetches the page before it, until the chat's beginning: the oldest message, once a page fetched before it came back empty.
   const first = useRef<string | null>(null);
