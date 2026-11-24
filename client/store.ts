@@ -309,8 +309,9 @@ export function createStore<Picked>(platform: Platform<Picked>) {
    */
   const isCaughtUp = (agentId: string) => agentId in state.caughtUp && state.caughtUp[agentId] === live?.changes[agentId];
 
-  // The fetch of each chat's newest page that was asked for last.
+  // The fetch of each chat's newest page that was asked for last, and the catch-up as a stream opens, which asks for the newest page of each chat the app holds.
   const fetching = new Map<string, Promise<void>>();
+  let catchingUp: Promise<void> = Promise.resolve();
 
   /** Where a chat's newest page joins onto what the chat holds: the place of the page's first message among them. A page short of a full one is the whole chat and joins onto nothing, and neither does one whose first message the chat doesn't hold. */
   const joinsAt = (held: Message[], page: Message[]) => (page.length < PAGE ? 0 : Math.max(held.findIndex((message) => message.id === page[0].id), 0));
@@ -415,9 +416,10 @@ export function createStore<Picked>(platform: Platform<Picked>) {
     return fetch;
   }
 
-  /** Settles once the newest page of a chat that was asked for last has come, or failed to: at once when none is on its way. */
-  function newestPage(agentId: string): Promise<void> {
-    return (fetching.get(agentId) ?? Promise.resolve()).catch(() => undefined);
+  /** Settles once the newest page of a chat that was asked for last has come, or failed to, after a catch-up on its way has asked for it: at once when neither is on its way. */
+  async function newestPage(agentId: string): Promise<void> {
+    await catchingUp.catch(() => undefined);
+    await fetching.get(agentId)?.catch(() => undefined);
   }
 
   // The pages and runs on their way, each with the run of its chat it is.
@@ -759,7 +761,7 @@ export function createStore<Picked>(platform: Platform<Picked>) {
         }
         if (!response.ok || !response.body) throw new Error(`events answered ${response.status}`);
         const opened = (live = { heard: Date.now(), changes: {} });
-        await refresh(opened);
+        await (catchingUp = refresh(opened));
         set({ online: true });
         wait = 1000;
         const reader = response.body.getReader();
