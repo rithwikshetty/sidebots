@@ -4,6 +4,7 @@ import assert from "node:assert/strict";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, statSync, truncateSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { StatementSync } from "node:sqlite";
 import { openStore } from "../src/store.ts";
 import { createConnections } from "../src/connections.ts";
 import { createQueue, type Turn, type TurnResult } from "../src/runner.ts";
@@ -467,6 +468,35 @@ test("the event stream carries the person's own messages and their status change
   );
 });
 
+test("a message costs the database the same however many devices listen for it", async (t) => {
+  const { store, call, app, pair } = setup(async () => reply("ok"));
+  const agent = (await call(ME, "POST", "/agents", { name: "Theo", avatarId: "mochi" })).json;
+  // Every statement the store runs.
+  const ran = (["get", "all", "run"] as const).map((method) => t.mock.method(StatementSync.prototype, method));
+  const cost = (body: string) => {
+    const before = ran.reduce((total, each) => total + each.mock.callCount(), 0);
+    store.addMessage(agent.id, "agent", body, "done");
+    return ran.reduce((total, each) => total + each.mock.callCount(), 0) - before;
+  };
+  const unheard = cost("Nobody hears this.");
+
+  const readers = [];
+  for (const phone of [pair(ME), pair(ME), pair(ME)]) {
+    const reader = (await app.request("/events", { headers: phone })).body!.pipeThrough(new TextDecoderStream()).getReader();
+    t.after(() => reader.cancel());
+    // The stream's first ping says it is listening.
+    await reader.read();
+    readers.push(reader);
+  }
+  assert.equal(cost("Three hear this."), unheard);
+  for (const reader of readers) {
+    let text = "";
+    while (!text.includes("event: message")) text += (await reader.read()).value;
+    const heard = JSON.parse(text.split("\n").find((line) => line.startsWith("data: {"))!.slice(6)) as { message: Message; agent: AgentWithLatest };
+    assert.deepEqual([heard.message.body, heard.agent.name, heard.agent.latest?.body], ["Three hear this.", "Theo", "Three hear this."]);
+  }
+});
+
 test("the event stream carries the agents the person adds, changes and deletes on another phone, and nobody else's", async () => {
   const { call, app, phoneOf, pair } = setup(async () => reply("ok"));
   const otherPhone = pair(ME);
@@ -539,6 +569,13 @@ test("files sent with a message go into the agent's folder, the agent is told wh
   assert.equal(sized.status, 200);
   assert.equal(sized.headers.get("Content-Length"), "10");
   assert.equal(await sized.text(), "");
+  // A large file comes a piece at a time.
+  writeFileSync(join(store.agentHome(agent.id), "attachments", "film.mov"), new Uint8Array(1024 * 1024));
+  const film = (await app.request(`/agents/${agent.id}/attachments/film.mov`, { headers: phoneOf(ME) })).body!.getReader();
+  const pieces: number[] = [];
+  for (let piece = await film.read(); !piece.done; piece = await film.read()) pieces.push(piece.value.byteLength);
+  assert.ok(pieces.length > 1);
+  assert.equal(pieces.reduce((total, piece) => total + piece, 0), 1024 * 1024);
   assert.equal((await app.request(`/agents/${agent.id}/${path}`, { headers: phoneOf(HER) })).status, 404);
   assert.equal((await app.request(`/agents/${agent.id}/attachments/..`, { headers: phoneOf(ME) })).status, 404);
   assert.equal((await say(ME, agent.id, "  ")).status, 400);
@@ -1437,6 +1474,9 @@ test("an agent's files go with its next message, an update or its reply, and ope
     writeFileSync(join(turn.cwd, "film.mov"), "");
     truncateSync(join(turn.cwd, "film.mov"), MESSAGE_BYTES);
     answers.push(turn.sendFiles(["film.mov"]));
+    // A file is sized before it is read, so one too large to read at all is left out the same way.
+    truncateSync(join(turn.cwd, "film.mov"), 3 * 1024 ** 3);
+    answers.push(turn.sendFiles(["film.mov"]));
     return reply("Both are here.");
   }, () => time);
   const agent = (await call(ME, "POST", "/agents", { name: "Maya", avatarId: "moss" })).json;
@@ -1451,6 +1491,7 @@ test("an agent's files go with its next message, an update or its reply, and ope
     "There is no file at missing.png. Nothing was added, so give the paths again.",
     "Added. They go with the next message you send.",
     "Added. They go with the next message you send.",
+    "A message carries up to 95 MB of files. Nothing was added, so send fewer or smaller ones.",
     "A message carries up to 95 MB of files. Nothing was added, so send fewer or smaller ones.",
   ]);
   const [, update, answer, fromJob, ...rest] = (await call(ME, "GET", `/agents/${agent.id}/messages`)).json as { body: string; attachments: string[] }[];

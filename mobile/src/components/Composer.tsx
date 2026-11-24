@@ -54,12 +54,13 @@ const ATTACH_ACTIONS: (MessageMenuAction & { id: PickSource })[] = [
  * send, Send is Stop, so stopping is one tap on the button the person
  * already uses. A tap on the microphone turns the buttons away for the
  * dictation row, whose ✓ adds what the person said to the end of the text.
+ * The field keeps what the person has typed, so typing draws the field again
+ * and nothing around it, and the words are there when they leave the chat
+ * and come back.
  */
 export function Composer({
   agent,
   onModel,
-  value,
-  onChangeText,
   onSend,
   onStop,
   placeholder,
@@ -71,9 +72,8 @@ export function Composer({
   agent: AgentWithLatest;
   /** Opens the drawer where what the agent answers with is chosen. */
   onModel: () => void;
-  value: string;
-  onChangeText: (text: string) => void;
-  onSend: () => void;
+  /** Sends the words with what is attached, and resolves to whether they went. Words that didn't go come back to the field. */
+  onSend: (text: string) => Promise<boolean>;
   /** Stops the agent's work. Given while the agent works. */
   onStop?: () => void;
   placeholder: string;
@@ -88,6 +88,12 @@ export function Composer({
   const reduceMotion = useReducedMotion();
   const provider: Offered = PROVIDERS[agent.provider];
   const inputRef = useRef<TextInputInstance>(null);
+  // What the person has typed, which stays with the agent's chat when they leave it and come back.
+  const [value, keepValue] = useState(() => drafts.get(agent.id) ?? "");
+  const setValue = (text: string) => {
+    drafts.set(agent.id, text);
+    keepValue(text);
+  };
   const [typing, setTyping] = useState(false);
   // The tray keeps its room until its last tile has faded out, then the card
   // closes over it with its own transition, so the text never runs under a
@@ -145,7 +151,13 @@ export function Composer({
     const words = await dictation.stop();
     if (!words) return;
     const text = latestValue.current;
-    onChangeText(text === "" || /\s$/.test(text) ? text + words : `${text} ${words}`);
+    setValue(text === "" || /\s$/.test(text) ? text + words : `${text} ${words}`);
+  };
+
+  const send = async () => {
+    const text = value.trim();
+    setValue("");
+    if (!(await onSend(text))) setValue(text);
   };
 
   return (
@@ -176,7 +188,7 @@ export function Composer({
           <TextInput
             ref={inputRef}
             value={value}
-            onChangeText={onChangeText}
+            onChangeText={setValue}
             onFocus={() => setTyping(true)}
             onBlur={() => setTyping(false)}
             placeholder={placeholder}
@@ -237,7 +249,7 @@ export function Composer({
               {canDictate ? <IconButton icon={Mic} label="Dictate" iconSize={19} color={theme.ink2} onPress={() => void dictation.start()} /> : null}
               <Animated.View style={sendStyle}>
                 <Pressable
-                  onPress={() => (stops ? onStop() : canSend && onSend())}
+                  onPress={() => (stops ? onStop() : canSend && void send())}
                   disabled={!canSend && !stops}
                   accessibilityRole="button"
                   accessibilityLabel={stops ? "Stop" : "Send message"}
@@ -263,6 +275,9 @@ export function Composer({
     </Animated.View>
   );
 }
+
+// What the person had typed in each agent's chat, kept while the app runs.
+const drafts = new Map<string, string>();
 
 /** Where a font's capitals sit in its line: the baseline's depth from the line's top, and their height. */
 type LineFont = { ascender: number; capHeight: number };

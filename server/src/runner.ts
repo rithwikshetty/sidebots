@@ -500,14 +500,14 @@ export function createQueue(store: Store, drivers: Drivers, connections: Connect
           useConnection: (tool, input) => connections.use(person.id, tool, input),
           servers: () => connections.servers(person.id),
           sendFiles: (paths) => {
-            // Each file is read as it is counted, so a call that can't fit stops at the file that takes it too far.
+            // Each file is read only when it fits in the room left, so a call that can't fit stops at the file that takes it too far, with that file unread.
             const added: Upload[] = [];
             let room = MESSAGE_BYTES - files.reduce((total, file) => total + file.bytes.byteLength, 0);
             for (const path of paths) {
-              const file = store.fileToSend(agent.id, path);
+              const file = store.fileToSend(agent.id, path, room);
               if (!file) return `There is no file at ${path}. Nothing was added, so give the paths again.`;
+              if (file === "too big") return "A message carries up to 95 MB of files. Nothing was added, so send fewer or smaller ones.";
               room -= file.bytes.byteLength;
-              if (room < 0) return "A message carries up to 95 MB of files. Nothing was added, so send fewer or smaller ones.";
               added.push(file);
             }
             files.push(...added);
