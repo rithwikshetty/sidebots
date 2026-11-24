@@ -24,6 +24,7 @@ vi.mock("electron", () => ({
   dialog: { showSaveDialog: async () => ({ canceled: !electron.saveTo, filePath: electron.saveTo }) },
   app: { getPath: () => tmpdir(), getVersion: () => "1.0.0", setBadgeCount: () => true },
   Notification: { isSupported: () => false },
+  powerMonitor: { getSystemIdleState: () => "active" },
   BrowserWindow: class {},
   nativeTheme: {},
   screen: {},

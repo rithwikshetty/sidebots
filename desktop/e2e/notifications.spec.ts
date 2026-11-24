@@ -1,10 +1,11 @@
 // The system's notifications and the number on the app's icon. A reply, an
 // ask or a failure notifies, by the rule the server notifies phones by
 // (`notifies` in server/src/contract.ts, and server/src/push.ts), unless the
-// person is looking at its chat or the agent is muted. A click on one opens
-// its chat. The icon counts the unread messages of the agents that aren't
-// muted. The fixtures record each notification and each badge the main
-// process is asked for, in place of showing them.
+// person is looking at its chat, has read it on another device by the time
+// it would notify, or the agent is muted. A click on one opens its chat, and
+// it goes once its chat is read. The icon counts the unread messages of the
+// agents that aren't muted. The fixtures record each notification and each
+// badge the main process is asked for, in place of showing them.
 
 import type { Page } from "@playwright/test";
 import { notifies, oneLine, type Message } from "../../server/src/contract.ts";
@@ -168,6 +169,44 @@ test.describe("when the person isn't looking", () => {
     await electronApp.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].hide());
     await server.control("deliver", { agent: atlas.id, text: "While the window was hidden." });
     await expect.poll(async () => (await mainCalls()).notices).toEqual([{ title: "Atlas", body: "While the window was hidden." }]);
+  });
+
+  test("a reply in the open chat notifies when the person has left the computer, and its notification goes when they come back to it", async ({ page, server, mainCalls, electronApp }) => {
+    const atlas = await addAgent(page, server, "Atlas");
+    await openChat(page, atlas.id);
+    await sendFromComposer(page, "hello");
+    await expect(page.getByTestId("message-theirs")).toHaveCount(1);
+    await electronApp.evaluate(({ powerMonitor }) => void (powerMonitor.getSystemIdleState = () => "idle"));
+    await expect.poll(() => page.evaluate(() => window.desktop.present()), { timeout: 15_000 }).toBe(false);
+    await server.control("deliver", { agent: atlas.id, text: "While you were out." });
+    await expect.poll(async () => (await mainCalls()).notices).toEqual([{ title: "Atlas", body: "While you were out." }]);
+    expect((await agents(server)).find((agent) => agent.id === atlas.id)!.unread).toBe(1);
+
+    await electronApp.evaluate(({ powerMonitor }) => void (powerMonitor.getSystemIdleState = () => "active"));
+    await until(() => agents(server), (all) => all.find((agent) => agent.id === atlas.id)!.unread === 0);
+    await expect.poll(async () => (await mainCalls()).cleared).toEqual([{ title: "Atlas", body: "While you were out." }]);
+  });
+});
+
+test.describe("what the person reads on another device", () => {
+  test("a reply they read there as it comes doesn't notify", async ({ page, server, mainCalls }) => {
+    const atlas = await addAgent(page, server, "Atlas");
+    const ledger = await addAgent(page, server, "Ledger");
+    await server.control("deliver", { agent: atlas.id, text: "Read on the phone." });
+    await server.api(`/agents/${atlas.id}/read`, { method: "POST" });
+    await expect(page.getByTestId(`agent-${atlas.id}`)).toContainText("Read on the phone.");
+    await server.control("deliver", { agent: ledger.id, text: "Control." });
+    await expect.poll(async () => (await mainCalls()).notices).toEqual([{ title: "Ledger", body: "Control." }]);
+  });
+
+  test("a notification goes when they read its chat there", async ({ page, server, mainCalls }) => {
+    const ledger = await addAgent(page, server, "Ledger");
+    await server.control("deliver", { agent: ledger.id, text: "Your statement is in." });
+    await expect.poll(async () => (await mainCalls()).notices).toEqual([{ title: "Ledger", body: "Your statement is in." }]);
+    expect((await mainCalls()).cleared).toEqual([]);
+    await server.api(`/agents/${ledger.id}/read`, { method: "POST" });
+    await expect.poll(async () => (await mainCalls()).cleared).toEqual([{ title: "Ledger", body: "Your statement is in." }]);
+    await expect.poll(async () => (await mainCalls()).badge.at(-1)).toBe(0);
   });
 });
 

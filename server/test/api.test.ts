@@ -16,6 +16,9 @@ import { startPush, type Ended, type Notice, type Sealed } from "../src/push.ts"
 /** A turn's reply, as a fake provider gives it. No reply means the fake gave its replies itself. */
 type Answer = TurnResult & { reply?: string };
 
+/** Waits until push has told the phones of what came, which it does a moment after, and at once in these tests. */
+const pushed = () => new Promise((resolve) => setTimeout(resolve, 5));
+
 /**
  * A Sidebots whose turns `answer` runs instead of Claude Code and Codex,
  * which still word the failures. Claude Code forgets the sessions too. The
@@ -377,9 +380,9 @@ test("a person with an API key has every turn, job and fresh start run on it, an
   assert.equal(statSync(join(home, "api-keys.json")).mode & 0o777, 0o600);
   const notices: Notice[] = [];
   startPush(store, async (_device, notice) => {
-    notices.push(open(phoneOf(HER), notice));
+    if ("sealed" in notice) notices.push(open(phoneOf(HER), notice));
     return "sent";
-  });
+  }, 0);
   await call(HER, "PUT", "/push-token", { token: "c".repeat(64), environment: "production" });
 
   const hers = (await call(HER, "POST", "/agents", { name: "Maya", avatarId: "moss" })).json;
@@ -412,6 +415,7 @@ test("a person with an API key has every turn, job and fresh start run on it, an
   const messages = (await call(HER, "GET", `/agents/${hers.id}/messages`)).json;
   assert.equal(messages.at(-1).body, "Sidebots couldn't finish this. Anthropic refused your API key.");
   // The same notice goes to the home screen and to the phone as a notification.
+  await pushed();
   const sent = [messages, (await call(HER, "GET", "/agents")).json, notices];
   assert.equal(JSON.stringify(sent).includes(KEY), false);
 
@@ -626,13 +630,15 @@ test("a reply or a failed turn notifies the person's phones, and a phone Apple h
   const sent: [string, Notice][] = [];
   const myPhone = phoneOf(ME);
   const oldPhone = pair(ME);
+  const read: string[] = [];
   startPush(store, async (device, notice) => {
+    if ("read" in notice) return read.push(device.token), "sent";
     const phone = device.token === OLD_PHONE ? oldPhone : device.token === PHONE ? myPhone : phoneOf(HER);
     // Each phone's notice opens with its own key, and with no other phone's.
     assert.throws(() => open(phone === oldPhone ? myPhone : oldPhone, notice));
     sent.push([device.token, open(phone, notice)]);
     return device.token === OLD_PHONE ? "gone" : "sent";
-  });
+  }, 0);
   const PHONE = "a".repeat(64);
   const OLD_PHONE = "b".repeat(64);
   const HER_PHONE = "c".repeat(64);
@@ -647,12 +653,13 @@ test("a reply or a failed turn notifies the person's phones, and a phone Apple h
 
   await say(ME, agent.id, "book the band");
   await queue.kick(agent.id);
-  await new Promise((resolve) => setTimeout(resolve, 1));
+  await pushed();
   fail = true;
   await say(ME, agent.id, "and the florist");
   await queue.kick(agent.id);
   await call(ME, "POST", `/agents/${agent.id}/fresh-start`);
   await queue.kick(agent.id);
+  await pushed();
 
   assert.deepEqual(
     sent.map(([token, notice]) => [token, notice.title, notice.body, notice.badge, notice.agentId]),
@@ -663,10 +670,40 @@ test("a reply or a failed turn notifies the person's phones, and a phone Apple h
     ],
   );
 
-  // Reading the chat clears the count. A fresh start is nothing to read.
+  // Reading the chat clears the count, and the phone that was notified is told, so its notifications go. A fresh start is nothing to read.
   assert.equal((await call(ME, "GET", "/agents")).json[0].unread, 2);
+  assert.deepEqual(read, []);
   assert.equal((await call(ME, "POST", `/agents/${agent.id}/read`)).json.unread, 0);
+  assert.deepEqual(read, [PHONE]);
   assert.equal((await call(HER, "POST", `/agents/${agent.id}/read`)).status, 404);
+  // A chat with nothing unread is read already, which is nothing to tell.
+  await call(ME, "POST", `/agents/${agent.id}/read`);
+  assert.deepEqual(read, [PHONE]);
+});
+
+test("a reply the person reads as it comes reaches no phone", async () => {
+  const { store, queue, call, say } = setup(async () => reply("Booked."));
+  const sent: string[] = [];
+  const HOLD_MS = 20;
+  startPush(store, async (_device, push) => (sent.push("read" in push ? "read" : "notice"), "sent"), HOLD_MS);
+  await call(ME, "PUT", "/push-token", { token: "a".repeat(64), environment: "production" });
+  const agent = (await call(ME, "POST", "/agents", { name: "Theo", avatarId: "mochi" })).json;
+  await new Promise((resolve) => setTimeout(resolve, 1));
+
+  // The chat is open on another device, which marks the reply read as it shows it.
+  await say(ME, agent.id, "book the band");
+  await queue.kick(agent.id);
+  await call(ME, "POST", `/agents/${agent.id}/read`);
+  await new Promise((resolve) => setTimeout(resolve, HOLD_MS * 2));
+  assert.deepEqual(sent, []);
+
+  // Nobody is looking at the next one. The phone is told, and told again when the agent is deleted with it unread.
+  await say(ME, agent.id, "and the florist");
+  await queue.kick(agent.id);
+  await new Promise((resolve) => setTimeout(resolve, HOLD_MS * 2));
+  assert.deepEqual(sent, ["notice"]);
+  await call(ME, "DELETE", `/agents/${agent.id}`);
+  assert.deepEqual(sent, ["notice", "read"]);
 });
 
 test("the Live Activity a phone shows for a working agent ends with the agent's work, on the state its avatar is left in", async () => {
@@ -1153,9 +1190,9 @@ test("a muted agent notifies nobody, and a hidden one comes back when it has som
   const { store, queue, call, say, phoneOf, open } = setup(async () => reply("Booked."));
   const sent: Notice[] = [];
   startPush(store, async (_device, notice) => {
-    sent.push(open(phoneOf(ME), notice));
+    if ("sealed" in notice) sent.push(open(phoneOf(ME), notice));
     return "sent";
-  });
+  }, 0);
   await call(ME, "PUT", "/push-token", { token: "a".repeat(64), environment: "production" });
   const loud = (await call(ME, "POST", "/agents", { name: "Errands", avatarId: "hop" })).json;
   const quiet = (await call(ME, "POST", "/agents", { name: "Maya", avatarId: "moss" })).json;
@@ -1167,6 +1204,7 @@ test("a muted agent notifies nobody, and a hidden one comes back when it has som
   await say(ME, loud.id, "book it");
   await queue.kick(loud.id);
 
+  await pushed();
   const agents = (await call(ME, "GET", "/agents")).json as { id: string; hidden: boolean; unread: number }[];
   const of = (id: string) => agents.find((agent) => agent.id === id)!;
   assert.deepEqual([of(loud.id).hidden, of(quiet.id).hidden, of(quiet.id).unread], [false, true, 1]);
@@ -1222,14 +1260,15 @@ test("an agent's updates while it works wait a minute, then come no more than ev
   }, () => time);
   const sent: Notice[] = [];
   startPush(store, async (_device, notice) => {
-    sent.push(open(phoneOf(ME), notice));
+    if ("sealed" in notice) sent.push(open(phoneOf(ME), notice));
     return "sent";
-  });
+  }, 0);
   await call(ME, "PUT", "/push-token", { token: "a".repeat(64), environment: "production" });
   const agent = (await call(ME, "POST", "/agents", { name: "Maya", avatarId: "moss" })).json;
   await new Promise((resolve) => setTimeout(resolve, 1));
   await say(ME, agent.id, "find me a flat");
   await queue.kick(agent.id);
+  await pushed();
 
   assert.match(answers[0], /^Too soon/);
   assert.equal(answers[1], "Sent. Carry on with the work.");
@@ -1327,15 +1366,16 @@ test("an agent asks before it does what its provider won't decide, waits for the
   });
   const sent: Notice[] = [];
   startPush(store, async (_device, notice) => {
-    sent.push(open(phoneOf(ME), notice));
+    if ("sealed" in notice) sent.push(open(phoneOf(ME), notice));
     return "sent";
-  });
+  }, 0);
   await call(ME, "PUT", "/push-token", { token: "a".repeat(64), environment: "production" });
   const agent = (await call(ME, "POST", "/agents", { name: "Tidy", avatarId: "mochi" })).json;
   await new Promise((resolve) => setTimeout(resolve, 1));
   const chat = async () => (await call(ME, "GET", `/agents/${agent.id}/messages`)).json as Message[];
 
   await say(ME, agent.id, "clear out the old folder");
+  await pushed();
   const first = (await chat()).at(-1)!;
   assert.deepEqual([first.sender, first.ask, first.body], ["agent", "waiting", "Run a command: Clear the old folder\n\n```\nrm -rf ~/old\n```\n\n> It deletes a folder."]);
   // The phone draws the card from the question's parts.
@@ -1350,13 +1390,16 @@ test("an agent asks before it does what its provider won't decide, waits for the
   // An ask takes one answer.
   assert.equal((await call(ME, "POST", `/agents/${agent.id}/asks/${first.id}`, { allow: false })).status, 409);
   await queue.kick(agent.id);
+  await pushed();
 
   await say(ME, agent.id, "and the downloads");
+  await pushed();
   const second = (await chat()).at(-1)!;
   // The chat shows all of what Allow would let happen.
   assert.equal(second.body, `Run a command: Clear the old folder\n\n\`\`\`\n${long}\n\`\`\``);
   assert.equal((await call(ME, "POST", `/agents/${agent.id}/asks/${second.id}`, { allow: false })).json.ask, "refused");
   await queue.kick(agent.id);
+  await pushed();
 
   assert.equal(answers[0], "allowed");
   assert.match(answers[1], /^Alex said no to this\./);
@@ -1439,9 +1482,9 @@ test("stopping an agent ends the turn it is running, says so in the chat, and th
   });
   const sent: Notice[] = [];
   startPush(store, async (_device, notice) => {
-    sent.push(open(phoneOf(ME), notice));
+    if ("sealed" in notice) sent.push(open(phoneOf(ME), notice));
     return "sent";
-  });
+  }, 0);
   await call(ME, "PUT", "/push-token", { token: "a".repeat(64), environment: "production" });
   const agent = (await call(ME, "POST", "/agents", { name: "Theo", avatarId: "mochi" })).json;
   const shown = async () => (await call(ME, "GET", `/agents/${agent.id}/messages`)).json.map((m: { sender: string; body: string; status: string }) => [m.sender, m.body, m.status]);
@@ -1464,6 +1507,7 @@ test("stopping an agent ends the turn it is running, says so in the chat, and th
   // The agent rests, with the session the stopped turn was in. Stopping it is nothing to read or be told of.
   const [stopped] = (await call(ME, "GET", "/agents")).json;
   assert.deepEqual([stopped.working, stopped.session_id, stopped.unread], [false, "session-1", 0]);
+  await pushed();
   assert.deepEqual(sent, []);
 
   await say(ME, agent.id, "carry on");
@@ -1738,9 +1782,9 @@ test("an agent asks another, which answers in a turn of its own, and the first t
   });
   const sent: Notice[] = [];
   startPush(store, async (_device, notice) => {
-    sent.push(open(phoneOf(ME), notice));
+    if ("sealed" in notice) sent.push(open(phoneOf(ME), notice));
     return "sent";
-  });
+  }, 0);
   await call(ME, "PUT", "/push-token", { token: "a".repeat(64), environment: "production" });
 
   await say(ME, mochi.id, "is my bike sorted?");
@@ -1778,6 +1822,7 @@ test("an agent asks another, which answers in a turn of its own, and the first t
   const done = await rows();
   assert.deepEqual([done.Mochi.waiting_on, done.Mochi.unread, done.Mochi.latest?.body], [null, 1, "It's sorted: £85."]);
   assert.deepEqual([done.Cog.working, done.Cog.unread, done.Cog.latest], [false, 0, null]);
+  await pushed();
   assert.deepEqual(sent.map((notice) => [notice.title, notice.body]), [["Mochi", "It's sorted: £85."]]);
 });
 

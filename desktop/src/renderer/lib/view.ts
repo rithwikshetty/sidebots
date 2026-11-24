@@ -199,18 +199,20 @@ export function usePanelWidth(): number {
 }
 
 /**
- * Whether the person is looking at an agent's chat: the window can be seen
- * and has focus, the chat is open, and nothing lies over it, as Settings, the
- * new agent dialog, a confirm dialog and the panel as a sheet do.
+ * Whether the person is looking at an agent's chat: they are at the computer,
+ * the window can be seen and has focus, the chat is open, and nothing lies
+ * over it, as Settings, the new agent dialog, a confirm dialog and the panel
+ * as a sheet do. A chat left open in front of nobody, as when the person has
+ * walked away or locked the screen, isn't looked at.
  */
 export function looking(agentId: string): boolean {
   const covered = view.settings !== null || view.newAgent || confirming() || (view.panel !== null && columns(window.innerWidth, view.sidebar).sheet);
-  return document.visibilityState === "visible" && document.hasFocus() && view.chat?.agentId === agentId && !covered;
+  return window.desktop.present() && document.visibilityState === "visible" && document.hasFocus() && view.chat?.agentId === agentId && !covered;
 }
 
 /** Calls `listener` when anything `looking` goes by changes. Returns a function that stops it. */
 function onLooking(listener: () => void): () => void {
-  const stops = [subscribe(listener), onConfirm(listener), onResize(listener), onVisibility(listener), onFocusChange(listener)];
+  const stops = [subscribe(listener), onConfirm(listener), onResize(listener), onVisibility(listener), onFocusChange(listener), window.desktop.onPresent(listener)];
   return () => stops.forEach((stop) => stop());
 }
 

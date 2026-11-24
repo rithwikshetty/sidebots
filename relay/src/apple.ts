@@ -97,6 +97,17 @@ export function notify(push: PushKey, topic: string, to: Phone, notice: Sealed, 
 }
 
 /**
+ * Tells one phone, for the app `topic` names, that the person has read on
+ * another device what it shows notifications for. It shows and sounds
+ * nothing: iOS wakes the app, which asks its computer what is left unread and
+ * takes the rest away. Apple sends these when it suits the phone, so one can
+ * come late, and none reaches an app the person has quit.
+ */
+export function tellRead(push: PushKey, topic: string, to: Phone, send: typeof fetch, now: number): Promise<Result> {
+  return deliver(push, to, { "apns-topic": topic, "apns-push-type": "background", "apns-priority": "5" }, { aps: { "content-available": 1 } }, send, now);
+}
+
+/**
  * Ends one Live Activity of the app `topic` names, by the token Apple gave the
  * phone for it. The activity shows the state it ended on and leaves the Lock
  * Screen a while later, or at once when the agent is left resting, with
