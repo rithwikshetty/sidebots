@@ -73,6 +73,7 @@ export function startPush(store: Store, send: SendPush, holdMs = NOTIFY_AFTER_MS
   };
 
   const stop = store.onChange((change) => {
+    if ("plan" in change) return;
     if ("agent" in change && change.deleted) return tellRead(change.agent);
     const shown = "message" in change ? change.agents.find((each) => each.id === change.message.agent_id) : change.agent;
     if (shown?.unread === 0) tellRead(shown);

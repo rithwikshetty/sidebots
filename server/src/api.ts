@@ -324,9 +324,14 @@ export function createApi(store: Store, queue: Queue, connections: Connections, 
     return c.json(text ? store.searchMessages(c.var.person.id, text) : []);
   });
 
-  /** Where the person's plan or API credit goes, with the plan's limits as its provider says they stand now. */
-  app.get("/usage", async (c) => {
-    return c.json(store.usage(c.var.person.id, await queue.askLimits(c.var.person.id)));
+  /**
+   * Where the person's plan or API credit goes, with the plan's limits as the
+   * provider last said. The provider is asked again as this answers, and what
+   * it says reaches the person's devices on the event stream.
+   */
+  app.get("/usage", (c) => {
+    void queue.askLimits(c.var.person.id);
+    return c.json(store.usage(c.var.person.id));
   });
 
   /** The phone says where Apple delivers its notifications, once it allows them. */
@@ -371,14 +376,19 @@ export function createApi(store: Store, queue: Queue, connections: Connections, 
 
   /**
    * New messages and status changes for the person's agents, each with its
-   * agent as the home screen shows it, and the agents the person adds, changes
-   * and deletes, so every device of theirs keeps up.
+   * agent as the home screen shows it, the agents the person adds, changes
+   * and deletes, and what a provider says of how they sign in to it, so every
+   * device of theirs keeps up.
    */
   app.get("/events", (c) => {
     const person = c.var.person;
     return streamSSE(c, async (stream) => {
       const send = (name: string, event: StreamEvent) => void stream.writeSSE({ event: name, data: JSON.stringify(event) });
       const stop = store.onChange((change) => {
+        if ("plan" in change) {
+          if (change.person_id === person.id) send("plan", { plan: change.plan });
+          return;
+        }
         if ("agent" in change) {
           if (change.agent.person_id !== person.id) return;
           if (change.deleted) return send("deleted", { deleted: change.agent.id });

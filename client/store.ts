@@ -183,8 +183,8 @@ export function createStore<Picked>(platform: Platform<Picked>) {
 
   /**
    * Calls `listener` with the agents each time the computer has just said how
-   * they are: with every event of its stream, and when the app catches up with
-   * it. What the app saved of them doesn't count. Returns a function that
+   * they are: with every event of its stream about an agent or its messages,
+   * and when the app catches up with it. What the app saved of them doesn't count. Returns a function that
    * stops it.
    */
   function onAgents(listener: (agents: AgentWithLatest[]) => void): () => void {
@@ -214,15 +214,22 @@ export function createStore<Picked>(platform: Platform<Picked>) {
 
   /**
    * Takes in what the event stream says: a message and its agent, an agent
-   * that was added or changed, or an agent that was deleted. A message brings
-   * its agent to the top of the list, as a new agent goes there, and lands in
-   * its chat when the app holds that chat. An agent the app has that comes
-   * with no message, as one renamed or muted on another device, keeps its
-   * place.
+   * that was added or changed, an agent that was deleted, or how the person
+   * signs in to a provider. A message brings its agent to the top of the
+   * list, as a new agent goes there, and lands in its chat when the app holds
+   * that chat. An agent the app has that comes with no message, as one renamed
+   * or muted on another device, keeps its place. A provider's plan takes the
+   * place of the one in the usage the app has. An event of a kind the app
+   * doesn't know is passed over.
    */
   function apply(event: StreamEvent): void {
+    if ("plan" in event) {
+      const { plan } = event;
+      if (state.usage) set({ usage: { ...state.usage, accounts: state.usage.accounts.map((each) => (each.provider === plan.provider ? plan : each)) } });
+      return;
+    }
     if ("deleted" in event) forget(event.deleted);
-    else {
+    else if ("agent" in event) {
       const { message, agent } = event;
       const known = state.messages[agent.id];
       const chat = known && message ? upsert(known, message) : known;
@@ -233,7 +240,7 @@ export function createStore<Picked>(platform: Platform<Picked>) {
         agents: stays ? state.agents.map((item) => (item.id === agent.id ? withPending(agent) : item)) : [withPending(agent), ...state.agents.filter((item) => item.id !== agent.id)],
         messages: chat && chat !== known ? { ...state.messages, [agent.id]: chat } : state.messages,
       });
-    }
+    } else return;
     told.forEach((listener) => listener(state.agents));
   }
 
@@ -445,7 +452,7 @@ export function createStore<Picked>(platform: Platform<Picked>) {
     set({ about: { ...state.about, [agentId]: about } });
   }
 
-  /** Fetches where the person's plan or API credit goes: what their agents used lately, and what is left of their plan. */
+  /** Fetches where the person's plan or API credit goes: what their agents used lately, and what is left of their plan as its provider last said. What the provider says next comes on the event stream. */
   async function loadUsage(): Promise<void> {
     set({ usage: await request<Usage>("/usage") });
   }

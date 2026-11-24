@@ -223,6 +223,39 @@ test("an agent the app has that the stream brings with no message keeps its plac
   store.stopSync();
 });
 
+test("a provider's plan from the stream takes its place in the usage the app has, and an event the app doesn't know is passed over", async (t) => {
+  const { store, answers, streams } = app(t);
+  answers["GET /agents"] = () => [agent("mochi")];
+  const events = stream();
+  streams.push(() => events.response);
+  const told: number[] = [];
+  store.onAgents((agents) => told.push(agents.length));
+  store.startSync();
+  await settle();
+  const weekly = { name: "Weekly limit", used: 0.4, resets_at: 2, at: 1 };
+
+  // An app that hasn't fetched usage has none to change.
+  events.say({ plan: { provider: "claude", apiKey: false, limits: [weekly] } });
+  await settle();
+  assert.equal(store.useUsage(), null);
+
+  const codex = { provider: "codex" as const, apiKey: true, limits: [] };
+  answers["GET /usage"] = () => ({ used: [], days: [], accounts: [{ provider: "claude", apiKey: false, limits: [] }, codex] });
+  await store.loadUsage();
+  events.say({ plan: { provider: "claude", apiKey: false, limits: [weekly] } });
+  await settle();
+  assert.deepEqual(store.useUsage()?.accounts, [{ provider: "claude", apiKey: false, limits: [weekly] }, codex]);
+
+  // What a newer computer might send, which this app reads nothing of, and the stream goes on.
+  events.write(`event: news\ndata: ${JSON.stringify({ news: "something new" })}\n\n`);
+  events.say({ message: null, agent: agent("mochi", { name: "Mochi" }) });
+  await settle();
+  assert.equal(store.useAgent("mochi")?.name, "Mochi");
+  assert.equal(events.closed(), false);
+  assert.deepEqual(told, [1, 1]);
+  store.stopSync();
+});
+
 test("a chat is held from the moment it is opened, an empty one too, so a message the stream brings lands in it", async (t) => {
   const { store, answers, streams, savedNow } = app(t);
   answers["GET /agents"] = () => [agent("mochi"), agent("cog")];
