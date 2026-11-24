@@ -26,8 +26,13 @@ export type Upload = { name: string; bytes: Uint8Array };
 export type Extras = { files?: Upload[]; replyTo?: string; jobId?: string; interim?: boolean; ask?: Ask; question?: Question; peerId?: string; switched?: Switched };
 /** What the person can change about an agent. */
 export type AgentChanges = Partial<Pick<Agent, "name" | "avatar_id" | "provider" | "model" | "effort" | "fast" | "muted" | "hidden" | "color">>;
-/** What the store tells its listeners about: a message that was added, changed status or had its ask closed, or an agent that was added, changed or deleted. */
-export type Change = { message: Message } | { agent: Agent; deleted: boolean };
+/**
+ * What the store tells its listeners about: a message that was added, changed
+ * status or had its ask closed, with the agents whose chats it is in, or an
+ * agent that was added or changed, each as the home screen now shows it, or an
+ * agent that was deleted.
+ */
+export type Change = { message: Message; agents: AgentWithLatest[] } | { agent: AgentWithLatest; deleted: false } | { agent: Agent; deleted: true };
 /** How this server is known to the relay: its signing key, and the id, the address phones reach it at and the token its tunnel runs with, which the relay gives it once it has registered. */
 export type Machine = { privateKey: string; id?: string; address?: string; tunnelToken?: string };
 /**
@@ -177,6 +182,22 @@ create table if not exists settings (
 );
 `;
 
+/**
+ * The indexes, made once the tables have every change, since one may be on a
+ * column a change brought in. Each serves queries that run with every message
+ * or every look at a chat, which without it read every message there is.
+ */
+const INDEXES = `
+-- An agent's own messages in the order they came: the latest, a page of its chat, what was said before a turn.
+create index if not exists messages_agent on messages (agent_id);
+-- An agent's messages by when they came: the ones since the person last read its chat.
+create index if not exists messages_agent_created on messages (agent_id, created_at);
+-- What other agents sent an agent, which is in its chat too. Most messages name no other agent, and it leaves them out.
+create index if not exists messages_peer on messages (peer_id) where peer_id is not null;
+-- The few messages whose turn hasn't ended: what waits on an agent, and whether it works.
+create index if not exists messages_unfinished on messages (status) where status = 'queued' or status = 'running';
+`;
+
 const PAGE = 50;
 const SEARCH_LIMIT = 20;
 const AVATAR_ID = /^[a-z0-9-]+$/;
@@ -197,8 +218,19 @@ const WITH_PERSON = "(peer_id is null or ask is not null)";
 const ASKED = "peer_id is not null and ask is null and reply_to is null";
 // What is in an agent's chat: its own messages, and what another agent said to it or asked the person while working for it.
 const IN_CHAT = "(agent_id = ?1 or peer_id = ?1)";
+/**
+ * The same for a page of the chat: the newest `limit` of its messages that
+ * `where` leaves. The agent's own messages and the ones that name it as the
+ * other agent are each read in order from their own index and merged, so a
+ * page costs what it holds however long the chat is. Asked as one condition,
+ * SQLite gathers the whole chat and sorts it.
+ */
+const pageOfChat = (where: string, limit: string) =>
+  `rowid in (select rowid from messages where agent_id = ?1 and ${where} union select rowid from messages where peer_id = ?1 and ${where} order by 1 desc limit ${limit})`;
 // What waits on an agent: the messages in its chat that aren't for another agent, and other agents' messages to it.
 const FOR_AGENT = "((agent_id = ?1 and peer_id is null) or (peer_id = ?1 and ask is null))";
+// A message whose turn hasn't ended: it waits to be read, or the agent works on it. It is worded as `messages_unfinished` is, which is how SQLite knows the index holds every such message.
+const UNFINISHED = "(status = 'queued' or status = 'running')";
 
 /** A message as SQLite holds it, with its attachments, its question and its change as JSON text and yes and no as 1 and 0. */
 type Row = Omit<Message, "attachments" | "interim" | "question" | "switched"> & { attachments: string; interim: number; question: string | null; switched: string | null };
@@ -263,6 +295,7 @@ export function openStore(home: string) {
     if (typeof change === "string") db.exec(change);
     else if (had.has(change.table)) db.exec(change.change);
   }
+  db.exec(INDEXES);
   db.exec(`pragma user_version = ${Math.max(version, TABLE_CHANGES.length)}`);
   db.exec("commit");
 
@@ -298,14 +331,14 @@ export function openStore(home: string) {
   };
   const many = (sql: string, ...values: (string | number)[]): Message[] => (db.prepare(sql).all(...values) as Row[]).map(toMessage);
 
-  const pendingTurn = db.prepare(`select 1 from messages where ${FOR_AGENT} and status in ('queued', 'running') limit 1`);
+  const pendingTurn = db.prepare(`select 1 from messages where ${FOR_AGENT} and ${UNFINISHED} limit 1`);
   // What waits to be read: the agent's replies, its asks that still wait, and Sidebots' failure notices. An ask the person answered, which they may have done in another agent's chat, is read.
   const unread = db.prepare(
     `select count(*) as unread from messages where agent_id = ? and created_at > ? and ${WITH_PERSON}
        and ((sender = 'agent' and interim = 0 and (ask is null or ask = 'waiting')) or (sender = 'sidebots' and status = 'failed'))`,
   );
-  // What the agent asked other agents and hasn't heard back on, oldest first.
-  const asked = (agentId: string): Message[] => many(`select * from messages where agent_id = ? and ${ASKED} and status in ('queued', 'running') order by rowid`, agentId);
+  // What the agent asked other agents and hasn't heard back on, oldest first. It names the index, since SQLite left to choose reads the agent's whole chat for the order it comes in.
+  const asked = (agentId: string): Message[] => many(`select * from messages indexed by messages_unfinished where agent_id = ? and ${ASKED} and ${UNFINISHED} order by rowid`, agentId);
   const agentById = (id: string): Agent | undefined => {
     const row = db.prepare("select * from agents where id = ?").get(id) as AgentRow | undefined;
     return row && toAgent(row);
@@ -319,6 +352,15 @@ export function openStore(home: string) {
     unread: (unread.get(agent.id, agent.read_at) as { unread: number }).unread,
     waiting_on: asked(agent.id)[0]?.peer_id ?? null,
   });
+  const agentWithLatest = (id: string): AgentWithLatest | undefined => {
+    const agent = agentById(id);
+    return agent && withLatest(agent);
+  };
+  /** Tells the listeners of a message, with its agent and, when it is between two, the other one. */
+  const messageChanged = (message: Message) => {
+    const agents = [message.agent_id, message.peer_id].map((id) => (id === null ? undefined : agentWithLatest(id)));
+    changed({ message, agents: agents.filter((agent) => agent !== undefined) });
+  };
 
   return {
     agentHome,
@@ -474,16 +516,13 @@ export function openStore(home: string) {
         agent.read_at,
         agent.created_at,
       );
-      changed({ agent, deleted: false });
+      changed({ agent: withLatest(agent), deleted: false });
       return agent;
     },
 
     agent: agentById,
 
-    agentWithLatest(id: string): AgentWithLatest | undefined {
-      const agent = agentById(id);
-      return agent && withLatest(agent);
-    },
+    agentWithLatest,
 
     /** The person's agents, each with its latest message, most recent chat first. */
     agentsFor(personId: string): AgentWithLatest[] {
@@ -512,7 +551,7 @@ export function openStore(home: string) {
         const text = readFileSync(instructions(next.provider), "utf8");
         writeFileSync(instructions(next.provider), text.replace(`# ${agent.name}\n`, `# ${next.name}\n`).replace(`You are ${agent.name},`, `You are ${next.name},`));
       }
-      changed({ agent: next, deleted: false });
+      changed({ agent: withLatest(next), deleted: false });
     },
 
     /** Records what the agent's turn runs on, as the turn starts. */
@@ -641,16 +680,20 @@ export function openStore(home: string) {
       const today = new Date(now);
       // Each day's midnight on the computer, and the one that ends today. A change of the clocks makes a day an hour off 24.
       const starts = Array.from({ length: USAGE_DAYS + 1 }, (_, index) => new Date(today.getFullYear(), today.getMonth(), today.getDate() - USAGE_DAYS + 1 + index));
-      const turns = "from usage join agents on agents.id = usage.agent_id where agents.person_id = ? and usage.at >= ?";
+      const turns = "from usage join agents on agents.id = usage.agent_id where agents.person_id = ?1 and usage.at >= ?2";
       const used = db
         .prepare(`select usage.agent_id, usage.kind, count(*) as turns, sum(usage.cost) as cost, sum(usage.tokens) as tokens ${turns} group by usage.agent_id, usage.kind`)
         .all(personId, starts[0].getTime()) as Used[];
-      const inDay = db.prepare(`select coalesce(sum(usage.cost), 0) as cost, coalesce(sum(usage.tokens), 0) as tokens ${turns} and usage.at < ?`);
+      // What the turns of each day add up to, for the days that had one. A turn's day is the first that ends after it, and each day's end is a value from `?3` on.
+      const ends = starts.slice(1).map((end) => end.getTime());
+      const spent = db
+        .prepare(`select case ${ends.map((_, nth) => `when usage.at < ?${nth + 3} then ${nth}`).join(" ")} end as nth, sum(usage.cost) as cost, sum(usage.tokens) as tokens ${turns} group by nth`)
+        .all(personId, starts[0].getTime(), ...ends) as (Pick<Day, "cost" | "tokens"> & { nth: number | null })[];
       const two = (value: number) => String(value).padStart(2, "0");
-      const days = starts.slice(0, -1).map((start, index) => ({
-        day: `${start.getFullYear()}-${two(start.getMonth() + 1)}-${two(start.getDate())}`,
-        ...(inDay.get(personId, start.getTime(), starts[index + 1].getTime()) as Pick<Day, "cost" | "tokens">),
-      }));
+      const days = starts.slice(0, -1).map((start, index) => {
+        const { cost = 0, tokens = 0 } = spent.find((each) => each.nth === index) ?? {};
+        return { day: `${start.getFullYear()}-${two(start.getMonth() + 1)}-${two(start.getDate())}`, cost, tokens };
+      });
       const limits = db.prepare(
         "select name, used, resets_at, at from limits where person_id = ? and provider = ? and (resets_at is null or resets_at > ?) order by resets_at, name",
       );
@@ -696,13 +739,15 @@ export function openStore(home: string) {
       else db.prepare("insert or replace into settings (name, value) values ('counts', 'off')").run();
     },
 
-    /** Records that the person has read everything in the chat so far, and says so when that leaves less unread, so their other devices hear of it. */
-    markRead(agentId: string): void {
-      const agent = agentById(agentId);
-      if (!agent || withLatest(agent).unread === 0) return;
-      const read = { ...agent, read_at: Date.now() };
-      db.prepare("update agents set read_at = ? where id = ?").run(read.read_at, agentId);
+    /** Records that the person has read everything in the chat so far, and says so when that leaves less unread, so their other devices hear of it. Returns the agent as the home screen now shows it. */
+    markRead(agent: Agent): AgentWithLatest {
+      const shown = withLatest(agent);
+      if (shown.unread === 0) return shown;
+      const readAt = Date.now();
+      db.prepare("update agents set read_at = ? where id = ?").run(readAt, agent.id);
+      const read = withLatest({ ...agent, read_at: readAt });
       changed({ agent: read, deleted: false });
+      return read;
     },
 
     setSession(agentId: string, sessionId: string | null): void {
@@ -758,7 +803,7 @@ export function openStore(home: string) {
       if ((sender === "agent" && !interim && !betweenAgents(message)) || (sender === "sidebots" && status === "failed")) {
         db.prepare("update agents set hidden = 0 where id = ? and muted = 0").run(agentId);
       }
-      changed({ message });
+      messageChanged(message);
       return message;
     },
 
@@ -784,32 +829,30 @@ export function openStore(home: string) {
       for (const id of messageIds) {
         const read = db.prepare("update messages set status = 'running', seen_at = ? where id = ? and sender != 'sidebots' and status = 'queued'").run(now, id);
         const message = read.changes ? one("select * from messages where id = ?", id) : undefined;
-        if (message) changed({ message });
+        if (message) messageChanged(message);
       }
     },
 
     setStatus(messageId: string, status: Status): void {
       db.prepare("update messages set status = ? where id = ?").run(status, messageId);
       const message = one("select * from messages where id = ?", messageId);
-      if (message) changed({ message });
+      if (message) messageChanged(message);
     },
 
     /** Records where an ask that was waiting now stands. */
     answerAsk(messageId: string, answer: Exclude<Ask, "waiting">): void {
       const answered = db.prepare("update messages set ask = ? where id = ? and ask = 'waiting'").run(answer, messageId).changes > 0;
       const message = answered ? one("select * from messages where id = ?", messageId) : undefined;
-      if (message) changed({ message });
+      if (message) messageChanged(message);
     },
 
     /** A chat, oldest first: everything after a known message, the page before one, or the latest page. What the agent and another agent said to each other is in both their chats. */
     messages(agentId: string, { after, before }: { after?: string; before?: string } = {}): Message[] {
-      if (after) {
-        return many(`select * from messages where ${IN_CHAT} and rowid > (select rowid from messages where id = ?2) order by rowid`, agentId, after);
-      }
-      if (before) {
-        return many(`select * from messages where ${IN_CHAT} and rowid < (select rowid from messages where id = ?2) order by rowid desc limit ?3`, agentId, before, PAGE).reverse();
-      }
-      return many(`select * from messages where ${IN_CHAT} order by rowid desc limit ?2`, agentId, PAGE).reverse();
+      const known = "(select rowid from messages where id = ?2)";
+      // A limit below zero is no limit.
+      if (after) return many(`select * from messages where ${pageOfChat(`rowid > ${known}`, "-1")} order by rowid`, agentId, after);
+      if (before) return many(`select * from messages where ${pageOfChat(`rowid < ${known}`, "?3")} order by rowid`, agentId, before, PAGE);
+      return many(`select * from messages where ${pageOfChat("true", "?2")} order by rowid`, agentId, PAGE);
     },
 
     /** A message, if it is in the agent's chat. */

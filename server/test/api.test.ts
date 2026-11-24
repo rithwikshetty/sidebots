@@ -4,6 +4,7 @@ import assert from "node:assert/strict";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, statSync, truncateSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { StatementSync } from "node:sqlite";
 import { openStore } from "../src/store.ts";
 import { createConnections } from "../src/connections.ts";
 import { createQueue, type Turn, type TurnResult } from "../src/runner.ts";
@@ -465,6 +466,35 @@ test("the event stream carries the person's own messages and their status change
       ["person", "hello", "done", "Theo", false],
     ],
   );
+});
+
+test("a message costs the database the same however many devices listen for it", async (t) => {
+  const { store, call, app, pair } = setup(async () => reply("ok"));
+  const agent = (await call(ME, "POST", "/agents", { name: "Theo", avatarId: "mochi" })).json;
+  // Every statement the store runs.
+  const ran = (["get", "all", "run"] as const).map((method) => t.mock.method(StatementSync.prototype, method));
+  const cost = (body: string) => {
+    const before = ran.reduce((total, each) => total + each.mock.callCount(), 0);
+    store.addMessage(agent.id, "agent", body, "done");
+    return ran.reduce((total, each) => total + each.mock.callCount(), 0) - before;
+  };
+  const unheard = cost("Nobody hears this.");
+
+  const readers = [];
+  for (const phone of [pair(ME), pair(ME), pair(ME)]) {
+    const reader = (await app.request("/events", { headers: phone })).body!.pipeThrough(new TextDecoderStream()).getReader();
+    t.after(() => reader.cancel());
+    // The stream's first ping says it is listening.
+    await reader.read();
+    readers.push(reader);
+  }
+  assert.equal(cost("Three hear this."), unheard);
+  for (const reader of readers) {
+    let text = "";
+    while (!text.includes("event: message")) text += (await reader.read()).value;
+    const heard = JSON.parse(text.split("\n").find((line) => line.startsWith("data: {"))!.slice(6)) as { message: Message; agent: AgentWithLatest };
+    assert.deepEqual([heard.message.body, heard.agent.name, heard.agent.latest?.body], ["Three hear this.", "Theo", "Three hear this."]);
+  }
 });
 
 test("the event stream carries the agents the person adds, changes and deletes on another phone, and nobody else's", async () => {

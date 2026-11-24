@@ -9,6 +9,108 @@ import { DatabaseSync } from "node:sqlite";
 import { setTimeout as wait } from "node:timers/promises";
 import { openStore } from "../src/store.ts";
 
+/** A new Sidebots with a person and two of their agents. */
+function withAgents() {
+  const home = mkdtempSync(join(tmpdir(), "sidebots-store-test-"));
+  const store = openStore(home);
+  const person = store.addPerson({ name: "Alex", provider: "claude", configDir: "/config/alex" });
+  return { home, store, person, maya: store.createAgent(person, "Maya", "mochi", "claude"), theo: store.createAgent(person, "Theo", "mochi", "claude") };
+}
+
+test("what runs with every message, and with every look at the home screen or a chat, finds its messages by an index, so none of it reads every message there is", (t) => {
+  // Every statement the store compiles, from the first it compiles as it opens.
+  const compiled = t.mock.method(DatabaseSync.prototype, "prepare");
+  const { home, store, person, maya, theo } = withAgents();
+  const first = store.addMessage(maya.id, "person", "Hello.", "queued");
+  store.addMessage(maya.id, "agent", "What do you think?", "queued", { peerId: theo.id });
+  store.markSeen([first.id]);
+  store.agentsFor(person.id);
+  store.markRead(maya);
+  store.messages(maya.id);
+  store.messages(maya.id, { before: first.id });
+  store.messages(maya.id, { after: first.id });
+  store.message(theo.id, first.id);
+  store.messagesBefore(maya.id, first.id, 10);
+  store.sentByJobsBefore(maya.id, first.id);
+  store.nextQueued(theo.id);
+  store.waitingFromPerson(maya.id);
+  store.asked(maya.id);
+  store.askedOf(theo.id);
+  store.setStatus(first.id, "done");
+  const statements = [...new Set(compiled.mock.calls.map((call) => call.arguments[0] as string))].filter((sql) => /\bmessages\b/.test(sql));
+  store.close();
+
+  const db = new DatabaseSync(join(home, "sidebots.sqlite"));
+  const plan = (sql: string) => (db.prepare(`explain query plan ${sql}`).all() as { detail: string }[]).map((step) => step.detail).join(", ");
+  // The four the home screen asks of each agent, a chat's three pages, and what the runner asks before and after a turn.
+  assert.ok(statements.length >= 16, `${statements.length} statements`);
+  for (const sql of statements) assert.doesNotMatch(plan(sql), /SCAN messages/, sql);
+  // Each index serves what it is there for: an agent's latest message, what is unread, whether it works, what it waits on, and a page of its chat. Without its index, each of these reads the agent's whole chat, which is no scan of every message.
+  const served = (asks: string) => {
+    const sql = statements.find((each) => each.includes(asks));
+    assert.ok(sql, asks);
+    return plan(sql);
+  };
+  assert.match(served("order by rowid desc limit 1"), /INDEX messages_agent \(/);
+  assert.match(served("count(*) as unread"), /INDEX messages_agent_created \(/);
+  assert.match(served("select 1 from messages"), /INDEX messages_unfinished \(/);
+  assert.match(served("indexed by"), /INDEX messages_unfinished \(/);
+  assert.match(served("union select"), /INDEX messages_agent \(.*INDEX messages_peer \(/);
+  // A page is read in order, newest first, so none of the three sorts the chat to find it.
+  const pages = statements.filter((sql) => sql.includes("union select"));
+  assert.equal(pages.length, 3);
+  for (const sql of pages) assert.doesNotMatch(plan(sql), /TEMP B-TREE/, sql);
+});
+
+test("a page of a chat holds its own messages and what another agent sent it, in the order they came", () => {
+  const { store, maya, theo } = withAgents();
+  // Every third message in Maya's chat is one Theo sent her, and Theo's chat has more that never reach hers.
+  const sent = Array.from({ length: 120 }, (_, index) => {
+    store.addMessage(theo.id, "person", `to Theo ${index}`, "done");
+    return index % 3 === 0 ? store.addMessage(theo.id, "agent", `from Theo ${index}`, "done", { peerId: maya.id }) : store.addMessage(maya.id, "agent", `note ${index}`, "done");
+  });
+  const bodies = (messages: { body: string }[]) => messages.map((message) => message.body);
+  const said = bodies(sent);
+
+  const latest = store.messages(maya.id);
+  assert.deepEqual(bodies(latest), said.slice(70));
+  const older = store.messages(maya.id, { before: latest[0].id });
+  assert.deepEqual(bodies(older), said.slice(20, 70));
+  assert.deepEqual(bodies(store.messages(maya.id, { before: older[0].id })), said.slice(0, 20));
+  assert.deepEqual(bodies(store.messages(maya.id, { after: sent[9].id })), said.slice(10));
+  assert.deepEqual(store.messages(maya.id, { after: sent[119].id }), []);
+  assert.deepEqual(store.messages(maya.id, { before: "no such message" }), []);
+});
+
+test("a turn counts on the day it ran by the computer's clock, and a day without one counts nothing", (t) => {
+  t.mock.timers.enable({ apis: ["Date"], now: new Date(2026, 10, 10, 23, 59) });
+  const { store, person, maya, theo } = withAgents();
+  const days = () => store.usage(person.id, []).days.map((day) => [day.day, day.cost, day.tokens]);
+  store.addUsage(maya.id, "reply", { sessionId: "evening", cost: 1, tokens: 1000 }, false);
+  // Two minutes on, it is the next day.
+  t.mock.timers.tick(2 * 60_000);
+  store.addUsage(maya.id, "reply", { sessionId: "night", cost: 2, tokens: 2000 }, false);
+  store.addUsage(theo.id, "job", { sessionId: "run", cost: 0.5, tokens: 500 }, false);
+
+  t.mock.timers.setTime(new Date(2026, 10, 16, 12, 0).getTime());
+  assert.deepEqual(days(), [
+    ["2026-11-10", 1, 1000],
+    ["2026-11-11", 2.5, 2500],
+    ["2026-11-12", 0, 0],
+    ["2026-11-13", 0, 0],
+    ["2026-11-14", 0, 0],
+    ["2026-11-15", 0, 0],
+    ["2026-11-16", 0, 0],
+  ]);
+  // A day later, the oldest of the seven has gone.
+  t.mock.timers.setTime(new Date(2026, 10, 17, 12, 0).getTime());
+  assert.deepEqual(days().slice(0, 2), [
+    ["2026-11-11", 2.5, 2500],
+    ["2026-11-12", 0, 0],
+  ]);
+  assert.equal(days().length, 7);
+});
+
 test("a database made before the table changes gets them and keeps what it holds", () => {
   const home = mkdtempSync(join(tmpdir(), "sidebots-store-test-"));
   // The tables the changes touch, as the first published version made them, with an agent, a message, a phone that allows notifications, and an API key as that version saved one.

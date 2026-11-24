@@ -233,8 +233,7 @@ export function createApi(store: Store, queue: Queue, connections: Connections, 
   app.post("/agents/:id/read", (c) => {
     const agent = ownAgent(c.var.person, c.req.param("id"));
     if (!agent) return c.json({ error: "No such agent." }, 404);
-    store.markRead(agent.id);
-    return c.json(store.agentWithLatest(agent.id));
+    return c.json(store.markRead(agent));
   });
 
   app.post("/agents/:id/fresh-start", (c) => {
@@ -370,12 +369,11 @@ export function createApi(store: Store, queue: Queue, connections: Connections, 
         if ("agent" in change) {
           if (change.agent.person_id !== person.id) return;
           if (change.deleted) return send("deleted", { deleted: change.agent.id });
-          return send("agent", { message: null, agent: store.agentWithLatest(change.agent.id)! });
+          return send("agent", { message: null, agent: change.agent });
         }
         // A message between two agents is in both their chats, and changes how both stand.
-        for (const id of [change.message.agent_id, change.message.peer_id]) {
-          const agent = id ? store.agentWithLatest(id) : undefined;
-          if (agent?.person_id === person.id) send("message", { message: change.message, agent });
+        for (const agent of change.agents) {
+          if (agent.person_id === person.id) send("message", { message: change.message, agent });
         }
       });
       stream.onAbort(stop);
