@@ -1,8 +1,9 @@
 // What the window knows about itself and the computer: the system it runs
-// on, its width, whether it can be seen or fills the screen, and the keys the
-// system's shortcuts are made with.
+// on, its width, whether it can be seen or fills the screen, the day it is,
+// and the keys the system's shortcuts are made with.
 
 import { useSyncExternalStore, type KeyboardEvent as ReactKeyboardEvent } from "react";
+import { follow } from "./motion.ts";
 
 export const mac = window.desktop.platform === "darwin";
 
@@ -41,6 +42,16 @@ export function onFocusChange(listener: () => void): () => void {
 /** Whether the window fills the screen, when a Mac shows no traffic lights over it. */
 export function useFullScreen(): boolean {
   return useSyncExternalStore(window.desktop.onFullScreen, window.desktop.fullScreen);
+}
+
+// How often the window looks at what day it is. A timer set for midnight would run late after the computer slept.
+const DAY_CHECK_MS = 60_000;
+
+const onDayCheck = (listener: () => void) => follow(DAY_CHECK_MS, listener);
+
+/** When today began on the computer's clock, kept up as the day changes, for a time told by it, as "Yesterday" is. */
+export function useToday(): number {
+  return useSyncExternalStore(onDayCheck, () => new Date().setHours(0, 0, 0, 0));
 }
 
 const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)");

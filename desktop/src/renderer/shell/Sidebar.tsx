@@ -1,4 +1,4 @@
-import { useEffect, useState, type KeyboardEvent } from "react";
+import { memo, useEffect, useState, type KeyboardEvent } from "react";
 import { ChevronRight, Plus, Search, Settings } from "lucide-react";
 import { cn } from "../lib/cn.ts";
 import { UPDATE, useAgents, useAvatars, useBehind, useConnection, useOnline, type Behind } from "../lib/store.ts";
@@ -27,7 +27,7 @@ const BEHIND_NOTE: Record<Behind, string> = {
  * app reaches it, and Settings, with why and Retry above them while the main
  * process can't reach the server.
  */
-export function Sidebar() {
+export const Sidebar = memo(function Sidebar() {
   const agents = useAgents();
   const behind = useBehind();
   const searching = useSearching();
@@ -52,7 +52,7 @@ export function Sidebar() {
       <Foot />
     </nav>
   );
-}
+});
 
 /** The agents as rows, the ones the person hid under a line at the end. */
 function AgentList({ behind, onScroll, showHidden, onShowHidden }: { behind: Behind | null; onScroll: (scrolled: boolean) => void; showHidden: boolean; onShowHidden: (shown: boolean) => void }) {

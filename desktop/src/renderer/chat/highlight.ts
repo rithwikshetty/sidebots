@@ -14,8 +14,9 @@ const THEMES = { light: "github-light", dark: "github-dark" } as const;
 let highlighter: Promise<HighlighterCore> | null = null;
 // Each language's grammar as it loads, by the name the code block gave it, and whether there was one.
 const grammars = new Map<string, Promise<boolean>>();
-// What each block has come to, so a block drawn again shows its colours at once.
+// What the blocks coloured lately have come to, so a block drawn again shows its colours at once.
 const done = new Map<string, Token[][] | null>();
+const DONE_KEPT = 500;
 
 function load(): Promise<HighlighterCore> {
   highlighter ??= (async () => {
@@ -66,6 +67,7 @@ export function useHighlighted(code: string, language: string | undefined): Toke
     highlight(code, language.toLowerCase())
       .catch(() => null)
       .then((found) => {
+        if (done.size >= DONE_KEPT) done.delete(done.keys().next().value!);
         done.set(key, found);
         if (showing) setTokens(found);
       });
