@@ -4,7 +4,7 @@
 // the few things a phone and a desktop do differently.
 
 import { KEEPALIVE_MS, PAGE } from "../server/src/contract.ts";
-import type { About, Agent, AgentWithLatest, Avatar, Connected, Connection, Effort, Found, Message, Model, Provider, SignIn, StreamEvent, Usage } from "../server/src/contract.ts";
+import type { About, Agent, AgentWithLatest, Avatar, Connected, Connection, Effort, Found, Message, Model, Plan, Provider, SignIn, StreamEvent, Usage } from "../server/src/contract.ts";
 import { ApiError, behind, type Behind } from "./api.ts";
 
 type State = {
@@ -16,6 +16,14 @@ type State = {
    * the chat's newest messages.
    */
   holes: Record<string, string>;
+  /**
+   * The count of changes each chat stood at when the app last had its newest
+   * page as the computer does: the count its agent had when the page was
+   * fetched, moved on by each change the event stream has brought since. A
+   * chat whose agent still has that count holds everything said in it, but
+   * for what is in its hole.
+   */
+  caughtUp: Record<string, number>;
   avatars: Avatar[];
   /** What each agent's page shows, for the agents whose page has been opened. */
   about: Record<string, About>;
@@ -69,7 +77,7 @@ const SAVE_DELAY_MS = 300;
 // The computer says something on the stream within every keepalive, and a slow connection may bring it late. A stream quiet for longer than this has dropped.
 const QUIET_MS = KEEPALIVE_MS + 10_000;
 const NO_MESSAGES: Message[] = [];
-const EMPTY = { agents: [], messages: {}, holes: {}, avatars: [], about: {}, usage: null, connections: null, pending: {} };
+const EMPTY = { agents: [], messages: {}, holes: {}, caughtUp: {}, avatars: [], about: {}, usage: null, connections: null, pending: {} };
 
 /** The chats, with only the newest page of each that isn't `open`. The messages before it page back from the computer. */
 function newestOf(messages: State["messages"], open: (agentId: string) => boolean): State["messages"] {
@@ -207,9 +215,9 @@ export function createStore<Picked>(platform: Platform<Picked>) {
 
   /**
    * Calls `listener` with the agents each time the computer has just said how
-   * they are: with every event of its stream, and when the app catches up with
-   * it. What the app saved of them doesn't count. Returns a function that
-   * stops it.
+   * they are: with every event of its stream about an agent or its messages,
+   * and when the app catches up with it. What the app saved of them doesn't
+   * count. Returns a function that stops it.
    */
   function onAgents(listener: (agents: AgentWithLatest[]) => void): () => void {
     told.add(listener);
@@ -239,75 +247,114 @@ export function createStore<Picked>(platform: Platform<Picked>) {
 
   /**
    * Takes in what the event stream says: a message and its agent, an agent
-   * that was added or changed, or an agent that was deleted. A message brings
-   * its agent to the top of the list, as a new agent goes there, and lands in
-   * its chat when the app holds that chat. An agent the app has that comes
-   * with no message, as one renamed or muted on another device, keeps its
-   * place.
+   * that was added or changed, an agent that was deleted, or how the person
+   * signs in to a provider. A message brings its agent to the top of the
+   * list, as a new agent goes there, and lands in its chat when the app holds
+   * that chat. An agent the app has that comes with no message, as one renamed
+   * or muted on another device, keeps its place. A chat stays caught up
+   * through a message that lands in it as the one change since the count it
+   * was caught up at. A message from a change up to that count is in the page
+   * that caught the chat up, which may be newer than the event, so the chat
+   * keeps it as the page has it. Any other change to a chat's count leaves
+   * the chat behind it, so the chat is fetched when it is next opened: a
+   * message the chat had no place for, which may be new when the computer's
+   * clock went back, and an agent that comes with a new count and no message,
+   * as when an agent it had talked with was deleted. A provider's plan takes
+   * the place of the one in the usage the app has. An event of a kind the app
+   * doesn't know is passed over.
    */
   function apply(event: StreamEvent): void {
+    if ("plan" in event) {
+      const { plan } = event;
+      for (const heard of plansHeard) heard.set(plan.provider, plan);
+      if (state.usage) set({ usage: withPlans(state.usage, new Map([[plan.provider, plan]])) });
+      return;
+    }
     if ("deleted" in event) forget(event.deleted);
-    else {
+    else if ("agent" in event) {
       const { message, agent } = event;
+      if (live) live.changes[agent.id] = agent.chat_changes;
       const known = state.messages[agent.id];
-      const chat = known && message ? upsert(known, message, state.holes[agent.id]) : known;
-      // The chat tells an old message from a new one by when the computer made it, and the computer's clock can go back. So a message it had no place for may be new, and the chat is fetched again when it is next opened.
-      if (message && chat === known) live?.caughtUp.delete(agent.id);
+      const at = state.caughtUp[agent.id];
+      const chat = known && message && (at === undefined || agent.chat_changes > at) ? upsert(known, message, state.holes[agent.id]) : known;
+      const inStep = chat !== known && at === agent.chat_changes - 1;
       const stays = !message && state.agents.some((item) => item.id === agent.id);
       set({
         agents: stays ? state.agents.map((item) => (item.id === agent.id ? withPending(agent) : item)) : [withPending(agent), ...state.agents.filter((item) => item.id !== agent.id)],
         messages: chat && chat !== known ? { ...state.messages, [agent.id]: chat } : state.messages,
+        caughtUp: inStep ? { ...state.caughtUp, [agent.id]: agent.chat_changes } : state.caughtUp,
       });
-    }
+    } else return;
     told.forEach((listener) => listener(state.agents));
   }
 
-  /**
-   * Lets go of everything the app kept of an agent that is gone. What the
-   * other agents' chats held of it goes on the computer too, which the stream
-   * doesn't spell out, so each chat is fetched again when it is next opened.
-   */
+  /** Lets go of everything the app kept of an agent that is gone. */
   function forget(agentId: string): void {
-    if (live) live.caughtUp = new Set();
     const { [agentId]: _messages, ...messages } = state.messages;
+    const { [agentId]: _caughtUp, ...caughtUp } = state.caughtUp;
     const { [agentId]: _about, ...about } = state.about;
     const { [agentId]: _pending, ...pending } = state.pending;
-    set({ agents: state.agents.filter((agent) => agent.id !== agentId), messages, about, pending });
+    set({ agents: state.agents.filter((agent) => agent.id !== agentId), messages, caughtUp, about, pending });
   }
+
+  /**
+   * Whether a chat's newest page is as the computer has it: the chat was
+   * caught up at the count the open stream last gave its agent. With no
+   * stream open nothing says how the chats stand now, so none is.
+   */
+  const isCaughtUp = (agentId: string) => agentId in state.caughtUp && state.caughtUp[agentId] === live?.changes[agentId];
+
+  // The fetch of each chat's newest page that was asked for last.
+  const fetching = new Map<string, Promise<void>>();
 
   /**
    * Fetches the newest page of a chat, which the app holds from here on, an
    * empty one too, so what the event stream says of it lands in it. A chat
-   * fetched while the stream is open, with nothing reaching it while its page
-   * was on its way, is as the computer has it for as long as the stream stays
-   * open, and isn't fetched again. The page joins onto the older messages
+   * that is caught up isn't fetched. A page is at least as new as the count
+   * the stream had given its agent when the app asked for it, so the chat is
+   * caught up at that count. The stream brings each change since that count,
+   * those the page already holds too. A page that a change reached the chat
+   * ahead of may be older than the change, and the count has moved past the
+   * page's by then, so the chat is fetched again when it is next opened. A
+   * page short of a full one is the whole chat, and takes the place of
+   * everything the app had of it. A full page joins onto the older messages
    * already saved when they run up to it. When the chat has moved on by more
    * than a page, the page stands alone and the chat pages back from there. A
    * message that reached the chat while the page was fetched, which the page
    * was made too soon to hold, goes after it, and an older page fetched
    * meanwhile stays before it or goes with the rest. An ask never goes back
    * to waiting, so one the app knows has closed stays closed when the page
-   * was fetched before it did.
+   * was fetched before it did. A page asked for before another of the same
+   * chat is dropped, since the later one is at least as new, and its fetch
+   * ends as the later one does, whether its own page came or not. The page
+   * of a chat the app has let go of meanwhile, as when its agent was
+   * deleted, is dropped too.
    */
-  async function loadMessages(agentId: string): Promise<void> {
-    const caughtUp = live?.caughtUp;
-    if (caughtUp?.has(agentId)) return;
+  function loadMessages(agentId: string): Promise<void> {
+    if (isCaughtUp(agentId)) return Promise.resolve();
+    const asked = live?.changes[agentId];
     const before = state.messages[agentId] ?? [];
     if (!state.messages[agentId]) set({ messages: { ...state.messages, [agentId]: before } });
-    const fetched = await request<Message[]>(`/agents/${agentId}/messages`);
-    // Another fetch caught the chat up while this page was on its way, and the stream has kept it so, so the page holds nothing newer.
-    if (live?.caughtUp.has(agentId)) return;
-    const known = state.messages[agentId] ?? NO_MESSAGES;
-    // A page that something reached the chat ahead of may be older than what the chat holds, so the chat is fetched again when it is next opened.
-    if (known === before) caughtUp?.add(agentId);
-    if (fetched.length === 0) return;
-    const closed = (message: Message) => known.find((had) => had.id === message.id && had.ask && had.ask !== "waiting");
-    const page = fetched.map((message) => (message.ask === "waiting" ? (closed(message) ?? message) : message));
-    const joins = Math.max(known.findIndex((message) => message.id === page[0].id), 0);
-    // The event stream adds at the chat's end, and paging back adds at its start, so what came since the page was made is what follows the last message the chat or the page already had.
-    const had = new Set([...before, ...page].map((message) => message.id));
-    const since = known.slice(known.findLastIndex((message) => had.has(message.id)) + 1);
-    set({ messages: { ...state.messages, [agentId]: [...known.slice(0, joins), ...page, ...since] } });
+    const land = (fetched: Message[]) => {
+      const known = state.messages[agentId];
+      if (!known) return;
+      const closed = (message: Message) => known.find((had) => had.id === message.id && had.ask && had.ask !== "waiting");
+      const page = fetched.map((message) => (message.ask === "waiting" ? (closed(message) ?? message) : message));
+      const joins = page.length < PAGE ? 0 : Math.max(known.findIndex((message) => message.id === page[0].id), 0);
+      // The event stream adds at the chat's end, and paging back adds at its start, so what came since the page was made is what follows the last message the chat or the page already had.
+      const had = new Set([...before, ...page].map((message) => message.id));
+      const since = known.slice(known.findLastIndex((message) => had.has(message.id)) + 1);
+      set({ messages: { ...state.messages, [agentId]: [...known.slice(0, joins), ...page, ...since] }, ...(asked !== undefined && { caughtUp: { ...state.caughtUp, [agentId]: asked } }) });
+    };
+    const fetch: Promise<void> = request<Message[]>(`/agents/${agentId}/messages`).then(
+      (fetched) => (fetching.get(agentId) === fetch ? land(fetched) : fetching.get(agentId)),
+      (failure) => {
+        if (fetching.get(agentId) === fetch) throw failure;
+        return fetching.get(agentId);
+      },
+    );
+    fetching.set(agentId, fetch);
+    return fetch;
   }
 
   // The pages and runs on their way, each with the run of its chat it is.
@@ -372,12 +419,16 @@ export function createStore<Picked>(platform: Platform<Picked>) {
     if (hole !== undefined) set({ messages: { ...state.messages, [agentId]: known.slice(known.findIndex((message) => message.id === hole) + 1) } });
   }
 
-  async function refresh(): Promise<void> {
+  /** Catches the app up with the computer as a stream opens: how the agents stand, and the newest page of each chat the app holds that has changed. */
+  async function refresh(stream: NonNullable<typeof live>): Promise<void> {
     const [agents, avatars] = await Promise.all([request<AgentWithLatest[]>("/agents"), request<Avatar[]>("/avatars")]);
+    // An answer that comes once its stream has closed is older than what the app has heard since.
+    if (live !== stream) return;
+    stream.changes = Object.fromEntries(agents.map((agent) => [agent.id, agent.chat_changes]));
     // What the app kept of an agent that is gone, as one deleted on another device, goes with it.
     const kept = new Set(agents.map((agent) => agent.id));
     const ofKept = <T>(record: Record<string, T>) => Object.fromEntries(Object.entries(record).filter(([agentId]) => kept.has(agentId)));
-    set({ pending: ofKept(state.pending), messages: ofKept(state.messages), about: ofKept(state.about) });
+    set({ pending: ofKept(state.pending), messages: ofKept(state.messages), caughtUp: ofKept(state.caughtUp), about: ofKept(state.about) });
     set({ agents: agents.map(withPending), avatars });
     // The apps the agents can use come too, for the logo an ask for one wears. A computer that has none leaves the list as it was.
     void loadConnections().catch(() => undefined);
@@ -507,9 +558,28 @@ export function createStore<Picked>(platform: Platform<Picked>) {
     set({ about: { ...state.about, [agentId]: about } });
   }
 
-  /** Fetches where the person's plan or API credit goes: what their agents used lately, and what is left of their plan. */
+  // For each fetch of usage on its way, the plans the stream brought meanwhile, which are newer than what the fetch answers with.
+  const plansHeard = new Set<Map<Provider, Plan>>();
+
+  /**
+   * Usage with each of `plans` in the place of its provider's account. A plan
+   * that waited, on its way or for a fetch, may name a limit that has reset
+   * since, which is left out, as the computer leaves it out by now.
+   */
+  function withPlans(usage: Usage, plans: Map<Provider, Plan>): Usage {
+    const current = (plan: Plan) => ({ ...plan, limits: plan.limits.filter((limit) => limit.resets_at === null || limit.resets_at > Date.now()) });
+    return { ...usage, accounts: usage.accounts.map((each) => (plans.has(each.provider) ? current(plans.get(each.provider)!) : each)) };
+  }
+
+  /** Fetches where the person's plan or API credit goes: what their agents used lately, and what is left of their plan as its provider last said. What the provider says next comes on the event stream. */
   async function loadUsage(): Promise<void> {
-    set({ usage: await request<Usage>("/usage") });
+    const heard = new Map<Provider, Plan>();
+    plansHeard.add(heard);
+    try {
+      set({ usage: withPlans(await request<Usage>("/usage"), heard) });
+    } finally {
+      plansHeard.delete(heard);
+    }
   }
 
   /** Fetches the apps the person's agents can use as them, and which are connected. */
@@ -562,10 +632,12 @@ export function createStore<Picked>(platform: Platform<Picked>) {
   let syncing: (() => void) | null = null;
   /**
    * The event stream while it is open: when the computer last said anything
-   * on it, and the chats whose newest page was fetched since it opened. The
-   * stream brings what is said in those from then on.
+   * on it, and how many changes it last gave each agent's chat, in the
+   * agents the app caught up with or in an event since. The answer to a call
+   * may be older or newer than what the stream has said, so it isn't counted
+   * here.
    */
-  let live: { heard: number; caughtUp: Set<string> } | null = null;
+  let live: { heard: number; changes: Record<string, number> } | null = null;
 
   /**
    * Keeps the app's copy current: listens to the server's event stream, and
@@ -614,8 +686,8 @@ export function createStore<Picked>(platform: Platform<Picked>) {
           return platform.onRefused();
         }
         if (!response.ok || !response.body) throw new Error(`events answered ${response.status}`);
-        const opened = (live = { heard: Date.now(), caughtUp: new Set() });
-        await refresh();
+        const opened = (live = { heard: Date.now(), changes: {} });
+        await refresh(opened);
         set({ online: true });
         wait = 1000;
         const reader = response.body.getReader();

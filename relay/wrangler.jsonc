@@ -6,14 +6,17 @@
   "compatibility_date": "2026-11-01",
   "routes": [{ "pattern": "relay.sidebots.app", "custom_domain": true }],
   "d1_databases": [{ "binding": "DB", "database_name": "sidebots-relay", "database_id": "77e61447-2164-455c-b419-9451cb4f39ce" }],
-  // Removes the machines that have gone quiet, once a day.
+  // Logs how full the zone and the account are, once a day, and removes the machines that have gone quiet.
   "triggers": { "crons": ["17 3 * * *"] },
+  // Keeps the lines the relay logs, to read in the Cloudflare dashboard, and not Cloudflare's own log of each request, which holds the network address a machine calls from.
+  "observability": { "logs": { "enabled": true, "invocation_logs": false } },
   "vars": {
     "APNS_TOPICS": "app.sidebots app.sidebots.dev",
     "NOTICES_PER_DAY": "1000",
     "ZONE": "sidebots.app",
     "ZONE_ID": "0e24ff7044b5dbca761e89793eaf1402",
-    "CLOUDFLARE_ACCOUNT_ID": "a3214a4eaf739e455f2179a537fdf54b"
+    "CLOUDFLARE_ACCOUNT_ID": "a3214a4eaf739e455f2179a537fdf54b",
+    "TUNNELS": "1000"
   },
   // New machines one network address may register in a minute.
   "ratelimits": [{ "name": "NEW_MACHINES", "namespace_id": "1001", "simple": { "limit": 3, "period": 60 } }],

@@ -1,14 +1,17 @@
 import { test, type TestContext } from "node:test";
 import assert from "node:assert/strict";
-import { execFileSync, spawn } from "node:child_process";
+import { execFile, execFileSync, spawn } from "node:child_process";
 import { generateKeyPairSync } from "node:crypto";
 import { once } from "node:events";
 import { mkdtempSync, writeFileSync } from "node:fs";
+import { createServer as createHttpServer } from "node:http";
 import { createServer, type Server } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { setTimeout as wait } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
+import { promisify } from "node:util";
+import { CONTRACT_HEADER } from "../src/contract.ts";
 import { openStore } from "../src/store.ts";
 
 const MAIN = fileURLToPath(new URL("../src/main.ts", import.meta.url));
@@ -87,4 +90,27 @@ test("a server started with its parent stops, and stops its cloudflared, when it
   server.child.stdin.end();
   assert.deepEqual(await server.exit(), [0, null], server.printed());
   assert.ok(await within5s(() => !server.tunnelRuns()), "cloudflared still runs after its server stopped");
+});
+
+test("status --json reads the server without asking at the machine's address", async (t) => {
+  // A server answers on the port, as one already running does.
+  const local = createHttpServer((_, response) => response.writeHead(204, { [CONTRACT_HEADER]: "1" }).end()).listen(0, "127.0.0.1");
+  await once(local, "listening");
+  // The address takes the request and never answers, as a network that swallows it does.
+  const { port: silent, listener } = await listen();
+  let asked = 0;
+  listener.on("connection", () => asked++);
+  t.after(() => {
+    local.close();
+    listener.close();
+  });
+  const home = mkdtempSync(join(tmpdir(), "sidebots-main-test-"));
+  const store = openStore(home);
+  store.setMachine({ privateKey: generateKeyPairSync("ed25519").privateKey.export({ type: "pkcs8", format: "pem" }).toString(), id: "abc", address: `127.0.0.1:${silent}`, tunnelToken: "token" });
+  store.close();
+  const { stdout } = await promisify(execFile)(process.execPath, [MAIN, "status", "--json"], {
+    env: { ...process.env, SIDEBOTS_HOME: home, PORT: String((local.address() as { port: number }).port) },
+  });
+  assert.equal(JSON.parse(stdout).running, true);
+  assert.equal(asked, 0);
 });

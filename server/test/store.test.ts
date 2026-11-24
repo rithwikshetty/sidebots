@@ -104,6 +104,59 @@ test("the run of a chat from a message holds everything from it through the one 
   assert.deepEqual(store.messages(maya.id, { before: newest.id, through: toTheo[3] }), []);
 });
 
+test("an agent's count of the changes to its chat moves by one with each message added or changed in it, in both chats when the message is between two agents, and with nothing else", () => {
+  const { store, person, maya, theo } = withAgents();
+  const counts = () => [maya, theo].map((agent) => store.agent(agent.id)!.chat_changes);
+  /** How far a change moved Maya's count and Theo's. */
+  const moved = (change: () => unknown) => {
+    const before = counts();
+    change();
+    return counts().map((count, index) => count - before[index]);
+  };
+  const question = { kind: "command" as const, title: "Run a command", what: "Clear the old folder", facts: [], detail: "rm -r old" };
+  assert.deepEqual(counts(), [0, 0]);
+
+  let sent!: ReturnType<typeof store.addMessage>;
+  assert.deepEqual(moved(() => (sent = store.addMessage(maya.id, "person", "Hello.", "queued"))), [1, 0]);
+  // Maya reads it, which makes it `running` and gives it its `seen_at`. Read already, it doesn't change.
+  assert.deepEqual(moved(() => store.markSeen([sent.id])), [1, 0]);
+  assert.deepEqual(moved(() => store.markSeen([sent.id])), [0, 0]);
+  // Her turn fails, and the person sends the message again.
+  assert.deepEqual(moved(() => store.setStatus(sent.id, "failed")), [1, 0]);
+  assert.deepEqual(moved(() => store.setStatus(sent.id, "queued")), [1, 0]);
+  // An ask, and its closing. Closed already, it doesn't change.
+  let ask!: ReturnType<typeof store.addMessage>;
+  assert.deepEqual(moved(() => (ask = store.addMessage(maya.id, "agent", "", "done", { ask: "waiting", question }))), [1, 0]);
+  assert.deepEqual(moved(() => store.answerAsk(ask.id, "allowed")), [1, 0]);
+  assert.deepEqual(moved(() => store.answerAsk(ask.id, "refused")), [0, 0]);
+  // What Maya asks Theo is in both their chats, as is its reading, and as is an ask Theo raises while working for her.
+  let asked!: ReturnType<typeof store.addMessage>;
+  assert.deepEqual(moved(() => (asked = store.addMessage(maya.id, "agent", "What do you think?", "queued", { peerId: theo.id }))), [1, 1]);
+  assert.deepEqual(moved(() => store.markSeen([asked.id])), [1, 1]);
+  assert.deepEqual(moved(() => store.addMessage(theo.id, "agent", "", "done", { ask: "waiting", question, peerId: maya.id })), [1, 1]);
+  assert.deepEqual(store.agentsFor(person.id).map((agent) => [agent.name, agent.chat_changes]).sort(), [["Maya", 9], ["Theo", 3]]);
+
+  // Reading a chat, a page of it and a change to its agent are no change to its messages.
+  assert.deepEqual(moved(() => [store.markRead(maya.id), store.messages(maya.id), store.updateAgent(maya, { name: "Mia", muted: true })]), [0, 0]);
+  // A server that starts again puts back what Theo was reading and closes the ask he left waiting, each a change to a message in both chats.
+  assert.deepEqual(moved(() => store.requeueInterrupted()), [2, 2]);
+});
+
+test("deleting an agent moves the count of each chat that held what it said", () => {
+  const { store, maya, theo } = withAgents();
+  const ruby = store.createAgent(store.personByName("Alex")!, "Ruby", "mochi", "claude");
+  store.addMessage(maya.id, "agent", "What do you think?", "queued", { peerId: theo.id });
+  store.addMessage(theo.id, "agent", "Looks fine.", "done", { peerId: maya.id });
+  store.addMessage(ruby.id, "person", "Hello.", "done");
+  const before = [maya, ruby].map((agent) => store.agent(agent.id)!.chat_changes);
+
+  store.deleteAgent(theo);
+  const after = [maya, ruby].map((agent) => store.agent(agent.id)!.chat_changes);
+  assert.ok(after[0] > before[0]);
+  assert.equal(after[1], before[1]);
+  assert.deepEqual(store.messages(maya.id), []);
+});
+
 test("what an agent's jobs sent since it last replied is the latest few of them, oldest first", () => {
   const { store, maya } = withAgents();
   const bodies = (messages: { body: string }[]) => messages.map((message) => message.body);
@@ -123,7 +176,7 @@ test("what an agent's jobs sent since it last replied is the latest few of them,
 test("a turn counts on the day it ran by the computer's clock, and a day without one counts nothing", (t) => {
   t.mock.timers.enable({ apis: ["Date"], now: new Date(2026, 10, 10, 23, 59) });
   const { store, person, maya, theo } = withAgents();
-  const days = () => store.usage(person.id, []).days.map((day) => [day.day, day.cost, day.tokens]);
+  const days = () => store.usage(person.id).days.map((day) => [day.day, day.cost, day.tokens]);
   store.addUsage(maya.id, "reply", { sessionId: "evening", cost: 1, tokens: 1000 }, false);
   // Two minutes on, it is the next day.
   t.mock.timers.tick(2 * 60_000);
@@ -180,6 +233,9 @@ test("a database made before the table changes gets them and keeps what it holds
   const store = openStore(home);
   assert.deepEqual(store.agentsFor("me").map((agent) => [agent.name, agent.provider, agent.color]), [["Maya", "claude", null]]);
   assert.deepEqual(store.messages("maya").map((message) => [message.body, message.ask]), [["Hello.", null]]);
+  // Its chats count their changes from here on.
+  store.setStatus("hello", "failed");
+  assert.equal(store.agent("maya")?.chat_changes, 1);
   assert.deepEqual(store.people().map((person) => ({ ...person })), [{ id: "me", name: "Rithwik" }]);
   assert.deepEqual(store.accounts("me").map((account) => ({ ...account })), [{ person_id: "me", provider: "claude", config_dir: "/tmp/claude" }]);
   assert.equal(store.apiKey("me", "claude"), "sk-ant-key");
@@ -240,8 +296,9 @@ test("several that open a new database at once all open it", async () => {
   }
 });
 
-// Takes a database back to before an agent had a fast mode, and to before `devices.kind`, the change before that.
-const BEFORE_FAST = "alter table agents drop column fast; alter table agents drop column ran_on; alter table messages drop column switched;";
+// Takes a database back to before each agent counted the changes to its chat, to before an agent had a fast mode, and to before `devices.kind`, the change before that.
+const BEFORE_COUNT = "drop trigger messages_added; drop trigger messages_changed; drop trigger messages_removed; alter table agents drop column chat_changes;";
+const BEFORE_FAST = `${BEFORE_COUNT} alter table agents drop column fast; alter table agents drop column ran_on; alter table messages drop column switched;`;
 const BEFORE_KIND = `alter table devices drop column kind; ${BEFORE_FAST}`;
 
 test("two that open an older database at once make its changes once", async () => {
@@ -285,7 +342,7 @@ test("a database that counted turns without their tokens keeps the turns, and co
   // Nobody can tell how many of the session's 900,000 tokens the next turn used, so it counts from the one after.
   store.addUsage(agent.id, "reply", { sessionId: "chat", cost: 3, tokens: 900_000 }, true);
   store.addUsage(agent.id, "reply", { sessionId: "chat", cost: 3.5, tokens: 950_000 }, true);
-  assert.deepEqual(store.usage(person.id, []).used.map((used) => ({ ...used })), [{ agent_id: agent.id, kind: "reply", turns: 3, cost: 3.5, tokens: 50_000 }]);
+  assert.deepEqual(store.usage(person.id).used.map((used) => ({ ...used })), [{ agent_id: agent.id, kind: "reply", turns: 3, cost: 3.5, tokens: 50_000 }]);
 });
 
 test("a Codex session from before the connections' tools, or before those tools changed, gets a fresh start, since a Codex chat keeps the tools it started with", () => {

@@ -198,7 +198,10 @@ export type SignIn = { url: string; redirect: string };
  * screen until it next has something to say. `color` fills the person's
  * messages in the agent's chat, as `#RRGGBB`; null takes the colour of its
  * avatar. `ran_on` is what the agent's last turn ran on, which its session
- * is on, and null before its first turn.
+ * is on, and null before its first turn. `chat_changes` counts each time a
+ * message in its chat was added, changed or removed, so a device that kept
+ * the chat at one count knows it is as the computer has it while the count
+ * stays.
  */
 export type Agent = {
   id: string;
@@ -215,6 +218,7 @@ export type Agent = {
   color: string | null;
   session_id: string | null;
   read_at: number;
+  chat_changes: number;
   created_at: number;
 };
 /**
@@ -370,15 +374,19 @@ export type Limit = { name: string; used: number | null; resets_at: number | nul
 /** How many days of turns `Usage` counts, today among them. A day runs from midnight on the computer. */
 export const USAGE_DAYS = 7;
 /**
+ * How a person signs in to a provider. An account on an API key is billed for
+ * what its turns cost, whether the person gave Sidebots the key or saved it as
+ * the login in their config folder. One on a plan has the plan's limits once
+ * the provider has said where they stand.
+ */
+export type Plan = { provider: Provider; apiKey: boolean; limits: Limit[] };
+/**
  * Where a person's plan or API credit goes: the turns their agents ran in the
  * last `USAGE_DAYS` days, added up by agent and by day, and how they sign in
  * to each provider. `days` has every one of the days, the oldest first, one
- * with no turns too. An account on an API key is billed for what its turns
- * cost, whether the person gave Sidebots the key or saved it as the login in
- * their config folder. One on a plan has the plan's limits once the provider
- * has said where they stand.
+ * with no turns too.
  */
-export type Usage = { used: Used[]; days: Day[]; accounts: { provider: Provider; apiKey: boolean; limits: Limit[] }[] };
+export type Usage = { used: Used[]; days: Day[]; accounts: Plan[] };
 
 const WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 
@@ -417,9 +425,13 @@ export function oneLine(message: Pick<Message, "body" | "question">): string {
  * What the event stream sends. A message that was added, changed status or
  * had its ask closed comes with its agent as the home screen shows it. An
  * agent that was added or changed comes the same way, with no message. A
- * deleted agent comes as its id.
+ * deleted agent comes as its id, and each agent it had talked with comes
+ * after it, since that agent's chat lost what the two said to each other. How
+ * the person signs in to a provider comes as `Usage` lists it, each time the
+ * provider says where the plan's limits stand or that the login is an API
+ * key.
  */
-export type StreamEvent = { message: Message | null; agent: AgentWithLatest } | { deleted: string };
+export type StreamEvent = { message: Message | null; agent: AgentWithLatest } | { deleted: string } | { plan: Plan };
 /** How often the computer pings the event stream, in milliseconds, so a device can tell an open stream from one that dropped without a word. */
 export const KEEPALIVE_MS = 25_000;
 /** How many of a chat's messages the computer answers with at a time, which is as many as a device keeps of a chat that isn't on screen. */

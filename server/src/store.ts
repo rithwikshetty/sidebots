@@ -7,7 +7,7 @@ import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
 
 import { COLOR, PAGE, PROVIDERS, RUN, USAGE_DAYS, betweenAgents, readableColor, selectionOf } from "./contract.ts";
-import type { About, Agent, AgentWithLatest, Ask, Avatar, Connection, Day, Found, Job, Limit, Memory, Message, Provider, PushToken, Question, Schedule, Selection, Sender, Status, Switched, TurnKind, Usage, Used } from "./contract.ts";
+import type { About, Agent, AgentWithLatest, Ask, Avatar, Connection, Day, Found, Job, Limit, Memory, Message, Plan, Provider, PushToken, Question, Schedule, Selection, Sender, Status, Switched, TurnKind, Usage, Used } from "./contract.ts";
 
 export type Person = { id: string; name: string };
 /** How a person's agents sign in to a provider: the provider's config folder of the person's own, which holds their login, rules, skills and sessions. */
@@ -30,9 +30,14 @@ export type AgentChanges = Partial<Pick<Agent, "name" | "avatar_id" | "provider"
  * What the store tells its listeners about: a message that was added, changed
  * status or had its ask closed, with the agents whose chats it is in, or an
  * agent that was added or changed, each as the home screen now shows it, or an
- * agent that was deleted.
+ * agent that was deleted, or how a person signs in to a provider, as a
+ * provider just said.
  */
-export type Change = { message: Message; agents: AgentWithLatest[] } | { agent: AgentWithLatest; deleted: false } | { agent: Agent; deleted: true };
+export type Change =
+  | { message: Message; agents: AgentWithLatest[] }
+  | { agent: AgentWithLatest; deleted: false }
+  | { agent: Agent; deleted: true }
+  | { person_id: string; plan: Plan };
 /** How this server is known to the relay: its signing key, and the id, the address phones reach it at and the token its tunnel runs with, which the relay gives it once it has registered. */
 export type Machine = { privateKey: string; id?: string; address?: string; tunnelToken?: string };
 /**
@@ -77,6 +82,7 @@ const TABLE_CHANGES: (string | { table: string; change: string })[] = [
   "alter table messages add column switched text",
   // An agent in the middle of a session ran its last turn on what it answers with now.
   "update agents set ran_on = json_object('provider', provider, 'model', model, 'effort', effort, 'fast', json('false')) where session_id is not null",
+  "alter table agents add column chat_changes integer not null default 0",
 ];
 
 const SCHEMA = `
@@ -105,6 +111,7 @@ create table if not exists agents (
   color       text,
   session_id  text,
   read_at     integer not null default 0,
+  chat_changes integer not null default 0,
   created_at  integer not null
 );
 create table if not exists messages (
@@ -196,6 +203,25 @@ create index if not exists messages_agent_created on messages (agent_id, created
 create index if not exists messages_peer on messages (peer_id) where peer_id is not null;
 -- The few messages whose turn hasn't ended: what waits on an agent, and whether it works.
 create index if not exists messages_unfinished on messages (status) where status = 'queued' or status = 'running';
+`;
+
+/**
+ * What keeps each agent's count of the changes to its chat, made once the
+ * tables have every change. A message that is added, changed or removed
+ * counts once for its agent, and once for the other agent when it is between
+ * two, whose chat it is in too. The database does the counting, so nothing
+ * changes a message without moving the count of each chat it is in.
+ */
+const TRIGGERS = `
+create trigger if not exists messages_added after insert on messages begin
+  update agents set chat_changes = chat_changes + 1 where id in (new.agent_id, new.peer_id);
+end;
+create trigger if not exists messages_changed after update on messages begin
+  update agents set chat_changes = chat_changes + 1 where id in (new.agent_id, new.peer_id, old.peer_id);
+end;
+create trigger if not exists messages_removed after delete on messages begin
+  update agents set chat_changes = chat_changes + 1 where id in (old.agent_id, old.peer_id);
+end;
 `;
 
 const SEARCH_LIMIT = 20;
@@ -295,6 +321,7 @@ export function openStore(home: string) {
     else if (had.has(change.table)) db.exec(change.change);
   }
   db.exec(INDEXES);
+  db.exec(TRIGGERS);
   db.exec(`pragma user_version = ${Math.max(version, TABLE_CHANGES.length)}`);
   db.exec("commit");
 
@@ -323,6 +350,16 @@ export function openStore(home: string) {
   };
   const listeners = new Set<(change: Change) => void>();
   const changed = (change: Change) => listeners.forEach((listener) => listener(change));
+  // The logins a provider last said are API keys since the server started, each as the person and the provider.
+  const keyLogins = new Set<string>();
+  const limitsOf = db.prepare(
+    "select name, used, resets_at, at from limits where person_id = ? and provider = ? and (resets_at is null or resets_at > ?) order by resets_at, name",
+  );
+  /** How the person signs in to a provider. A limit whose time to reset has passed is left out, since nobody knows where it has stood since. */
+  const planOf = (personId: string, provider: Provider): Plan => {
+    const apiKey = apiKeys()[personId]?.[provider] !== undefined || keyLogins.has(`${personId} ${provider}`);
+    return { provider, apiKey, limits: apiKey ? [] : (limitsOf.all(personId, provider, Date.now()) as Limit[]) };
+  };
 
   const one = (sql: string, ...values: (string | number)[]): Message | undefined => {
     const row = db.prepare(sql).get(...values) as Row | undefined;
@@ -495,6 +532,7 @@ export function openStore(home: string) {
         color: null,
         session_id: null,
         read_at: now,
+        chat_changes: 0,
         created_at: now,
       };
       const folder = agentHome(agent.id);
@@ -558,8 +596,14 @@ export function openStore(home: string) {
       db.prepare("update agents set ran_on = ? where id = ?").run(JSON.stringify(selectionOf(selection)), agentId);
     },
 
-    /** Removes an agent and everything Sidebots kept for it: its messages, its jobs, what it used and its home folder. */
+    /**
+     * Removes an agent and everything Sidebots kept for it: its messages, its
+     * jobs, what it used and its home folder. The agents it had talked with
+     * are told of after it, as they now stand, since their chats lost what
+     * the two said to each other.
+     */
     deleteAgent(agent: Agent): void {
+      const talkedWith = db.prepare("select agent_id as id from messages where peer_id = ?1 union select peer_id from messages where agent_id = ?1 and peer_id is not null").all(agent.id) as { id: string }[];
       db.prepare("delete from usage where agent_id = ?").run(agent.id);
       db.prepare("delete from jobs where agent_id = ?").run(agent.id);
       db.prepare("delete from messages where agent_id = ?").run(agent.id);
@@ -569,6 +613,7 @@ export function openStore(home: string) {
       db.prepare("delete from agents where id = ?").run(agent.id);
       rmSync(agentHome(agent.id), { recursive: true, force: true });
       changed({ agent, deleted: true });
+      for (const { id } of talkedWith) changed({ agent: agentWithLatest(id)!, deleted: false });
     },
 
     /** The instructions an agent follows, what it remembers and its jobs. */
@@ -660,21 +705,27 @@ export function openStore(home: string) {
       );
     },
 
-    /** Keeps where limits of the person's plan with a provider stand, as the provider just said. */
-    setLimits(personId: string, provider: Provider, limits: Limit[]): void {
-      const keep = db.prepare("insert or replace into limits (person_id, provider, name, used, resets_at, at) values (?, ?, ?, ?, ?, ?)");
-      for (const limit of limits) keep.run(personId, provider, limit.name, limit.used, limit.resets_at, limit.at);
+    /**
+     * Keeps what a provider just said of the person's login in their config
+     * folder: where the limits of its plan stand, or null when the login is an
+     * API key, which has no plan. Tells the listeners how the person now signs
+     * in to the provider.
+     */
+    setLimits(personId: string, provider: Provider, limits: Limit[] | null): void {
+      if (limits) {
+        keyLogins.delete(`${personId} ${provider}`);
+        const keep = db.prepare("insert or replace into limits (person_id, provider, name, used, resets_at, at) values (?, ?, ?, ?, ?, ?)");
+        for (const limit of limits) keep.run(personId, provider, limit.name, limit.used, limit.resets_at, limit.at);
+      } else keyLogins.add(`${personId} ${provider}`);
+      changed({ person_id: personId, plan: planOf(personId, provider) });
     },
 
     /**
      * Where the person's plan or API credit goes: the turns their agents ran
      * in the last days, added up by agent and by day, and how they sign in to
-     * each provider. `keyLogins` are the providers whose login in the
-     * person's config folder is an API key, as they just said. A limit whose
-     * time to reset has passed is left out, since nobody knows where it has
-     * stood since.
+     * each provider, as the providers last said.
      */
-    usage(personId: string, keyLogins: Provider[]): Usage {
+    usage(personId: string): Usage {
       const now = Date.now();
       const today = new Date(now);
       // Each day's midnight on the computer, and the one that ends today. A change of the clocks makes a day an hour off 24.
@@ -693,15 +744,8 @@ export function openStore(home: string) {
         const { cost = 0, tokens = 0 } = spent.find((each) => each.nth === index) ?? {};
         return { day: `${start.getFullYear()}-${two(start.getMonth() + 1)}-${two(start.getDate())}`, cost, tokens };
       });
-      const limits = db.prepare(
-        "select name, used, resets_at, at from limits where person_id = ? and provider = ? and (resets_at is null or resets_at > ?) order by resets_at, name",
-      );
       const providers = db.prepare("select provider from accounts where person_id = ? order by rowid").all(personId) as Pick<Account, "provider">[];
-      const accounts = providers.map(({ provider }) => {
-        const apiKey = apiKeys()[personId]?.[provider] !== undefined || keyLogins.includes(provider);
-        return { provider, apiKey, limits: apiKey ? [] : (limits.all(personId, provider, now) as Limit[]) };
-      });
-      return { used, days, accounts };
+      return { used, days, accounts: providers.map(({ provider }) => planOf(personId, provider)) };
     },
 
     /**

@@ -17,7 +17,8 @@ import { Bar, Failure, Group, Groups, Loading, SectionTitle } from "./Group.tsx"
  * used, as bars, and the agents that ran a turn, the one that used most
  * first, each with its share of what all of them used and how that splits
  * between its replies, its jobs and its fresh starts. It shows what the app
- * last had while it asks the computer again.
+ * last had while it asks the computer again, and a plan's limits change in
+ * place when the provider answers.
  */
 export function Usage() {
   const usage = useUsage();
