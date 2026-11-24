@@ -25,7 +25,7 @@ test("what runs with every message, and with every look at the home screen or a 
   store.addMessage(maya.id, "agent", "What do you think?", "queued", { peerId: theo.id });
   store.markSeen([first.id]);
   store.agentsFor(person.id);
-  store.markRead(maya);
+  store.markRead(maya.id);
   store.messages(maya.id);
   store.messages(maya.id, { before: first.id });
   store.messages(maya.id, { after: first.id });

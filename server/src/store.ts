@@ -740,12 +740,12 @@ export function openStore(home: string) {
     },
 
     /** Records that the person has read everything in the chat so far, and says so when that leaves less unread, so their other devices hear of it. Returns the agent as the home screen now shows it. */
-    markRead(agent: Agent): AgentWithLatest {
-      const shown = withLatest(agent);
-      if (shown.unread === 0) return shown;
+    markRead(agentId: string): AgentWithLatest | undefined {
+      const shown = agentWithLatest(agentId);
+      if (!shown || shown.unread === 0) return shown;
       const readAt = Date.now();
-      db.prepare("update agents set read_at = ? where id = ?").run(readAt, agent.id);
-      const read = withLatest({ ...agent, read_at: readAt });
+      db.prepare("update agents set read_at = ? where id = ?").run(readAt, agentId);
+      const read = withLatest({ ...shown, read_at: readAt });
       changed({ agent: read, deleted: false });
       return read;
     },

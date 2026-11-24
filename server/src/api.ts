@@ -239,7 +239,7 @@ export function createApi(store: Store, queue: Queue, connections: Connections, 
   app.post("/agents/:id/read", (c) => {
     const agent = ownAgent(c.var.person, c.req.param("id"));
     if (!agent) return c.json({ error: "No such agent." }, 404);
-    return c.json(store.markRead(agent));
+    return c.json(store.markRead(agent.id));
   });
 
   app.post("/agents/:id/fresh-start", (c) => {
