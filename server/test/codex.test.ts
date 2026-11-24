@@ -285,7 +285,7 @@ test("a failed turn says why in words for the phone", async () => {
 
   const { driver, turn } = setup();
   assert.equal(await words(driver.runTurn(turn("fail")), driver), "Your Codex usage limit is reached. It resets at 3:37 PM.");
-  assert.equal(await words(driver.runTurn(turn("hello", { model: "astra" })), driver), "Codex offers this account no Astra model.");
+  assert.equal(await words(driver.runTurn(turn("hello", { model: "astra" })), driver), "Codex offers this account no GPT-6.2 Astra model.");
   assert.equal(driver.failure("Incorrect API key provided: sk-12345."), "OpenAI refused your API key. Save a new one on your computer.");
   assert.equal(driver.failure("stream disconnected before completion"), "stream disconnected before completion");
 });

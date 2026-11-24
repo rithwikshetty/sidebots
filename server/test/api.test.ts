@@ -625,7 +625,7 @@ test("an agent moved to another provider hands over: it saves its memory where i
       ["person", "book the band", "done"],
       ["agent", "sure", "done"],
       ["person", "any news?", "done"],
-      ["sidebots", "Switched from Claude Code Opus Medium to Codex Sol Medium", "done"],
+      ["sidebots", "Switched from Claude Opus 5.5 Medium to GPT-6.2 Sol Medium", "done"],
       ["agent", "sure", "done"],
     ],
   );
@@ -658,7 +658,7 @@ test("a move to another provider while a turn runs hands over before the next tu
     ],
   );
   const notices = (await call(ME, "GET", `/agents/${agent.id}/messages`)).json.filter((m: { sender: string }) => m.sender === "sidebots");
-  assert.deepEqual(notices.map((m: { body: string; status: string }) => [m.body, m.status]), [["Switched from Codex Sol Medium to Claude Code Opus Medium", "done"]]);
+  assert.deepEqual(notices.map((m: { body: string; status: string }) => [m.body, m.status]), [["Switched from GPT-6.2 Sol Medium to Claude Opus 5.5 Medium", "done"]]);
 });
 
 test("another model, effort or speed on the same provider keeps the session, and the chat says what changed before the turn that first runs on it", async () => {
@@ -696,7 +696,7 @@ test("another model, effort or speed on the same provider keeps the session, and
   await call(ME, "PATCH", `/agents/${agent.id}`, { model: "sonnet" });
   await say(ME, agent.id, "and now?");
   await queue.kick(agent.id);
-  assert.deepEqual((await notices()).at(-1), "Switched from Opus Fast to Sonnet Standard");
+  assert.deepEqual((await notices()).at(-1), "Switched from Claude Opus 5.5 Fast to Claude Sonnet 5.5 Standard");
   assert.deepEqual([turns[2].model, turns[2].fast], ["sonnet", false]);
 });
 
@@ -1560,14 +1560,14 @@ test("the switch notice a server leaves when it stops mid hand-over is done with
   const agent = (await call(ME, "POST", "/agents", { name: "Tony", avatarId: "mochi" })).json;
   const opus = { provider: "claude", model: "opus", effort: "medium", fast: false } as const;
   const sol = { provider: "codex", model: "sol", effort: "medium", fast: false } as const;
-  store.addMessage(agent.id, "sidebots", "Switched from Claude Code Opus Medium to Codex Sol Medium", "running", { switched: { from: opus, to: sol } });
+  store.addMessage(agent.id, "sidebots", "Switched from Claude Opus 5.5 Medium to GPT-6.2 Sol Medium", "running", { switched: { from: opus, to: sol } });
   store.requeueInterrupted();
   assert.equal(store.nextQueued(agent.id), undefined);
   await say(ME, agent.id, "hi");
   await queue.kick(agent.id);
   const messages = (await call(ME, "GET", `/agents/${agent.id}/messages`)).json.map((m: { sender: string; body: string; status: string }) => [m.sender, m.body, m.status]);
   assert.deepEqual(messages, [
-    ["sidebots", "Switched from Claude Code Opus Medium to Codex Sol Medium", "done"],
+    ["sidebots", "Switched from Claude Opus 5.5 Medium to GPT-6.2 Sol Medium", "done"],
     ["person", "hi", "done"],
     ["agent", "sure", "done"],
   ]);

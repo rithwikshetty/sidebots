@@ -67,12 +67,12 @@ test("an answer stays with what it answers however late it comes, and each other
 test("a change of what an agent answers with reads as the parts that changed, and as all of each on another provider", () => {
   const opus: Selection = { provider: "claude", model: "opus", effort: "medium", fast: false };
   const words = (from: Selection, to: Selection) => [selectionWords(from, to).join(" "), selectionWords(to, from).join(" ")];
-  assert.deepEqual(selectionWords(opus), ["Opus", "Medium"]);
-  assert.deepEqual(selectionWords({ ...opus, fast: true }), ["Opus", "Medium", "Fast"]);
-  assert.deepEqual(words(opus, { ...opus, model: "sonnet" }), ["Opus", "Sonnet"]);
+  assert.deepEqual(selectionWords(opus), ["Claude Opus 5.5", "Medium"]);
+  assert.deepEqual(selectionWords({ ...opus, fast: true }), ["Claude Opus 5.5", "Medium", "Fast"]);
+  assert.deepEqual(words(opus, { ...opus, model: "sonnet" }), ["Claude Opus 5.5", "Claude Sonnet 5.5"]);
   assert.deepEqual(words(opus, { ...opus, effort: "high" }), ["Medium", "High"]);
   assert.deepEqual(words(opus, { ...opus, fast: true }), ["Standard", "Fast"]);
   // Sonnet has no fast mode, so it answers at its usual speed whatever the agent is set to.
-  assert.deepEqual(words({ ...opus, fast: true }, { ...opus, model: "sonnet", fast: true }), ["Opus Fast", "Sonnet Standard"]);
-  assert.deepEqual(words(opus, { provider: "codex", model: "sol", effort: "high", fast: true }), ["Opus Medium", "Sol High Fast"]);
+  assert.deepEqual(words({ ...opus, fast: true }, { ...opus, model: "sonnet", fast: true }), ["Claude Opus 5.5 Fast", "Claude Sonnet 5.5 Standard"]);
+  assert.deepEqual(words(opus, { provider: "codex", model: "sol", effort: "high", fast: true }), ["Claude Opus 5.5 Medium", "GPT-6.2 Sol High Fast"]);
 });

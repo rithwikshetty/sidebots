@@ -27,8 +27,9 @@ export default function ModelDrawer() {
  * the computer has said which it has set up, and a model of
  * another provider moves the agent there, with its effort when that provider
  * has it. Under the models of the agent's own provider are how hard it can
- * think before it answers, and its speed when its model has a fast mode. A
- * check marks what is in effect. A tap on anything else takes effect from
+ * think before it answers, and its speed when its model has a fast mode,
+ * which says while it is fast that fast uses more of the plan. A check marks
+ * what is in effect. A tap on anything else takes effect from
  * the agent's next turn, and the drawer stays up for another choice until it
  * is swiped away.
  */
@@ -69,7 +70,7 @@ function Model({ agent }: { agent: AgentWithLatest }) {
         </Section>
       ) : null}
       {own && provider.fast.includes(agent.model) ? (
-        <Section title="Speed" note="Fast answers sooner, and uses more of your plan or API credit.">
+        <Section title="Speed" note={runsFast(agent) ? "Fast uses more of your plan or API credit." : undefined}>
           <Choices options={SPEEDS} value={runsFast(agent) ? "fast" : "standard"} onChange={(speed) => change({ fast: speed === "fast" })} plain />
         </Section>
       ) : null}

@@ -393,15 +393,15 @@ test.describe("the model", () => {
   test("the model and the effort chosen are saved, and are still chosen after the app opens again", async ({ page, server, restartApp }) => {
     const id = await chatWith(page, server);
     const model = page.getByTestId("model");
-    await expect(model).toHaveAccessibleName("Model: Opus · Medium effort");
+    await expect(model).toHaveAccessibleName("Model: Claude Opus 5.5 · Medium effort");
     await model.click();
     await expect(models(page, "claude").getByRole("radio")).toHaveText(Object.values(PROVIDERS.claude.models));
     await expect(efforts(page).getByRole("radio")).toHaveText(Object.values(PROVIDERS.claude.efforts));
-    await expect(models(page, "claude").getByRole("radio", { name: "Opus" })).toBeChecked();
+    await expect(models(page, "claude").getByRole("radio", { name: "Claude Opus 5.5" })).toBeChecked();
     await expect(efforts(page).getByRole("radio", { name: "Medium" })).toBeChecked();
     // The panel stays open for the next choice, and leaves the person where they write once it closes.
-    await models(page, "claude").getByRole("radio", { name: "Sonnet" }).click();
-    await expect(model).toHaveAccessibleName("Model: Sonnet · Medium effort");
+    await models(page, "claude").getByRole("radio", { name: "Claude Sonnet 5.5" }).click();
+    await expect(model).toHaveAccessibleName("Model: Claude Sonnet 5.5 · Medium effort");
     await efforts(page).getByRole("radio", { name: "Low" }).click();
     await until(() => agentOf(server, id), (agent) => agent.model === "sonnet" && agent.effort === "low");
     await page.keyboard.press("Escape");
@@ -410,16 +410,16 @@ test.describe("the model", () => {
 
     const again = await restartApp();
     await openChat(again.page, server, "Echo");
-    await expect(again.page.getByTestId("model")).toHaveAccessibleName("Model: Sonnet · Low effort");
+    await expect(again.page.getByTestId("model")).toHaveAccessibleName("Model: Claude Sonnet 5.5 · Low effort");
     await again.page.getByTestId("model").click();
-    await expect(models(again.page, "claude").getByRole("radio", { name: "Sonnet" })).toBeChecked();
+    await expect(models(again.page, "claude").getByRole("radio", { name: "Claude Sonnet 5.5" })).toBeChecked();
     await expect(efforts(again.page).getByRole("radio", { name: "Low" })).toBeChecked();
   });
 
   test("a Codex agent offers Codex's models", async ({ page, server }) => {
     await addAgent(page, server, "Ledger", "codex");
     await openChat(page, server, "Ledger");
-    await expect(page.getByTestId("model")).toHaveAccessibleName("Model: Sol · Medium effort");
+    await expect(page.getByTestId("model")).toHaveAccessibleName("Model: GPT-6.2 Sol · Medium effort");
     await page.getByTestId("model").click();
     await expect(page.getByRole("tab", { name: "Codex" })).toHaveAttribute("aria-selected", "true");
     await expect(models(page, "codex").getByRole("radio")).toHaveText(Object.values(PROVIDERS.codex.models));
@@ -431,17 +431,20 @@ test.describe("the model", () => {
     const model = page.getByTestId("model");
     await model.click();
     const speed = page.getByRole("radiogroup", { name: "Speed" });
+    const picker = page.getByTestId("model-picker");
     await expect(speed.getByRole("radio", { name: "Standard" })).toBeChecked();
+    await expect(picker).not.toContainText("Fast uses more of your plan");
     await speed.getByRole("radio", { name: "Fast" }).click();
-    await expect(model).toHaveAccessibleName("Model: Opus · Medium effort · Fast");
+    await expect(picker).toContainText("Fast uses more of your plan");
+    await expect(model).toHaveAccessibleName("Model: Claude Opus 5.5 · Medium effort · Fast");
     await expect(model.locator("svg.lucide-zap")).toBeVisible();
     await until(() => agentOf(server, id), (agent) => agent.fast === true);
     // Sonnet has none, so it answers at its usual speed and the choice is out of reach.
-    await models(page, "claude").getByRole("radio", { name: "Sonnet" }).click();
-    await expect(model).toHaveAccessibleName("Model: Sonnet · Medium effort");
+    await models(page, "claude").getByRole("radio", { name: "Claude Sonnet 5.5" }).click();
+    await expect(model).toHaveAccessibleName("Model: Claude Sonnet 5.5 · Medium effort");
     await expect(speed.getByRole("radio", { name: "Standard" })).toBeChecked();
     await expect(speed.getByRole("radio", { name: "Fast" })).toBeDisabled();
-    await expect(page.getByTestId("model-picker")).toContainText("Sonnet has no fast mode");
+    await expect(picker).not.toContainText("Fast uses more of your plan");
   });
 
   test("a model of another provider moves the agent there, and the chat says so before its next reply", async ({ page, server }) => {
@@ -453,18 +456,18 @@ test.describe("the model", () => {
     // The rail lists Codex's models without changing anything until one is picked.
     await page.getByRole("tab", { name: "Codex" }).click();
     await expect(models(page, "codex").getByRole("radio", { checked: true })).toHaveCount(0);
-    await expect(model).toHaveAccessibleName("Model: Opus · Medium effort");
-    await models(page, "codex").getByRole("radio", { name: "Terra" }).click();
-    await expect(model).toHaveAccessibleName("Model: Terra · Medium effort");
+    await expect(model).toHaveAccessibleName("Model: Claude Opus 5.5 · Medium effort");
+    await models(page, "codex").getByRole("radio", { name: "GPT-6.1 Terra" }).click();
+    await expect(model).toHaveAccessibleName("Model: GPT-6.1 Terra · Medium effort");
     await expect(efforts(page).getByRole("radio")).toHaveText(Object.values(PROVIDERS.codex.efforts));
     await until(() => agentOf(server, id), (agent) => agent.provider === "codex" && agent.model === "terra");
     await page.keyboard.press("Escape");
     await expect(notices(page)).toHaveCount(0);
 
     await sendFromApp(page, "Still there?");
-    const notice = notices(page).filter({ hasText: "Terra" });
-    await expect(notice).toHaveAccessibleName("Switched from Claude Code Opus Medium to Codex Terra Medium");
-    await expect(notice).toHaveText("Opus · MediumTerra · Medium");
+    const notice = notices(page).filter({ hasText: "GPT-6.1 Terra" });
+    await expect(notice).toHaveAccessibleName("Switched from Claude Opus 5.5 Medium to GPT-6.1 Terra Medium");
+    await expect(notice).toHaveText("Claude Opus 5.5 · MediumGPT-6.1 Terra · Medium");
     await expect(notice).toHaveAttribute("data-status", "done");
     await expect(theirs(page)).toHaveCount(2);
     const sent = await messagesOf(server, id);

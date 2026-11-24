@@ -1,5 +1,6 @@
 import { Radio } from "@base-ui/react/radio";
 import { RadioGroup } from "@base-ui/react/radio-group";
+import type { ReactNode } from "react";
 import { cn } from "../lib/cn.ts";
 
 /**
@@ -8,7 +9,8 @@ import { cn } from "../lib/cn.ts";
  * picked, and arrow keys move between them. The mark is the app's colour; a
  * `plain` row, as for tabs, has a raised light mark instead, so it reads as a
  * place to go rather than a setting. `label` names the row for a screen reader.
- * A `disabled` row shows its choice and can't be changed.
+ * A `disabled` row shows its choice and can't be changed. A choice may
+ * carry an icon beside its name.
  */
 export function Segmented<Id extends string>({
   options,
@@ -19,7 +21,7 @@ export function Segmented<Id extends string>({
   disabled = false,
   className,
 }: {
-  options: Partial<Record<Id, string>>;
+  options: Partial<Record<Id, ReactNode>>;
   value: Id;
   onChange: (value: Id) => void;
   label: string;
@@ -48,7 +50,7 @@ export function Segmented<Id extends string>({
           key={id}
           value={id}
           className={cn(
-            "relative z-10 flex min-w-0 items-center justify-center rounded-sm px-2 text-sm font-medium whitespace-nowrap transition-colors duration-150",
+            "relative z-10 flex min-w-0 items-center justify-center gap-1.5 rounded-sm px-2 text-sm font-medium whitespace-nowrap transition-colors duration-150",
             id !== value ? "text-ink2 not-data-disabled:hover:text-ink" : plain ? "text-ink" : "text-on-tint",
           )}
         >

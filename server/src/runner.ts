@@ -227,8 +227,7 @@ export function toolsFor(turn: Turn): Tool[] {
 const FRESH_START = "Fresh start";
 /** What a change of what the agent answers with shows in the chat, in an app that doesn't draw it. */
 export function switchedWords({ from, to }: Switched): string {
-  const side = (one: Selection, other: Selection) => [...(one.provider === other.provider ? [] : [PROVIDERS[one.provider].name]), ...selectionWords(one, other)].join(" ");
-  return `Switched from ${side(from, to)} to ${side(to, from)}`;
+  return `Switched from ${selectionWords(from, to).join(" ")} to ${selectionWords(to, from).join(" ")}`;
 }
 /** What a stopped turn shows in the chat. */
 const STOPPED = "Stopped";

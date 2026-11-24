@@ -1,6 +1,6 @@
 import { Popover } from "@base-ui/react/popover";
 import { Tabs } from "@base-ui/react/tabs";
-import { Check, Zap } from "lucide-react";
+import { Check, Gauge, Zap } from "lucide-react";
 import { useState, type KeyboardEvent, type RefObject } from "react";
 import { PROVIDERS, runsFast, type AgentWithLatest, type Logo, type Offered, type Provider } from "@server/contract.ts";
 import { cn } from "../lib/cn.ts";
@@ -9,7 +9,20 @@ import { BrandLogo } from "../ui/BrandLogo.tsx";
 import { Button } from "../ui/Button.tsx";
 import { Segmented } from "../ui/Segmented.tsx";
 
-const SPEEDS = { standard: "Standard", fast: "Fast" };
+const SPEEDS = {
+  standard: (
+    <>
+      <Gauge aria-hidden className="size-3.5 shrink-0" />
+      Standard
+    </>
+  ),
+  fast: (
+    <>
+      <Zap aria-hidden className="size-3.5 shrink-0" />
+      Fast
+    </>
+  ),
+};
 
 /**
  * What the agent answers with, in the message field: a button with its
@@ -19,7 +32,8 @@ const SPEEDS = { standard: "Standard", fast: "Fast" };
  * next to it. A provider the person hasn't set up is faded, and says where to
  * set it up in place of its models. Beside the models are the efforts the
  * agent's own provider has, and across the foot is its speed, which only a
- * model with a fast mode can change. A check marks what is in effect. A
+ * model with a fast mode can change, and which says while it is fast that
+ * fast uses more of the plan. A check marks what is in effect. A
  * choice takes effect from the agent's next turn and leaves the panel open
  * for another, and a model of another provider moves the agent there, with
  * its effort when that provider has it. Up and Down move through a list.
@@ -65,7 +79,7 @@ export function ModelPicker({ agent, onSet, returnTo }: { agent: AgentWithLatest
             className="w-[33rem] max-w-[calc(100vw-2rem)] origin-(--transform-origin) overflow-hidden rounded-xl bg-raised text-ink shadow-menu outline-none transition-[opacity,scale] duration-150 ease-out data-ending-style:scale-[0.97] data-ending-style:opacity-0 data-starting-style:scale-[0.97] data-starting-style:opacity-0"
             data-testid="model-picker"
           >
-            <div className="flex h-[19rem]">
+            <div className="flex max-h-[19rem]">
               <Tabs.Root orientation="vertical" value={listed} onValueChange={(provider) => setListed(provider as Provider)} className="flex min-w-0 flex-1">
                 <Tabs.List aria-label="Providers" className="relative flex w-12 shrink-0 flex-col gap-1 bg-field/60 p-1.5">
                   {(Object.keys(PROVIDERS) as Provider[]).map((provider) => (
@@ -103,10 +117,9 @@ export function ModelPicker({ agent, onSet, returnTo }: { agent: AgentWithLatest
                 <Options label="Effort" options={own.efforts} value={agent.effort} onPick={(effort) => onSet({ effort })} />
               </div>
             </div>
-            <div className="flex items-center gap-3 border-t border-line bg-field/40 px-4 py-2.5">
-              <span className="text-sm text-ink2">Speed</span>
-              <Segmented label="Speed" options={SPEEDS} value={fast ? "fast" : "standard"} onChange={(speed) => onSet({ fast: speed === "fast" })} disabled={!own.fast.includes(agent.model)} plain className="h-7 w-44 shrink-0" />
-              <p className="ml-auto min-w-0 truncate text-xs text-ink2">{own.fast.includes(agent.model) ? "Fast uses more of your plan" : `${own.models[agent.model]} has no fast mode`}</p>
+            <div className="flex h-12 items-center gap-3 border-t border-line bg-field/40 px-3" title={own.fast.includes(agent.model) ? undefined : `${own.models[agent.model]} has no fast mode`}>
+              <Segmented label="Speed" options={SPEEDS} value={fast ? "fast" : "standard"} onChange={(speed) => onSet({ fast: speed === "fast" })} disabled={!own.fast.includes(agent.model)} plain className="h-7 w-48 shrink-0" />
+              {fast ? <p className="ml-auto min-w-0 truncate text-xs text-ink2">Fast uses more of your plan</p> : null}
             </div>
           </Popover.Popup>
         </Popover.Positioner>
