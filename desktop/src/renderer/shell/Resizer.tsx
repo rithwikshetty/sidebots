@@ -9,7 +9,7 @@ const STEP = 16;
  * `side`. A double-click puts the width back to `initial`, and the arrow keys
  * move it once it has focus. `onResize` hears each width as it changes, with
  * `done` once the drag ends, as the person lets go or the pointer is taken
- * from it.
+ * from the edge.
  */
 export function Resizer({
   side,
@@ -42,11 +42,11 @@ export function Resizer({
     event.currentTarget.setPointerCapture(event.pointerId);
   }
 
-  /** The width the drag reaches with the pointer where `event` has it, while the edge has the pointer. */
+  // The width the drag reaches with the pointer where `event` has it, while the edge has the pointer, kept as the width the drag ends on.
   function reach(event: PointerEvent<HTMLDivElement>): number | undefined {
-    const under = drag.current;
-    if (!under || !event.currentTarget.hasPointerCapture(event.pointerId)) return undefined;
-    return (under.reached = clamp(under.width + (side === "right" ? event.clientX - under.from : under.from - event.clientX)));
+    const going = drag.current;
+    if (!going || !event.currentTarget.hasPointerCapture(event.pointerId)) return;
+    return (going.reached = clamp(going.width + (side === "right" ? event.clientX - going.from : going.from - event.clientX)));
   }
 
   function move(event: PointerEvent<HTMLDivElement>) {
