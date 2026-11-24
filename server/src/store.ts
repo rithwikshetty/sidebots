@@ -873,20 +873,22 @@ export function openStore(home: string) {
     },
 
     /**
-     * What the agent's jobs have sent since the agent last replied in the
-     * chat, before a message, oldest first. The session a reply comes from
-     * never saw them.
+     * The latest `limit` of what the agent's jobs have sent since the agent
+     * last replied in the chat, before a message, oldest first. The session a
+     * reply comes from never saw them. It reads back from the message and
+     * stops at that reply, so it reads what it returns and one message more.
      */
-    sentByJobsBefore(agentId: string, messageId: string): Message[] {
-      return many(
-        `select * from messages where sender = 'agent' and job_id is not null and ${WITH_PERSON}
-           and agent_id = ?1 and rowid < (select rowid from messages where id = ?2)
-           and rowid > coalesce((select max(rowid) from messages where sender = 'agent' and job_id is null and ${WITH_PERSON}
-             and agent_id = ?1 and rowid < (select rowid from messages where id = ?2)), 0)
-         order by rowid`,
-        agentId,
-        messageId,
+    sentByJobsBefore(agentId: string, messageId: string, limit: number): Message[] {
+      const latest: Message[] = [];
+      const back = db.prepare(
+        `select * from messages where sender = 'agent' and ${WITH_PERSON} and agent_id = ?1 and rowid < (select rowid from messages where id = ?2)
+         order by rowid desc limit ?3`,
       );
+      for (const row of back.iterate(agentId, messageId, limit) as Iterable<Row>) {
+        if (row.job_id === null) break;
+        latest.push(toMessage(row));
+      }
+      return latest.reverse();
     },
 
     /** The last few things the person and the agent said to each other before a message, oldest first. */
