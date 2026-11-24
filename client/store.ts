@@ -83,8 +83,8 @@ export function createStore<Picked>(platform: Platform<Picked>) {
     }
   }
 
-  const kept = { ...EMPTY, ...saved() };
-  let state: State = { ...kept, messages: newestOf(kept.messages, () => false), online: true, behind: null };
+  const copy = { ...EMPTY, ...saved() };
+  let state: State = { ...copy, messages: newestOf(copy.messages, () => false), online: true, behind: null };
   const listeners = new Set<() => void>();
   // The chats on screen, each with how many parts of the app show it.
   const shown = new Map<string, number>();
@@ -127,8 +127,8 @@ export function createStore<Picked>(platform: Platform<Picked>) {
    * the chat goes back to its newest page.
    */
   function watch(agentId: string): typeof subscribe {
-    const known = watches.get(agentId);
-    if (known) return known;
+    const made = watches.get(agentId);
+    if (made) return made;
     const watching = (listener: () => void) => {
       const stop = subscribe(listener);
       shown.set(agentId, (shown.get(agentId) ?? 0) + 1);
@@ -226,7 +226,7 @@ export function createStore<Picked>(platform: Platform<Picked>) {
       const { message, agent } = event;
       const known = state.messages[agent.id];
       const chat = known && message ? upsert(known, message) : known;
-      // A message the chat had no place for is on a page it doesn't hold, and the chat is fetched again when it is next opened.
+      // The chat tells an old message from a new one by when the computer made it, and the computer's clock can go back. So a message it had no place for may be new, and the chat is fetched again when it is next opened.
       if (message && chat === known) live?.caughtUp.delete(agent.id);
       const stays = !message && state.agents.some((item) => item.id === agent.id);
       set({
@@ -509,7 +509,7 @@ export function createStore<Picked>(platform: Platform<Picked>) {
    * Keeps the app's copy current: listens to the server's event stream, and
    * opens it again when it drops. The app coming back to the front opens it
    * again too, unless the system left it alone meanwhile and the computer
-   * spoke on it lately, which an open stream shows.
+   * spoke on it within the quiet time.
    */
   function startSync(): void {
     if (syncing) return;
