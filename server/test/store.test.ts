@@ -7,6 +7,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { setTimeout as wait } from "node:timers/promises";
+import { PAGE, RUN } from "../src/contract.ts";
 import { openStore } from "../src/store.ts";
 
 /** A new Sidebots with a person and two of their agents. */
@@ -29,6 +30,7 @@ test("what runs with every message, and with every look at the home screen or a 
   store.messages(maya.id);
   store.messages(maya.id, { before: first.id });
   store.messages(maya.id, { after: first.id });
+  store.messages(maya.id, { before: first.id, through: first.id });
   store.message(theo.id, first.id);
   store.messagesBefore(maya.id, first.id, 10);
   store.sentByJobsBefore(maya.id, first.id, 10);
@@ -42,8 +44,8 @@ test("what runs with every message, and with every look at the home screen or a 
 
   const db = new DatabaseSync(join(home, "sidebots.sqlite"));
   const plan = (sql: string) => (db.prepare(`explain query plan ${sql}`).all() as { detail: string }[]).map((step) => step.detail).join(", ");
-  // The four the home screen asks of each agent, a chat's three pages, and what the runner asks before and after a turn.
-  assert.ok(statements.length >= 16, `${statements.length} statements`);
+  // The four the home screen asks of each agent, a chat's four pages, and what the runner asks before and after a turn.
+  assert.ok(statements.length >= 17, `${statements.length} statements`);
   for (const sql of statements) assert.doesNotMatch(plan(sql), /SCAN messages/, sql);
   // Each index serves what it is there for: an agent's latest message, what is unread, whether it works, what it waits on, and a page of its chat. Without its index, each of these reads the agent's whole chat, which is no scan of every message.
   const served = (asks: string) => {
@@ -56,9 +58,9 @@ test("what runs with every message, and with every look at the home screen or a 
   assert.match(served("select 1 from messages"), /INDEX messages_unfinished \(/);
   assert.match(served("indexed by"), /INDEX messages_unfinished \(/);
   assert.match(served("union select"), /INDEX messages_agent \(.*INDEX messages_peer \(/);
-  // A page is read in order, newest first, so none of the three sorts the chat to find it.
+  // A page is read in order, so none of the four sorts the chat to find it.
   const pages = statements.filter((sql) => sql.includes("union select"));
-  assert.equal(pages.length, 3);
+  assert.equal(pages.length, 4);
   for (const sql of pages) assert.doesNotMatch(plan(sql), /TEMP B-TREE/, sql);
 });
 
@@ -80,6 +82,26 @@ test("a page of a chat holds its own messages and what another agent sent it, in
   assert.deepEqual(bodies(store.messages(maya.id, { after: sent[9].id })), said.slice(10));
   assert.deepEqual(store.messages(maya.id, { after: sent[119].id }), []);
   assert.deepEqual(store.messages(maya.id, { before: "no such message" }), []);
+});
+
+test("the run of a chat from a message holds everything from it through the one it runs to, up to its limit", () => {
+  const { store, maya, theo } = withAgents();
+  // Every third message in Maya's chat is one Theo sent her, and Theo's chat has more that never reach hers.
+  const toTheo: string[] = [];
+  const sent = Array.from({ length: RUN * 3 }, (_, index) => {
+    toTheo.push(store.addMessage(theo.id, "person", `to Theo ${index}`, "done").id);
+    return index % 3 === 0 ? store.addMessage(theo.id, "agent", `from Theo ${index}`, "done", { peerId: maya.id }) : store.addMessage(maya.id, "agent", `note ${index}`, "done");
+  });
+  const said = sent.map((message) => message.body);
+  const bodies = (messages: { body: string }[]) => messages.map((message) => message.body);
+  const newest = sent.at(-PAGE)!;
+
+  assert.deepEqual(bodies(store.messages(maya.id, { before: newest.id, through: sent[400].id })), said.slice(400, sent.length - PAGE + 1));
+  assert.deepEqual(bodies(store.messages(maya.id, { before: newest.id, through: sent[3].id })), said.slice(3, 3 + RUN));
+  assert.deepEqual(bodies(store.messages(maya.id, { before: sent[3].id, through: sent[3].id })), [said[3]]);
+  // A message after the one it runs to, or one in another chat, has no run.
+  assert.deepEqual(store.messages(maya.id, { before: sent[3].id, through: newest.id }), []);
+  assert.deepEqual(store.messages(maya.id, { before: newest.id, through: toTheo[3] }), []);
 });
 
 test("an agent's count of the changes to its chat moves by one with each message added or changed in it, in both chats when the message is between two agents, and with nothing else", () => {

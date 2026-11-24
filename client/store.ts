@@ -11,10 +11,17 @@ type State = {
   agents: AgentWithLatest[];
   messages: Record<string, Message[]>;
   /**
+   * The chats that hold a stretch from further back with a hole after it,
+   * each by the last message before the hole. What comes after the hole is
+   * the chat's newest messages.
+   */
+  holes: Record<string, string>;
+  /**
    * The count of changes each chat stood at when the app last had its newest
    * page as the computer does: the count its agent had when the page was
    * fetched, moved on by each change the event stream has brought since. A
-   * chat whose agent still has that count holds everything said in it.
+   * chat whose agent still has that count holds everything said in it, but
+   * for what is in its hole.
    */
   caughtUp: Record<string, number>;
   avatars: Avatar[];
@@ -70,12 +77,21 @@ const SAVE_DELAY_MS = 300;
 // The computer says something on the stream within every keepalive, and a slow connection may bring it late. A stream quiet for longer than this has dropped.
 const QUIET_MS = KEEPALIVE_MS + 10_000;
 const NO_MESSAGES: Message[] = [];
-const EMPTY = { agents: [], messages: {}, caughtUp: {}, avatars: [], about: {}, usage: null, connections: null, pending: {} };
+const EMPTY = { agents: [], messages: {}, holes: {}, caughtUp: {}, avatars: [], about: {}, usage: null, connections: null, pending: {} };
 
 /** The chats, with only the newest page of each that isn't `open`. The messages before it page back from the computer. */
 function newestOf(messages: State["messages"], open: (agentId: string) => boolean): State["messages"] {
   const long = Object.keys(messages).filter((agentId) => messages[agentId].length > PAGE && !open(agentId));
   return long.length ? { ...messages, ...Object.fromEntries(long.map((agentId) => [agentId, messages[agentId].slice(-PAGE)])) } : messages;
+}
+
+/** The holes that are still in their chats: each chat holds the message before its hole, and messages after it. */
+function holesIn(messages: State["messages"], holes: State["holes"]): State["holes"] {
+  const gone = Object.keys(holes).filter((agentId) => {
+    const at = messages[agentId]?.findIndex((message) => message.id === holes[agentId]) ?? -1;
+    return at < 0 || at === messages[agentId].length - 1;
+  });
+  return gone.length ? Object.fromEntries(Object.entries(holes).filter(([agentId]) => !gone.includes(agentId))) : holes;
 }
 
 /** Makes an app's store, which starts from the copy the app saved. */
@@ -101,14 +117,18 @@ export function createStore<Picked>(platform: Platform<Picked>) {
    * Changes what the store holds, tells whoever shows it, and saves it. A
    * chat keeps everything fetched and said of it while it is on screen. Of
    * every other chat, and of each chat in what is saved, the store keeps the
-   * newest page.
+   * newest page, and a hole goes with the stretch before it.
    */
   function set(patch: Partial<State>): void {
-    state = { ...state, ...patch, ...(patch.messages && { messages: newestOf(patch.messages, (agentId) => shown.has(agentId)) }) };
+    state = { ...state, ...patch };
+    if (patch.messages) {
+      const messages = newestOf(patch.messages, (agentId) => shown.has(agentId));
+      state = { ...state, messages, holes: holesIn(messages, state.holes) };
+    }
     listeners.forEach((listener) => listener());
     if (saveTimer) clearTimeout(saveTimer);
     saveTimer = setTimeout(() => {
-      const { online: _online, behind: _behind, ...rest } = state;
+      const { online: _online, behind: _behind, holes: _holes, ...rest } = state;
       storage.setItem(CACHE_KEY, JSON.stringify({ ...rest, messages: newestOf(rest.messages, () => false) }));
     }, SAVE_DELAY_MS);
   }
@@ -153,6 +173,11 @@ export function createStore<Picked>(platform: Platform<Picked>) {
 
   function useMessages(agentId: string): Message[] {
     return useSyncExternalStore(watch(agentId), () => state.messages[agentId] ?? NO_MESSAGES);
+  }
+
+  /** The last message before the hole in a chat, when the chat holds a stretch from further back. */
+  function useHole(agentId: string): string | undefined {
+    return useSyncExternalStore(subscribe, () => state.holes[agentId]);
   }
 
   function useAvatars(): Avatar[] {
@@ -209,14 +234,15 @@ export function createStore<Picked>(platform: Platform<Picked>) {
 
   /**
    * A chat with `message` in the place of the copy it holds, or at its end
-   * when the message is new. One from before everything the chat holds, as an
-   * old message that changed, is on a page the chat doesn't hold, and comes
-   * with that page.
+   * when the message is new. One from before the newest messages the chat
+   * holds without a break, as an old message that changed, is on a page the
+   * chat doesn't hold or in its hole, and comes with that page.
    */
-  function upsert(list: Message[], message: Message): Message[] {
+  function upsert(list: Message[], message: Message, hole: string | undefined): Message[] {
     const at = list.findIndex((item) => item.id === message.id);
     if (at >= 0) return list.map((item, index) => (index === at ? message : item));
-    return list.length && message.created_at < list[0].created_at ? list : [...list, message];
+    const newest = list[hole === undefined ? 0 : list.findIndex((item) => item.id === hole) + 1];
+    return newest && message.created_at < newest.created_at ? list : [...list, message];
   }
 
   /**
@@ -250,7 +276,7 @@ export function createStore<Picked>(platform: Platform<Picked>) {
       if (live) live.changes[agent.id] = agent.chat_changes;
       const known = state.messages[agent.id];
       const at = state.caughtUp[agent.id];
-      const chat = known && message && (at === undefined || agent.chat_changes > at) ? upsert(known, message) : known;
+      const chat = known && message && (at === undefined || agent.chat_changes > at) ? upsert(known, message, state.holes[agent.id]) : known;
       const inStep = chat !== known && at === agent.chat_changes - 1;
       const stays = !message && state.agents.some((item) => item.id === agent.id);
       set({
@@ -331,29 +357,75 @@ export function createStore<Picked>(platform: Platform<Picked>) {
     return fetch;
   }
 
-  const paging = new Map<string, Promise<boolean>>();
+  // The pages and runs on their way, each with the run of its chat it is.
+  const paging = new Map<string, { done: Promise<boolean>; run: number }>();
+  // How many runs each chat has asked for or let go of. A chat takes only the run it asked for last, so one that comes after another jump, or after Jump to latest, is dropped, and isn't waited for again.
+  const runs = new Map<string, number>();
 
   /**
    * Fetches the page before the oldest message the app has of a chat. False
    * once the chat's beginning is reached. Whoever asks for the same page
    * while it is on its way waits for that one, and whoever asks once it has
    * come, as a screen does on seeing it, fetches the one before it.
+   *
+   * With `through`, it fetches the run of the chat from that message to the
+   * newest messages the app holds, as much of it as the computer answers with
+   * at once, in place of what the chat held before them. A run that doesn't
+   * reach them is a stretch from further back, with a hole after it. Asked
+   * through the last message before the hole, it fetches the next run, which
+   * fills the hole or moves it on.
    */
-  function loadOlder(agentId: string): Promise<boolean> {
-    const oldest = state.messages[agentId]?.[0];
+  function loadOlder(agentId: string, through?: string): Promise<boolean> {
+    const known = state.messages[agentId] ?? NO_MESSAGES;
+    const hole = state.holes[agentId];
+    // A run reaches back from the newest messages, which follow the hole when there is one.
+    const oldest = known[through === undefined || hole === undefined ? 0 : known.findIndex((message) => message.id === hole) + 1];
     if (!oldest) return Promise.resolve(false);
-    const path = `/agents/${agentId}/messages?before=${oldest.id}`;
+    const path = `/agents/${agentId}/messages?before=${oldest.id}${through === undefined ? "" : `&through=${through}`}`;
     const running = paging.get(path);
-    if (running) return running;
-    const done = request<Message[]>(path)
-      .finally(() => paging.delete(path))
+    if (running && (through === undefined || running.run === runs.get(agentId))) return running.done;
+    const run = (runs.get(agentId) ?? 0) + 1;
+    if (through !== undefined) runs.set(agentId, run);
+    // The chat's copy of the message a run starts from, as it was when the run was asked for.
+    const from = known.find((message) => message.id === through);
+    const done: Promise<boolean> = request<Message[]>(path)
+      .finally(() => paging.get(path)?.done === done && paging.delete(path))
       .then((page) => {
         const known = state.messages[agentId] ?? NO_MESSAGES;
-        if (page.length && known[0]?.id === oldest.id) set({ messages: { ...state.messages, [agentId]: [...page, ...known] } });
-        return page.length > 0;
+        if (through === undefined) {
+          if (page.length && known[0]?.id === oldest.id) set({ messages: { ...state.messages, [agentId]: [...page, ...known] } });
+          return page.length > 0;
+        }
+        const newest = known.findIndex((message) => message.id === oldest.id);
+        if (runs.get(agentId) !== run || newest < 0) return page.length > 0;
+        // A run comes back empty when the message it runs from has gone from the chat, as one between two agents goes when either is deleted. A hole after that message can't be filled, so the chat lets its stretch go.
+        if (!page.length) {
+          if (through === state.holes[agentId]) backToNewest(agentId);
+          return false;
+        }
+        // A run from the last message before the hole keeps the stretch it ends. The run's copy of that message takes the chat's place, unless the stream changed the chat's copy while the run was on its way.
+        const start = known.findIndex((message) => message.id === page[0].id);
+        const holds = start >= 0 && start < newest;
+        const joins = page.at(-1)!.id === oldest.id;
+        const rows = page.slice(0, joins ? -1 : undefined);
+        if (holds && rows.length && known[start] !== from) rows[0] = known[start];
+        const { [agentId]: _hole, ...holes } = state.holes;
+        set({
+          messages: { ...state.messages, [agentId]: [...(holds ? known.slice(0, start) : []), ...rows, ...known.slice(newest)] },
+          holes: joins ? holes : { ...holes, [agentId]: page.at(-1)!.id },
+        });
+        return true;
       });
-    paging.set(path, done);
+    paging.set(path, { done, run });
     return done;
+  }
+
+  /** Lets go of the stretch from further back in a chat, and its hole, so the chat holds its newest messages again. */
+  function backToNewest(agentId: string): void {
+    runs.set(agentId, (runs.get(agentId) ?? 0) + 1);
+    const known = state.messages[agentId] ?? NO_MESSAGES;
+    const hole = state.holes[agentId];
+    if (hole !== undefined) set({ messages: { ...state.messages, [agentId]: known.slice(known.findIndex((message) => message.id === hole) + 1) } });
   }
 
   /** Catches the app up with the computer as a stream opens: how the agents stand, and the newest page of each chat the app holds that has changed. */
@@ -401,7 +473,7 @@ export function createStore<Picked>(platform: Platform<Picked>) {
     const answered = await request<Message>(`/agents/${ask.agent_id}/asks/${ask.id}`, { method: "POST", body: { allow } });
     // An ask raised while working for another agent is in that agent's chat too.
     const messages = { ...state.messages };
-    for (const agentId of [ask.agent_id, ask.peer_id]) if (agentId && messages[agentId]) messages[agentId] = upsert(messages[agentId], answered);
+    for (const agentId of [ask.agent_id, ask.peer_id]) if (agentId && messages[agentId]) messages[agentId] = upsert(messages[agentId], answered, state.holes[agentId]);
     set({ messages });
   }
 
@@ -663,6 +735,7 @@ export function createStore<Picked>(platform: Platform<Picked>) {
     useAgents,
     useAgent,
     useMessages,
+    useHole,
     useAvatars,
     useChatColor,
     useAbout,
@@ -673,6 +746,7 @@ export function createStore<Picked>(platform: Platform<Picked>) {
     onAgents,
     loadMessages,
     loadOlder,
+    backToNewest,
     send,
     answerAsk,
     freshStart,

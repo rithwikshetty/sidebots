@@ -24,10 +24,13 @@ function useExchange({ agentId, messageId }: ExchangeView) {
   const messages = useMessages(agentId);
   const exchange = useMemo(() => exchanges(messages).find((each) => each.some((said) => said.id === messageId)), [messages, messageId]);
   const missing = messages.length > 0 && !messages.some((message) => message.id === messageId);
-  // A message from further back than the chat has fetched is fetched, a page at a time, until it comes or the chat's beginning does.
+  // A message from further back than the chat has fetched, when the panel opens, comes with the run of the chat from it. When the chat lets it go later, as at Jump to latest, the panel lets the exchange go too.
+  const opened = useRef<string | null>(null);
   useEffect(() => {
-    if (missing) loadOlder(agentId).catch(() => undefined);
-  }, [missing, agentId, messages]);
+    if (messages.length === 0 || opened.current === messageId) return;
+    opened.current = messageId;
+    if (missing) loadOlder(agentId, messageId).catch(() => undefined);
+  }, [missing, agentId, messageId, messages.length]);
   const first = useAgent(exchange?.[0].agent_id ?? "");
   const other = useAgent(exchange?.[0].peer_id ?? "");
   const shown = useMemo(() => (exchange ? withAsks(exchange, messages) : []), [exchange, messages]);

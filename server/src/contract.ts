@@ -437,6 +437,13 @@ export const KEEPALIVE_MS = 25_000;
 /** How many of a chat's messages the computer answers with at a time, which is as many as a device keeps of a chat that isn't on screen. */
 export const PAGE = 50;
 /**
+ * How many of a chat's messages the computer answers with at most when a
+ * device asks for the run of the chat from a message on, as one opening the
+ * chat at an old message does. It is more than a page, so a message a few
+ * pages back comes with everything after it in one answer.
+ */
+export const RUN = 200;
+/**
  * What a device gets when it pairs: the key it sends with every request from
  * then on, the key a phone's notifications are encrypted with, in base64, and
  * the name of the machine it paired with.

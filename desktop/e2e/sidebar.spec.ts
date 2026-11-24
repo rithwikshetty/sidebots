@@ -5,9 +5,10 @@
 // mobile/src/app/new-agent.tsx, client/confirmations.ts, and the rule in
 // server/src/store.ts's addMessage that brings a hidden agent back).
 
-import type { Avatar, Found } from "../../server/src/contract.ts";
+import { PAGE, RUN, type Avatar, type Found } from "../../server/src/contract.ts";
 import { LINES } from "../../client/lines.ts";
 import { TOP_BAR } from "../src/bridge.ts";
+import { jumpOffered, said, scrollChatTo, wholeChat } from "./chat-helpers.ts";
 import { expect, test, type TestServer } from "./fixtures.ts";
 import { agentNamed, agentsOf, avatarRowOffset, avatarShown, changeOnPhone, chooseMenu, faintIn, listedIds, onDatabase, rowOf, settled } from "./shell.ts";
 import type { Page } from "@playwright/test";
@@ -392,6 +393,49 @@ test.describe("search", () => {
     const row = page.locator(`[data-message-id="${message.id}"]`);
     await expect(row).toBeInViewport({ timeout: 15_000 });
     await expect(row).toHaveClass(/animate-flash/);
+  });
+
+  test("a found message further back than one answer holds opens with one request for the run from it, and the chat pages down across the rest to the newest", async ({ page, server }) => {
+    test.setTimeout(120_000);
+    const atlas = await agentNamed(server, "Atlas");
+    // Atlas's chat is made longer than its newest page and a run together, so its first message is out of one run's reach.
+    const more = Math.max(0, PAGE + RUN + 20 - (await wholeChat(server, atlas.id)).length);
+    for (let index = 0; index < more; index++) await server.control("deliver", { agent: atlas.id, text: `Reminder ${index}.` });
+    const newest = `Reminder ${more - 1}.`;
+    const [message] = await found(server, "keep track of the errands");
+    const fetched: string[] = [];
+    page.on("request", (request) => void (request.url().includes(`/agents/${atlas.id}/messages`) && fetched.push(new URL(request.url()).search)));
+
+    await page.getByTestId("search-button").click();
+    await page.getByTestId("search").fill("keep track of the errands");
+    await page.getByTestId(`found-${message.id}`).click();
+    const row = page.locator(`[data-message-id="${message.id}"]`);
+    await expect(row).toBeInViewport({ timeout: 15_000 });
+    await expect(row).toHaveClass(/animate-flash/);
+    const runs = (searches: string[]) => searches.filter((search) => search.includes("through="));
+    // The newest page, the run from the message, and the page before it, which the chat's first message has nothing in. The run doesn't reach the newest page, so the chat draws the stretch with Jump to latest, and the hole after it is off screen.
+    expect(runs(fetched), fetched.join(" ")).toHaveLength(1);
+    expect(fetched.length, fetched.join(" ")).toBeLessThanOrEqual(3);
+    expect(await jumpOffered(page)).toBe(true);
+    await expect(page.getByTestId("hole")).toHaveCount(0);
+
+    // Jump to latest goes back to the newest messages and lets the stretch go, with nothing fetched.
+    const opened = fetched.length;
+    await page.getByTestId("jump-to-latest").click();
+    await expect(said(page, newest)).toBeInViewport();
+    await expect(row).toHaveCount(0);
+    expect(fetched.slice(opened), fetched.join(" ")).toEqual([]);
+
+    // Opened there again from the search still open, scrolling down reaches the newest message across the hole: the run from the message, then one more.
+    await page.getByTestId(`found-${message.id}`).click();
+    await expect(row).toBeInViewport({ timeout: 15_000 });
+    await expect(row).toHaveClass(/animate-flash/);
+    await expect(page.getByTestId("hole")).toHaveCount(0);
+    expect(fetched.slice(opened), fetched.join(" ")).toHaveLength(1);
+    await scrollChatTo(page, said(page, newest), "on");
+    expect(runs(fetched.slice(opened)), fetched.join(" ")).toHaveLength(2);
+    expect(fetched.slice(opened), fetched.join(" ")).toHaveLength(2);
+    await expect.poll(() => jumpOffered(page)).toBe(false);
   });
 
   test("a found message between two agents opens the chat at their exchange's line, which flashes", async ({ page, server }) => {
