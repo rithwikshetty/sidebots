@@ -27,7 +27,7 @@ export function NewAgent() {
     if (open) setOpened(opened + 1);
   }
   return (
-    <Dialog open={open} onOpenChange={(next) => !next && closeNewAgent()} initialFocus={name} className="w-[460px]" testId="new-agent">
+    <Dialog open={open} onOpenChange={(next) => !next && closeNewAgent()} initialFocus={name} testId="new-agent">
       <NewAgentForm key={opened} name={name} />
     </Dialog>
   );

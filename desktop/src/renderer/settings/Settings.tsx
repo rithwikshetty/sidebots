@@ -38,7 +38,7 @@ export function Settings() {
   const section = settings?.section ?? "usage";
   const { Body } = SECTIONS[section];
   return (
-    <Dialog open={settings !== null} onOpenChange={(open) => !open && closeSettings()} label="Settings" className="h-[560px] w-[760px] flex-row overflow-hidden" testId="settings">
+    <Dialog open={settings !== null} onOpenChange={(open) => !open && closeSettings()} label="Settings" width="sections" className="h-[680px] flex-row overflow-hidden" testId="settings">
       <nav aria-label="Settings" onKeyDown={(event) => moveSection(event, section)} className="flex w-44 shrink-0 flex-col min-[960px]:w-[200px] gap-0.5 border-r border-line bg-sidebar p-2 pt-4">
         {IDS.map((id) => {
           const { name, icon: Icon } = SECTIONS[id];

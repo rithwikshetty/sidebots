@@ -1,7 +1,7 @@
 import { AlertDialog } from "@base-ui/react/alert-dialog";
 import { useRef, useSyncExternalStore } from "react";
 import { Button } from "./Button.tsx";
-import { BACKDROP, CARD } from "./Dialog.tsx";
+import { BACKDROP, CARD, VIEWPORT, WIDTH } from "./Dialog.tsx";
 
 /** What a confirm dialog asks: its question, what it means, the word on the button that goes ahead, and whether going ahead can't be undone. */
 export type Asked = { title: string; message: string; action: string; destructive?: boolean };
@@ -57,16 +57,18 @@ export function ConfirmDialog() {
     <AlertDialog.Root open={open !== null} onOpenChange={(next) => !next && open?.answer(false)}>
       <AlertDialog.Portal>
         <AlertDialog.Backdrop data-floating className={BACKDROP} />
-        <AlertDialog.Popup data-floating data-testid="confirm" className={`${CARD} w-[360px] gap-1.5 p-5`}>
-          <AlertDialog.Title className="text-base font-semibold">{words?.title}</AlertDialog.Title>
-          <AlertDialog.Description className="text-sm text-ink2">{words?.message}</AlertDialog.Description>
-          <div className="mt-4 flex justify-end gap-2">
-            <AlertDialog.Close render={<Button>Cancel</Button>} />
-            <Button variant={words?.destructive ? "danger" : "primary"} onClick={() => open?.answer(true)}>
-              {words?.action}
-            </Button>
-          </div>
-        </AlertDialog.Popup>
+        <AlertDialog.Viewport className={VIEWPORT}>
+          <AlertDialog.Popup data-floating data-testid="confirm" className={`${CARD} ${WIDTH.question} gap-1.5 p-5`}>
+            <AlertDialog.Title className="wrap-break-word text-base font-semibold">{words?.title}</AlertDialog.Title>
+            <AlertDialog.Description className="text-sm text-ink2">{words?.message}</AlertDialog.Description>
+            <div className="mt-4 flex justify-end gap-2">
+              <AlertDialog.Close render={<Button>Cancel</Button>} />
+              <Button variant={words?.destructive ? "danger" : "primary"} onClick={() => open?.answer(true)}>
+                {words?.action}
+              </Button>
+            </div>
+          </AlertDialog.Popup>
+        </AlertDialog.Viewport>
       </AlertDialog.Portal>
     </AlertDialog.Root>
   );
