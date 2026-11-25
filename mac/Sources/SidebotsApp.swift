@@ -19,6 +19,8 @@ import SwiftUI
   let server = Server()
   @ObservationIgnored private(set) lazy var updater = Updater(server: server)
   private(set) var openAtLogin = SMAppService.mainApp.status == .enabled
+  /// Whether the app has Full Disk Access, as it was when the panel last opened.
+  private(set) var fullDiskAccess = FullDiskAccess.granted
   @ObservationIgnored private var windows: [String: NSWindow] = [:]
   @ObservationIgnored private var terminating: DispatchSourceSignal?
 
@@ -48,6 +50,7 @@ import SwiftUI
     NotificationCenter.default.addObserver(forName: NSWindow.didBecomeKeyNotification, object: nil, queue: .main) { [weak self] opened in
       MainActor.assumeIsolated {
         guard let self, let window = opened.object as? NSWindow, !self.windows.values.contains(window) else { return }
+        self.fullDiskAccess = FullDiskAccess.granted
         Task {
           await self.server.refresh()
           await self.server.checkSignIn()
@@ -166,7 +169,8 @@ import SwiftUI
  * The panel under the menu bar icon, laid out as the system's own menu bar
  * panels are: whether phones can reach this computer at the top, then Open Sidebots, which opens the window with the chats, then the paired
  * phones with a way to pair another, then how the agents sign in to each provider
- * the person has set up, or that its program is missing from this Mac, with a way to set up one they haven't, and Open at login,
+ * the person has set up, or that its program is missing from this Mac, with a way to set up one they haven't, a way to turn on
+ * Full Disk Access while the app hasn't it, and Open at login,
  * Share usage counts, Check for updates and Quit at the foot. When the server can't start, the panel says so in place of the phones and
  * providers, with a way to its log. Rows light up under the pointer.
  * A phone's row asks before it unpairs the phone, since the phone needs a new code to pair again.
@@ -225,6 +229,12 @@ struct MenuContent: View {
             }
           } else {
             PanelRow(symbol: "plus", title: "Set up \(provider.name)…") { app.showSetup(provider) }
+          }
+        }
+        if !app.fullDiskAccess {
+          Divider().padding(.vertical, 6)
+          PanelRow(symbol: "folder.badge.questionmark", title: "Let agents open your files", detail: "Or macOS asks on this Mac first") {
+            Button("Turn on", action: FullDiskAccess.open).controlSize(.small)
           }
         }
       } else if server.failed {
