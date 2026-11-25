@@ -2,9 +2,10 @@ import SwiftUI
 
 /// The window that sets the person up on a provider and asks how their agents
 /// sign in to it: on first run, when they add another provider, and again
-/// from the menu to change it. On first run they pick the provider first. A
-/// provider whose program isn't on this Mac is installed first, by the
-/// person or by its maker's installer.
+/// from the menu to change it. On first run they pick the provider first, and
+/// end on turning on Full Disk Access when the app hasn't it. A provider whose
+/// program isn't on this Mac is installed first, by the person or by its
+/// maker's installer.
 struct SetupView: View {
   let server: Server
   let done: () -> Void
@@ -18,6 +19,7 @@ struct SetupView: View {
     case signingIn(BrowserSignIn)
     case apiKey
     case saving
+    case files
   }
 
   /// The provider being set up or changed. None until the person has picked one, on first run.
@@ -71,6 +73,8 @@ struct SetupView: View {
           Text(account == nil ? "Setting up…" : "Saving…").foregroundStyle(.secondary)
         }
         .frame(height: 120)
+      case .files:
+        files
       }
       if let problem {
         Text(problem).foregroundStyle(.red).fixedSize(horizontal: false, vertical: true).frame(maxWidth: .infinity, alignment: .leading)
@@ -94,6 +98,7 @@ struct SetupView: View {
   }
 
   private var title: String {
+    if case .files = step { return "Let agents open your files" }
     if server.person == nil { return "Set up Sidebots" }
     guard let provider else { return "Sidebots" }
     return account == nil ? "Set up \(provider.name)" : "How your agents sign in"
@@ -101,6 +106,7 @@ struct SetupView: View {
 
   /// What the window asks, under its title.
   private var words: String {
+    if case .files = step { return "The first time an agent opens Documents, Desktop or Downloads, macOS asks on this Mac, and the agent waits until someone answers here. With Full Disk Access your agents open them without asking." }
     guard let provider else { return "Your agents run on this computer, on a program of your own that you sign in to yourself. Choose the one your agents start on. You can set up the other later." }
     if case .missing = step, let program {
       guard let version = program.version else { return "\(provider.name) isn't on this Mac. Your agents run on the \(provider.name) you install, and Sidebots carries none of its own." }
@@ -182,6 +188,17 @@ struct SetupView: View {
         step = .apiKey
       }
       back
+    }
+  }
+
+  /// The last step of first run: Full Disk Access, which only the person can turn on, in System Settings.
+  private var files: some View {
+    VStack(spacing: 10) {
+      Choice(symbol: "folder.badge.questionmark", title: "Turn on Full Disk Access", detail: "Opens System Settings. Turn on \(Server.name) there, then let macOS reopen it.", action: FullDiskAccess.open)
+      HStack {
+        Spacer()
+        Button("Continue", action: done)
+      }
     }
   }
 
@@ -280,12 +297,13 @@ struct SetupView: View {
 
   private func save(_ signIn: SignIn) {
     guard let provider else { return }
+    let firstRun = server.person == nil
     problem = nil
     step = .saving
     Task {
       do {
         try await server.setUp(provider, signIn, configDir: configDir(provider))
-        done()
+        if firstRun, !FullDiskAccess.granted { step = .files } else { done() }
       } catch {
         await check()
         problem = error.localizedDescription
