@@ -2,8 +2,8 @@ import SwiftUI
 
 /// The window that sets the person up on a provider and asks how their agents
 /// sign in to it: on first run, when they add another provider, and again
-/// from the menu to change it. On first run they pick the provider first, and
-/// end on turning on Full Disk Access when the app hasn't it. A provider whose
+/// from the menu to change it. On first run they turn on Full Disk Access
+/// first, when the app hasn't it, then pick the provider. A provider whose
 /// program isn't on this Mac is installed first, by the person or by its
 /// maker's installer.
 struct SetupView: View {
@@ -33,7 +33,7 @@ struct SetupView: View {
     self.server = server
     self.done = done
     _provider = State(initialValue: provider)
-    _step = State(initialValue: provider == nil ? .picking : .checking)
+    _step = State(initialValue: provider != nil ? .checking : FullDiskAccess.granted ? .picking : .files)
   }
 
   /// How the person's agents sign in to the provider now, when they have set it up.
@@ -106,7 +106,7 @@ struct SetupView: View {
 
   /// What the window asks, under its title.
   private var words: String {
-    if case .files = step { return "The first time an agent opens Documents, Desktop or Downloads, macOS asks on this Mac, and the agent waits until someone answers here. With Full Disk Access your agents open them without asking." }
+    if case .files = step { return "The first time an agent opens Documents, Desktop, Downloads or a drive, macOS asks on this Mac, and the agent waits until someone answers here. With Full Disk Access your agents open them without asking." }
     guard let provider else { return "Your agents run on this computer, on a program of your own that you sign in to yourself. Choose the one your agents start on. You can set up the other later." }
     if case .missing = step, let program {
       guard let version = program.version else { return "\(provider.name) isn't on this Mac. Your agents run on the \(provider.name) you install, and Sidebots carries none of its own." }
@@ -191,13 +191,13 @@ struct SetupView: View {
     }
   }
 
-  /// The last step of first run: Full Disk Access, which only the person can turn on, in System Settings.
+  /// The first step of first run: Full Disk Access, which only the person can turn on, in System Settings. macOS reopens the app to give it, and the app opens on setup again, past this step.
   private var files: some View {
     VStack(spacing: 10) {
-      Choice(symbol: "folder.badge.questionmark", title: "Turn on Full Disk Access", detail: "Opens System Settings. Turn on \(Server.name) there, then let macOS reopen it.", action: FullDiskAccess.open)
+      Choice(symbol: "folder.badge.questionmark", title: "Turn on Full Disk Access", detail: "Opens System Settings. Turn on \(Server.name) there, or add it with +, then let macOS reopen it.", action: FullDiskAccess.open)
       HStack {
         Spacer()
-        Button("Continue", action: done)
+        Button("Continue") { step = .picking }
       }
     }
   }
@@ -297,13 +297,12 @@ struct SetupView: View {
 
   private func save(_ signIn: SignIn) {
     guard let provider else { return }
-    let firstRun = server.person == nil
     problem = nil
     step = .saving
     Task {
       do {
         try await server.setUp(provider, signIn, configDir: configDir(provider))
-        if firstRun, !FullDiskAccess.granted { step = .files } else { done() }
+        done()
       } catch {
         await check()
         problem = error.localizedDescription

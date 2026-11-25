@@ -7,8 +7,8 @@ import AppKit
 /// the agent waits for an answer that can't come from a phone. Only the
 /// person can turn it on, in System Settings.
 @MainActor enum FullDiskAccess {
-  /// The privacy settings' own database, which macOS lets an app read only with Full Disk Access. Reading it asks nothing.
-  private static let guarded = FileManager.default.homeDirectoryForCurrentUser.appending(path: "Library/Application Support/com.apple.TCC/TCC.db")
+  /// The computer's privacy settings, which every Mac has and macOS lets an app read only with Full Disk Access. Reading it asks nothing.
+  private static let guarded = URL(filePath: "/Library/Application Support/com.apple.TCC/TCC.db")
   private static let settings = URL(string: "x-apple.systempreferences:com.apple.settings.PrivacySecurity.extension?Privacy_AllFiles")!
 
   /// Whether the app has it.
