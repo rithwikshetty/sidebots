@@ -1,4 +1,4 @@
-// Starts the Sidebots server, which with `--with-parent` ends when the program that started it does. `add-person` adds a person, `add-account` sets a person up on another
+// Starts the Sidebots server, which with `--with-parent` ends when the program that started it does. `add-person` adds a person with the agent they start with, `add-account` sets a person up on another
 // provider, `api-key` has a person's agents on a provider run on an API key, `pair` makes the code a
 // device pairs with, `devices` lists the paired devices, `remove-device` unpairs one, and `status` says
 // whether the server is running and how each person's agents sign in to their providers. `counts`
@@ -19,7 +19,7 @@ import qrcode from "qrcode-terminal";
 import { openStore, type Person } from "./store.ts";
 import { CONTRACT_HEADER, PROVIDERS, type Provider } from "./contract.ts";
 import { createConnections } from "./connections.ts";
-import { createQueue } from "./runner.ts";
+import { addFirstAgent, createQueue } from "./runner.ts";
 import { claude } from "./claude.ts";
 import { codex } from "./codex.ts";
 import { PROGRAMS, configDir, install, installed, login, signIn } from "./programs.ts";
@@ -67,7 +67,9 @@ if (process.argv[2] === "add-person") {
     console.error(`Somebody on this server is already called ${name}.`);
     process.exit(1);
   }
-  console.log(`Added ${store.addPerson({ name, provider, configDir }).name}, whose agents run on ${PROVIDERS[provider].name}.`);
+  const person = store.addPerson({ name, provider, configDir });
+  const first = addFirstAgent(store, person);
+  console.log(`Added ${person.name}, whose agents run on ${PROVIDERS[provider].name}. They start with ${first.name}, who briefs them every morning at 8.`);
   process.exit(0);
 }
 
