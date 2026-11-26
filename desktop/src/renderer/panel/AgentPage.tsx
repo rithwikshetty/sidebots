@@ -122,8 +122,8 @@ export function AgentPage({ agentId, tab }: { agentId: string; tab?: AgentTab })
 function AgentAbout({ agent, opensOn }: { agent: AgentWithLatest; opensOn?: AgentTab }) {
   const [tab, setTab] = useState<AgentTab>(() => opensOn ?? tabs.get(agent.id) ?? "settings");
   const [editing, setEditing] = useState(false);
-  // A turn is what changes what the agent used, its jobs and what it remembers, so a page left open fetches them again as one starts or ends and as the agent's latest message changes.
-  const turn = `${agent.id} ${agent.latest?.id} ${agent.working}`;
+  // A turn is what changes what the agent used, its work, its jobs and what it remembers, so a page left open fetches them again as one starts or ends, as the agent's latest message changes and as its work moves on, which the agent says again once a dropped stream is back.
+  const turn = `${agent.id} ${agent.latest?.id} ${agent.working} ${agent.work.map((work) => `${work.id}:${work.status}`).join(",")}`;
   const usage = useLoading(loadUsage, turn);
   const about = useLoading(() => loadAbout(agent.id), turn);
   const change = (changes: AgentChanges) => changeOrSay(agent.id, changes);

@@ -65,14 +65,13 @@ test("an answer stays with what it answers however late it comes, and each other
   );
 });
 
-test("a suggestion tells nobody and holds no turn, and what an agent's own runs send tells the person once", () => {
+test("a suggestion tells nobody and holds no turn of the chat's, and neither does an ask one of the agent's own runs raised", () => {
   const offered = row("Suggestion: Reply to the plumber", { ask: "waiting", interim: true, question: { kind: "work", title: "Suggestion", what: "Reply to the plumber", facts: [], detail: "Draft a yes." } });
   const command = row("Run a command: List", { ask: "waiting", question: { kind: "command", title: "Run a command", what: "List", facts: [], detail: "ls" } });
   assert.deepEqual([isSuggestion(offered), isSuggestion(command), isSuggestion(row("A reply."))], [true, false, false]);
   assert.deepEqual([notifies(offered), notifies(command), notifies(row("A reply."))], [false, true, true]);
-  // A reply one of the agent's own runs sent tells the person as it comes, and not again when the chat's session is told of it.
-  const result = row("The draft is ready.", { job_id: offered.id, reply_to: offered.id });
-  assert.deepEqual([notifies(result), notifies({ ...result, seen_at: 1 })], [true, false]);
+  // What the work replies tells the person as any reply does.
+  assert.equal(notifies(row("The draft is ready.", { job_id: offered.id, reply_to: offered.id })), true);
   // Only an ask a turn of the chat's waits on holds the chat: not a suggestion, and not an ask the agent's own run raised.
   assert.deepEqual([asksPerson("mochi", [offered]), asksPerson("mochi", [{ ...command, job_id: offered.id }]), asksPerson("mochi", [command]), asksPerson("cog", [command])], [false, false, true, false]);
   // Work the person started has the avatar working, though no turn of the chat's is.

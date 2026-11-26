@@ -203,10 +203,13 @@ test("what an agent's own runs sent that its chat's session hasn't been told of 
   assert.deepEqual(bodies(store.sentByRuns(maya.id, 5)), [...posts.slice(27), after.body]);
   const shown = store.sentByRuns(maya.id, 40);
   assert.deepEqual(bodies(shown), [...posts, after.body]);
-  // Once the session has read them, it has been told of all up to the newest it was shown, and of nothing that came after.
+  // Once the session has read them, it has been told of all up to the newest it was shown, and of nothing that came after. No device hears of that, since nothing a person sees has changed.
   const later = store.addMessage(maya.id, "agent", "post while the turn ran", "done", { jobId: "job" });
+  const heard: unknown[] = [];
+  const stop = store.onChange((change) => heard.push(change));
   store.toldOfRuns(maya.id, shown.at(-1)!.id);
-  assert.equal(typeof store.messages(maya.id)[0].seen_at, "number");
+  stop();
+  assert.deepEqual([typeof store.messages(maya.id)[0].seen_at, heard.length], ["number", 0]);
   assert.deepEqual(bodies(store.sentByRuns(maya.id, 40)), [later.body]);
 });
 
@@ -450,11 +453,13 @@ test("a Codex session from before the connections' tools, or before those tools 
   assert.equal(changed.messages(maya.id).length, 2);
   changed.close();
 
-  // The database as it was before agents had \`suggest\`, with that fresh start done: the session gets one more, for the tool.
+  // The database as it was before agents had \`suggest\`, with that fresh start done: the session gets one more, for the tool. Ruby, moved to Codex since its last turn, hands its Claude Code session over on its next one, and gets none.
   const latest = new DatabaseSync(join(home, "sidebots.sqlite"));
-  latest.exec("update messages set status = 'done'; pragma user_version = 20");
+  latest.exec(`update messages set status = 'done'; update agents set provider = 'codex' where id = '${ruby.id}'; pragma user_version = 20`);
   latest.close();
-  assert.deepEqual(openStore(home).messages(maya.id).map((message) => [message.body, message.status]), [["Fresh start", "done"], ["Fresh start", "done"], ["Fresh start", "queued"]]);
+  const last = openStore(home);
+  assert.deepEqual(last.messages(maya.id).map((message) => [message.body, message.status]), [["Fresh start", "done"], ["Fresh start", "done"], ["Fresh start", "queued"]]);
+  assert.deepEqual(last.messages(ruby.id), []);
 });
 
 test("a first agent's brief from before agents could offer work is told to offer it, and one the agent has rewritten stays as it is", () => {

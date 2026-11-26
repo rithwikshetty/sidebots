@@ -666,7 +666,7 @@ export function createQueue(store: Store, drivers: Drivers, connections: Connect
           const reply = replies.at(-1) ?? "";
           // A run stopped as its reply landed sends nothing, and work the person stopped is over already.
           if (!stop.signal.aborted) {
-            if (!silent(reply)) store.addMessage(agent.id, "agent", reply, "done", { jobId, replyTo: work?.id, files });
+            if (work ? reply.trim() : !silent(reply)) store.addMessage(agent.id, "agent", reply, "done", { jobId, replyTo: work?.id, files });
             suggestAll();
             if (work) store.setStatus(work.id, "done");
           }
@@ -761,6 +761,8 @@ export function createQueue(store: Store, drivers: Drivers, connections: Connect
       const recent = agent.session_id ? [] : store.messagesBefore(agent.id, message.id, RECENT_MESSAGES);
       // What the agent's own runs sent that this session hasn't been told of, one more than the turn is shown, which is how it knows there was more. A new session reads the chat so far in its place, and another agent's message comes without it.
       const fromRuns = from || recent.length ? [] : store.sentByRuns(agent.id, RECENT_MESSAGES + 1);
+      // The newest message the turn's prompt shows of the chat, which the session has been told of everything up to.
+      const shown = (recent.length ? recent : fromRuns).at(-1);
       try {
         const result = await turn(
           promptFor(message, person, { recent, quoted: quotedBy(message), fromRuns }, from),
@@ -771,9 +773,8 @@ export function createQueue(store: Store, drivers: Drivers, connections: Connect
             ...(from ? {} : { followUps, sendUpdate }),
             seen: (ids) => {
               store.markSeen(ids);
-              // The session has now read what its own runs had sent as the turn began.
-              const newest = fromRuns.at(-1);
-              if (newest && ids.includes(message.id)) store.toldOfRuns(agent.id, newest.id);
+              // The session has now read what its own runs had sent, as far as its prompt showed the chat.
+              if (shown && ids.includes(message.id)) store.toldOfRuns(agent.id, shown.id);
             },
             replied: (reply, ids) => {
               // What another agent asked and has called off gets no answer, though the turn was too far along to end without one.

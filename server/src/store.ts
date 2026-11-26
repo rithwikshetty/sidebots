@@ -87,8 +87,8 @@ const TABLE_CHANGES: (string | { table: string; change: string })[] = [
   "update messages set seen_at = created_at where job_id is not null and seen_at is null and rowid < coalesce((select max(said.rowid) from messages said where said.agent_id = messages.agent_id and said.sender = 'agent' and said.job_id is null and (said.peer_id is null or said.ask is not null)), 0)",
   // The brief a person's first agent starts with offers the work it finds with \`suggest\`. A brief the agent has since written in its own words stays as it is.
   `update jobs set what = replace(what, 'then the rest in a few short lines. When you have tools', 'then the rest in a few short lines. When something in it is work you could do for them, offer it with \`suggest\`. When you have tools') where what like 'Brief % on their day. Read today''s calendar, the mail that has come since your last brief and needs an answer from them, and what is due in Notion, from whichever of those you have tools for. Lead with the one or two things that most need them today, then the rest in a few short lines. When you have tools for none of them, tell % once that saying "connect my calendar" or "connect my Gmail" gives you their day to brief them on, note in your memory that you told them, and stay silent on later runs until you have one.'`,
-  // A Codex session from before \`suggest\` gets a fresh start too, unless one waits for it already.
-  "insert into messages (id, agent_id, sender, body, status, created_at) select lower(hex(randomblob(16))), id, 'sidebots', 'Fresh start', 'queued', cast(unixepoch('subsec') * 1000 as integer) from agents where provider = 'codex' and session_id is not null and not exists (select 1 from messages where agent_id = agents.id and sender = 'sidebots' and status in ('queued', 'running'))",
+  // A Codex session from before \`suggest\` gets a fresh start too, unless one waits for it already. A session on its way to another provider is replaced as it hands over.
+  "insert into messages (id, agent_id, sender, body, status, created_at) select lower(hex(randomblob(16))), id, 'sidebots', 'Fresh start', 'queued', cast(unixepoch('subsec') * 1000 as integer) from agents where provider = 'codex' and coalesce(json_extract(ran_on, '$.provider'), provider) = 'codex' and session_id is not null and not exists (select 1 from messages where agent_id = agents.id and sender = 'sidebots' and status in ('queued', 'running'))",
 ];
 
 const SCHEMA = `
@@ -269,8 +269,8 @@ const UNFINISHED = "(status = 'queued' or status = 'running')";
 
 // A message's columns, with its row's place in the table as the order it came in.
 const MESSAGE = 'rowid as "order", *';
-// What an agent's own runs sent the person that its chat's session hasn't been told of. `?1` is the agent's id. The two conditions are worded as `messages_untold` is, which is how SQLite knows the index holds every such message.
-const UNTOLD = `select ${MESSAGE} from messages indexed by messages_untold where agent_id = ?1 and (job_id is not null and seen_at is null) and ${WITH_PERSON}`;
+// What an agent's own runs sent the person that its chat's session hasn't been told of, among the agent's messages. `?1` is the agent's id. It is worded as `messages_untold` is, which is how SQLite knows the index holds every such message.
+const UNTOLD = `agent_id = ?1 and (job_id is not null and seen_at is null) and ${WITH_PERSON}`;
 // The place a new message takes: above every message there is, and above every one there has been. Left to itself SQLite gives a new row the place after the last one there is, which a deleted agent's message had when its messages were the last.
 const NEXT_ORDER = "(select max((select coalesce(max(rowid), 0) from messages), coalesce((select cast(value as integer) from settings where name = 'order'), 0)) + 1)";
 /** A message as SQLite holds it, with its attachments, its question and its change as JSON text and yes and no as 1 and 0. */
@@ -972,16 +972,16 @@ export function openStore(home: string) {
      * chat's, so the chat's session never saw them.
      */
     sentByRuns(agentId: string, limit: number): Message[] {
-      return many(`${UNTOLD} order by rowid desc limit ?2`, agentId, limit).reverse();
+      return many(`select ${MESSAGE} from messages indexed by messages_untold where ${UNTOLD} order by rowid desc limit ?2`, agentId, limit).reverse();
     },
 
-    /** Records that the agent's chat's session has been told of what its own runs sent, up to one of those messages, which `seen_at` then says when. */
+    /**
+     * Records that the agent's chat's session has been told of what its own
+     * runs sent, up to a message in its chat, which `seen_at` then says
+     * when. It changes nothing a person sees, so no device is told of it.
+     */
     toldOfRuns(agentId: string, messageId: string): void {
-      const now = Date.now();
-      for (const told of many(`${UNTOLD} and rowid <= (select rowid from messages where id = ?2)`, agentId, messageId)) {
-        db.prepare("update messages set seen_at = ? where id = ?").run(now, told.id);
-        messageChanged({ ...told, seen_at: now });
-      }
+      db.prepare(`update messages indexed by messages_untold set seen_at = ?3 where ${UNTOLD} and rowid <= (select rowid from messages where id = ?2)`).run(agentId, messageId, Date.now());
     },
 
     /** The last few things the person and the agent said to each other before a message, oldest first. */

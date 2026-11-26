@@ -925,6 +925,13 @@ test("the answer to starting a suggestion doesn't put back a card the stream has
   answer(offered("running", "allowed"));
   await starting;
   assert.deepEqual([store.useMessages("mochi")[0].ask, store.useMessages("mochi")[0].status], ["allowed", "done"]);
+
+  // Nor does an answer that says the work waits its turn put back a card whose run has since begun.
+  answers["POST /agents/mochi/asks/Write a haiku"] = () => offered("queued", "allowed");
+  events.say({ message: offered("running", "allowed"), agent: agent("mochi", { chat_changes: 2 }) });
+  await settle();
+  await store.answerAsk(offered("done", "waiting"), true);
+  assert.equal(store.useMessages("mochi")[0].status, "running");
   store.stopSync();
 });
 

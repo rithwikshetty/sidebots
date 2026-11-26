@@ -301,12 +301,11 @@ export const betweenAgents = (message: Pick<Message, "peer_id" | "ask">): boolea
  * Whether the person is told of a message as it comes: an agent's reply or
  * an ask still waiting, or a notice that a turn failed. An update while the
  * agent works, a suggestion, an ask's answer and what one agent says to
- * another tell nobody. Neither does a message one of the agent's own runs
- * sent as it changes once more, when the chat's session is told of it.
+ * another tell nobody.
  */
-export function notifies(message: Pick<Message, "sender" | "interim" | "ask" | "peer_id" | "status" | "seen_at">): boolean {
+export function notifies(message: Pick<Message, "sender" | "interim" | "ask" | "peer_id" | "status">): boolean {
   const answered = message.ask !== null && message.ask !== "waiting";
-  return (message.sender === "agent" && !message.interim && !answered && !betweenAgents(message) && message.seen_at === null) || (message.sender === "sidebots" && message.status === "failed");
+  return (message.sender === "agent" && !message.interim && !answered && !betweenAgents(message)) || (message.sender === "sidebots" && message.status === "failed");
 }
 
 /**
