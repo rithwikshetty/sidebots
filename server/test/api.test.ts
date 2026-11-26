@@ -7,7 +7,7 @@ import { join } from "node:path";
 import { StatementSync } from "node:sqlite";
 import { openStore } from "../src/store.ts";
 import { createConnections } from "../src/connections.ts";
-import { createQueue, type Turn, type TurnResult } from "../src/runner.ts";
+import { addFirstAgent, createQueue, type Turn, type TurnResult } from "../src/runner.ts";
 import { claude } from "../src/claude.ts";
 import { codex } from "../src/codex.ts";
 import { createApi } from "../src/api.ts";
@@ -1336,6 +1336,37 @@ test("a job runs when its time comes, in a session of its own, and only a run wi
   time += 60 * 60_000;
   await queue.kick(agent.id);
   assert.equal(runs.length, 3);
+});
+
+test("a person starts with an agent that knows it briefs them every morning, has the job for it, and says so first", async (t) => {
+  let time = new Date(2026, 10, 16, 21, 0).getTime();
+  // The agent and its first message are saved in the same millisecond.
+  t.mock.timers.enable({ apis: ["Date"], now: time });
+  const runs: string[] = [];
+  const { store, queue, call } = setup(async (turn) => {
+    runs.push(turn.prompt.text);
+    return reply("Standup at 10, and Sam wants an answer on the quote.", "job-session");
+  }, () => time);
+  const ruby = addFirstAgent(store, store.personByName(ME)!, time);
+
+  // It is in the person's list with its first message unread, and its instructions say what it is for.
+  const [listed] = (await call(ME, "GET", "/agents")).json;
+  assert.deepEqual([listed.name, listed.avatar_id, listed.unread], ["Ruby", "cog", 1]);
+  assert.match(listed.latest.body, /^Hi, I'm Ruby\. Every morning at 8/);
+  const about = (await call(ME, "GET", `/agents/${ruby.id}/about`)).json;
+  assert.match(about.instructions, /You brief Alex every morning/);
+  assert.doesNotMatch(about.instructions, /You don't know what you're for yet/);
+  assert.deepEqual([about.jobs[0].schedule, about.jobs[0].next_at], [{ type: "daily", time: "08:00" }, new Date(2026, 10, 17, 8, 0).getTime()]);
+
+  // Nothing runs that evening. The next morning its brief arrives.
+  await queue.kick(ruby.id);
+  assert.equal(runs.length, 0);
+  time = new Date(2026, 10, 17, 8, 0).getTime();
+  await queue.kick(ruby.id);
+  assert.match(runs[0], /\(Every day at 08:00\)[\s\S]*Brief Alex on their day/);
+  const bodies = (await call(ME, "GET", `/agents/${ruby.id}/messages`)).json.map((m: { body: string }) => m.body);
+  assert.equal(bodies.at(-1), "Standup at 10, and Sam wants an answer on the quote.");
+  assert.equal(bodies.length, 2);
 });
 
 test("a reply is shown the latest twenty of what the agent's jobs sent since its last one, and told when there were more", async () => {

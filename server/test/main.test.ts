@@ -114,3 +114,14 @@ test("status --json reads the server without asking at the machine's address", a
   assert.equal(JSON.parse(stdout).running, true);
   assert.equal(asked, 0);
 });
+
+test("add-person gives the person the agent they start with, on the provider they were set up on", async () => {
+  const home = mkdtempSync(join(tmpdir(), "sidebots-main-test-"));
+  const { stdout } = await promisify(execFile)(process.execPath, [MAIN, "add-person", "Alex", "codex", "/config/alex"], { env: { ...process.env, SIDEBOTS_HOME: home } });
+  assert.match(stdout, /^Added Alex, whose agents run on Codex\. They start with Ruby, who briefs them every morning at 8\.\n$/);
+  const store = openStore(home);
+  const [ruby, ...others] = store.agentsFor(store.personByName("Alex")!.id);
+  assert.deepEqual([ruby.name, ruby.provider, ruby.unread, others.length], ["Ruby", "codex", 1, 0]);
+  assert.deepEqual(store.jobs(ruby.id).map((job) => job.schedule), [{ type: "daily", time: "08:00" }]);
+  store.close();
+});

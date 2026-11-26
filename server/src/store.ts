@@ -289,16 +289,17 @@ function toMemory(file: string, text: string): Memory {
   return { name: field("name") || file.replace(/\.md$/, ""), description: field("description"), body: body.trim() };
 }
 
-function instructions(agentName: string, personName: string): string {
+/** An agent's instructions as it starts with them. `purpose` says what it is for, when Sidebots made it for something. */
+function instructions(agentName: string, personName: string, purpose = `You don't know what you're for yet. If this is a new chat, ask what ${personName} wants you to help with, then write what you're for into this file.`): string {
   return `# ${agentName}
 
-You are ${agentName}, one of ${personName}'s agents in Sidebots. Sidebots is a messaging app on their phone and computer, and each agent is one chat in it.
+You are ${agentName}, one of ${personName}'s agents in Sidebots. Sidebots runs ${personName}'s agents on their own computer, and each agent is one chat in it, on their phone and computer.
 
 ${personName} only sees your final reply, as a text message. They never see your tool calls or working steps. Write the way a capable person texts: short, plain sentences, no headings or tables unless they ask for them.
 
 Your home folder is where you run. Files ${personName} sends you are in \`attachments/\`. To send ${personName} a file, use your \`send_files\` tool.
 
-You don't know what you're for yet. If this is a new chat, ask what ${personName} wants you to help with, then write what you're for into this file. What you learn along the way goes in your memory.
+${purpose} What you learn along the way goes in your memory.
 `;
 }
 
@@ -518,8 +519,8 @@ export function openStore(home: string) {
       return connections()[personId]?.[connection];
     },
 
-    /** Adds an agent that runs on a provider, on the model and effort a new agent starts on there. */
-    createAgent(person: Person, name: string, avatarId: string, provider: Provider): Agent {
+    /** Adds an agent that runs on a provider, on the model and effort a new agent starts on there. One made for something starts with that `purpose` in its instructions. */
+    createAgent(person: Person, name: string, avatarId: string, provider: Provider, purpose?: string): Agent {
       const now = Date.now();
       const agent: Agent = {
         id: randomUUID(),
@@ -535,14 +536,14 @@ export function openStore(home: string) {
         hidden: false,
         color: null,
         session_id: null,
-        read_at: now,
+        read_at: 0,
         chat_changes: 0,
         created_at: now,
       };
       const folder = agentHome(agent.id);
       mkdirSync(join(folder, "memory"), { recursive: true });
       mkdirSync(join(folder, "attachments"), { recursive: true });
-      writeFileSync(join(folder, PROVIDERS[agent.provider].instructions), instructions(name, person.name));
+      writeFileSync(join(folder, PROVIDERS[agent.provider].instructions), instructions(name, person.name, purpose));
       db.prepare(
         "insert into agents (id, person_id, name, avatar_id, provider, model, effort, session_id, read_at, created_at) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
       ).run(

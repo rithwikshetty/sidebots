@@ -29,7 +29,7 @@ export default function Welcome() {
         <ScrollView contentContainerStyle={styles.page}>
           <Image source={require("../../../assets/icon.png")} style={styles.icon} accessibilityIgnoresInvertColors />
           <Text style={[styles.title, { color: theme.ink }]}>Sidebots</Text>
-          <Text style={[styles.lead, { color: theme.ink2 }]}>Text your agents. They run on your computer and reply when they're done.</Text>
+          <Text style={[styles.lead, { color: theme.ink2 }]}>Your own agents, on your own computer. Give one a job, and it tells you when it's done.</Text>
           <View style={[styles.card, { backgroundColor: theme.field }]}>
             <Step number={1}>
               Get Sidebots for your computer from <Text style={[styles.strong, { color: theme.ink }]}>sidebots.app</Text>, and open it.

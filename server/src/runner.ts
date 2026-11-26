@@ -314,6 +314,35 @@ export function nextRun(schedule: Schedule, after: number): number | null {
   return next.getTime();
 }
 
+/**
+ * Makes the agent a person starts with, as they are added, on the provider
+ * they were set up on: Ruby, who briefs them every morning at 8. It starts with that as what it is for, with the
+ * job that does it, and with a first message that says so and how to change it.
+ */
+export function addFirstAgent(store: Store, person: Person, now = Date.now()): Agent {
+  const schedule: Schedule = { type: "daily", time: "08:00" };
+  const agent = store.createAgent(
+    person,
+    "Ruby",
+    "cog",
+    store.accounts(person.id)[0].provider,
+    `You brief ${person.name} every morning on what their day holds and what needs them, by a job you start with, and you help with whatever else they ask. When they tell you more of what they want from you, write it into this file.`,
+  );
+  store.addJob(
+    agent.id,
+    `Brief ${person.name} on their day. Read today's calendar, the mail that has come since your last brief and needs an answer from them, and what is due in Notion, from whichever of those you have tools for. Lead with the one or two things that most need them today, then the rest in a few short lines. When you have tools for none of them, tell ${person.name} once that saying "connect my calendar" or "connect my Gmail" gives you their day to brief them on, note in your memory that you told them, and stay silent on later runs until you have one.`,
+    schedule,
+    nextRun(schedule, now)!,
+  );
+  store.addMessage(
+    agent.id,
+    "agent",
+    `Hi, I'm Ruby. Every morning at 8 I'll send you a short brief: what's on today, and what needs you.\n\nFor that I need to see your day. Say "connect my calendar" or "connect my Gmail" and I'll set it up.\n\nWant another time, or no brief at all? Tell me. And I can help with other things too, so ask.`,
+    "done",
+  );
+  return agent;
+}
+
 /** What the agent is asked on a run of one of its jobs. */
 function jobPrompt(job: Job, person: Person): string {
   return `This is a run of one of your jobs (${scheduleWords(job.schedule)}), started by Sidebots' clock. ${person.name} hasn't sent anything. What you saved for it:
