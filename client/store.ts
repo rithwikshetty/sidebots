@@ -3,7 +3,7 @@
 // instantly and can be read offline. Each app makes one store, and gives it
 // the few things a phone and a desktop do differently.
 
-import { KEEPALIVE_MS, PAGE } from "../server/src/contract.ts";
+import { KEEPALIVE_MS, PAGE, WORK_LISTED, isSuggestion } from "../server/src/contract.ts";
 import type { About, Agent, AgentWithLatest, Avatar, Connected, Connection, Effort, Found, Message, Model, Plan, Provider, SignIn, StreamEvent, Usage } from "../server/src/contract.ts";
 import { ApiError, behind, type Behind } from "./api.ts";
 
@@ -72,7 +72,7 @@ export type Platform<Picked> = {
 };
 
 // The number changes when the shape of what is saved does.
-const CACHE_KEY = "cache-7";
+const CACHE_KEY = "cache-8";
 const SAVE_DELAY_MS = 300;
 // The computer says something on the stream within every keepalive, and a slow connection may bring it late. A stream quiet for longer than this has dropped.
 const QUIET_MS = KEEPALIVE_MS + 10_000;
@@ -249,6 +249,13 @@ export function createStore<Picked>(platform: Platform<Picked>) {
     return [...list.slice(0, after), message, ...list.slice(after)];
   }
 
+  /** An agent's page with a suggestion the person started among the work it lists: in the place of the copy it holds, or first when it is new. */
+  function withWork(about: About, message: Message): About {
+    if (!isSuggestion(message) || message.ask !== "allowed") return about;
+    const listed = about.work.some((work) => work.id === message.id);
+    return { ...about, work: listed ? about.work.map((work) => (work.id === message.id ? message : work)) : [message, ...about.work].slice(0, WORK_LISTED) };
+  }
+
   /**
    * Takes in what the event stream says: a message and its agent, an agent
    * that was added or changed, an agent that was deleted, or how the person
@@ -284,10 +291,12 @@ export function createStore<Picked>(platform: Platform<Picked>) {
       const chat = known && message && (at === undefined || agent.chat_changes > at) ? upsert(known, message, state.holes[agent.id]) : known;
       const inStep = chat !== known && at === agent.chat_changes - 1;
       const stays = !message && state.agents.some((item) => item.id === agent.id);
+      const about = message && state.about[message.agent_id];
       set({
         agents: stays ? state.agents.map((item) => (item.id === agent.id ? withPending(agent) : item)) : [withPending(agent), ...state.agents.filter((item) => item.id !== agent.id)],
         messages: chat && chat !== known ? { ...state.messages, [agent.id]: chat } : state.messages,
         caughtUp: inStep ? { ...state.caughtUp, [agent.id]: agent.chat_changes } : state.caughtUp,
+        about: about ? { ...state.about, [message.agent_id]: withWork(about, message) } : state.about,
       });
     } else return;
     told.forEach((listener) => listener(state.agents));
@@ -537,9 +546,13 @@ export function createStore<Picked>(platform: Platform<Picked>) {
   /** Answers an agent's ask: whether it may do what it asked about. It fails when the agent has stopped waiting. */
   async function answerAsk(ask: Message, allow: boolean): Promise<void> {
     const answered = await request<Message>(`/agents/${ask.agent_id}/asks/${ask.id}`, { method: "POST", body: { allow } });
+    // How far along an ask is: waiting, then, for a suggestion the person started, its work waiting for its run and on it, and then at its end.
+    const stage = (each: Message) => (each.ask === "waiting" ? 0 : each.status === "queued" ? 1 : each.status === "running" ? 2 : 3);
+    // The answer is the ask as it stood when the computer answered. A copy the event stream has since moved further along, as when the work a suggestion started is already done, is newer and stays.
+    const newer = (held: Message) => held.id === answered.id && stage(held) > stage(answered);
     // An ask raised while working for another agent is in that agent's chat too.
     const messages = { ...state.messages };
-    for (const agentId of [ask.agent_id, ask.peer_id]) if (agentId && messages[agentId]) messages[agentId] = upsert(messages[agentId], answered, state.holes[agentId]);
+    for (const agentId of [ask.agent_id, ask.peer_id]) if (agentId && messages[agentId] && !messages[agentId].some(newer)) messages[agentId] = upsert(messages[agentId], answered, state.holes[agentId]);
     set({ messages });
   }
 
@@ -567,7 +580,7 @@ export function createStore<Picked>(platform: Platform<Picked>) {
     const agent = await request<Agent>("/agents", { method: "POST", body: { name, avatarId, provider } });
     // The event stream may have brought the agent already.
     const others = state.agents.filter((each) => each.id !== agent.id);
-    set({ agents: [{ ...agent, latest: null, working: false, unread: 0, waiting_on: null }, ...others], messages: { ...state.messages, [agent.id]: [] } });
+    set({ agents: [{ ...agent, latest: null, working: false, work: [], unread: 0, waiting_on: null }, ...others], messages: { ...state.messages, [agent.id]: [] } });
     return agent;
   }
 
@@ -627,10 +640,15 @@ export function createStore<Picked>(platform: Platform<Picked>) {
     forget(agentId);
   }
 
-  /** Fetches what an agent's page shows: its instructions, what it remembers and its jobs. */
+  // How many times each agent's page has been asked for. A page takes only the answer to what it asked for last, so an older one that comes late is dropped.
+  const abouts = new Map<string, number>();
+
+  /** Fetches what an agent's page shows: its instructions, what it remembers, its jobs and the work the person started. */
   async function loadAbout(agentId: string): Promise<void> {
+    const asked = (abouts.get(agentId) ?? 0) + 1;
+    abouts.set(agentId, asked);
     const about = await request<About>(`/agents/${agentId}/about`);
-    set({ about: { ...state.about, [agentId]: about } });
+    if (abouts.get(agentId) === asked) set({ about: { ...state.about, [agentId]: about } });
   }
 
   // For each fetch of usage on its way, the plans the stream brought meanwhile, which are newer than what the fetch answers with.

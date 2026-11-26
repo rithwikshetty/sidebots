@@ -1,15 +1,20 @@
-// The runner runs each agent's turns one at a time, on the provider the agent
-// runs on, and gives every provider the same tools for the agent.
+// The runner runs each agent's turns on the provider the agent runs on, and
+// gives every provider the same tools for the agent. An agent's chat has one
+// turn at a time, and what the agent runs by itself, a job or work the person
+// started, has one at a time beside it.
 
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
-import { CONNECTIONS, MESSAGE_BYTES, PROVIDERS, fenced, runsFast, sameSelection, scheduleWords, selectionOf, selectionWords } from "./contract.ts";
+import { CONNECTIONS, MESSAGE_BYTES, PROVIDERS, fenced, isSuggestion, runsFast, sameSelection, scheduleWords, selectionOf, selectionWords } from "./contract.ts";
 import type { Agent, Ask, Connection, Effort, Found, Job, Limit, Message, Model, Provider, Question, Schedule, Selection, Switched, TurnKind } from "./contract.ts";
 import { CONNECTION_TOOLS, type Connections, type Servers } from "./connections.ts";
 import type { Person, Store, Upload } from "./store.ts";
 
 /** A job as an agent asks for one: what to do on each run, and one of three ways to say when. */
 export type JobRequest = { what: string; every_minutes?: number; daily_at?: string; weekdays?: number[]; once_at?: string };
+
+/** Work an agent offers to do: what the card names it, why it is worth doing now, and what the agent will do once the person starts it. */
+export type Offer = { title: string; why: string; what: string };
 
 /** A message as the agent is given it: its id, which the provider names again once the agent has read it, and its words. */
 export type Prompt = { id: string; text: string };
@@ -54,6 +59,8 @@ export type Turn = {
   scheduleJob: (request: JobRequest) => string;
   listJobs: () => string;
   cancelJob: (id: string) => string;
+  /** Offers the person a piece of work as a suggestion, which goes to them once the agent's reply has. Answers in words the agent reads. */
+  suggest: (offer: Offer) => string;
   /** Adds files, by their paths, to the next message the agent sends: its reply, or an update that comes first. Answers in words the agent reads. */
   sendFiles: (paths: string[]) => string;
   /** Sends the person a short update while the agent works, for a turn they are waiting on. Answers in words the agent reads. */
@@ -184,6 +191,17 @@ export function toolsFor(turn: Turn): Tool[] {
       input: { id: z.string().describe("The job's id, as list_jobs gives it") },
       run: ({ id }) => turn.cancelJob(id),
     }),
+    define({
+      name: "suggest",
+      description:
+        "Offer the person a piece of work you could do for them by yourself. It shows under your reply as a card with a Start button. Use it when what you found leaves something you could take off their hands, such as drafting an answer or comparing options, instead of asking in words whether you should. Don't do the work now. If they start it, it runs later in a session of its own, beside the chat, that is given `what` and remembers nothing else, so write `what` as full instructions to yourself. What that run replies is sent to them as the answer to the suggestion. Suggest up to three at once, the one that matters most first. Your next suggestions take the place of the ones they haven't answered.",
+      input: {
+        title: z.string().describe("The work in a few words, as the card names it"),
+        why: z.string().describe("In a sentence, what you found that makes it worth doing now"),
+        what: z.string().describe("What to do once they start it, written to yourself"),
+      },
+      run: (offer) => turn.suggest(offer),
+    }),
     define({ name: "list_agents", description: "List the person's other agents by name. You can ask any of them something with ask_agent.", input: {}, run: () => turn.listAgents() }),
     define({
       name: "ask_agent",
@@ -233,7 +251,7 @@ export function switchedWords({ from, to }: Switched): string {
 const STOPPED = "Stopped";
 // A session this large gets a fresh start once its reply is in.
 const FRESH_START_TOKENS = 120_000;
-// How many messages a session is shown that it hasn't seen: the chat so far for a new session, and what its jobs sent for one that is going.
+// How many messages a session is shown that it hasn't seen: the chat so far for a new session, and what its own runs sent for one that is going.
 const RECENT_MESSAGES = 20;
 const RECENT_MESSAGE_CHARS = 1500;
 // How much of the message a reply answers the agent is shown.
@@ -245,6 +263,8 @@ const FIRST_UPDATE_MS = 60_000;
 const UPDATE_GAP_MS = 3 * 60_000;
 // How long an ask waits for the person.
 const ASK_WAIT_MS = 30 * 60_000;
+// The most an agent suggests in one turn.
+const SUGGESTIONS = 3;
 // How long what a provider said of a plan's limits stands before it is asked again, and how long it is given to answer.
 const LIMITS_FRESH_MS = 60_000;
 const LIMITS_WAIT_MS = 5_000;
@@ -318,6 +338,8 @@ export function nextRun(schedule: Schedule, after: number): number | null {
  * Makes the agent a person starts with, as they are added, on the provider
  * they were set up on: Ruby, who briefs them every morning at 8. It starts with that as what it is for, with the
  * job that does it, and with a first message that says so and how to change it.
+ * Under that message it suggests the two apps a brief reads, each as a card
+ * that connects the app, after which Ruby says what it now sees there.
  */
 export function addFirstAgent(store: Store, person: Person, now = Date.now()): Agent {
   const schedule: Schedule = { type: "daily", time: "08:00" };
@@ -330,16 +352,21 @@ export function addFirstAgent(store: Store, person: Person, now = Date.now()): A
   );
   store.addJob(
     agent.id,
-    `Brief ${person.name} on their day. Read today's calendar, the mail that has come since your last brief and needs an answer from them, and what is due in Notion, from whichever of those you have tools for. Lead with the one or two things that most need them today, then the rest in a few short lines. When you have tools for none of them, tell ${person.name} once that saying "connect my calendar" or "connect my Gmail" gives you their day to brief them on, note in your memory that you told them, and stay silent on later runs until you have one.`,
+    `Brief ${person.name} on their day. Read today's calendar, the mail that has come since your last brief and needs an answer from them, and what is due in Notion, from whichever of those you have tools for. Lead with the one or two things that most need them today, then the rest in a few short lines. When something in it is work you could do for them, offer it with \`suggest\`. When you have tools for none of them, tell ${person.name} once that saying "connect my calendar" or "connect my Gmail" gives you their day to brief them on, note in your memory that you told them, and stay silent on later runs until you have one.`,
     schedule,
     nextRun(schedule, now)!,
   );
   store.addMessage(
     agent.id,
     "agent",
-    `Hi, I'm Ruby. Every morning at 8 I'll send you a short brief: what's on today, and what needs you.\n\nFor that I need to see your day. Say "connect my calendar" or "connect my Gmail" and I'll set it up.\n\nWant another time, or no brief at all? Tell me. And I can help with other things too, so ask.`,
+    `Hi, I'm Ruby. Every morning at 8 I'll send you a short brief: what's on today, and what needs you.\n\nFor that I need to see your day. Connect your calendar or your Gmail below, or say "connect my calendar" and I'll set it up.\n\nWant another time, or no brief at all? Tell me. And I can help with other things too, so ask.`,
     "done",
   );
+  const sees: [Connection, string][] = [
+    ["calendar", `Google Calendar is connected now. Read today's and tomorrow's events and tell ${person.name} what is on, in a few short lines.`],
+    ["gmail", `Gmail is connected now. Read the mail of the last few days that needs an answer from ${person.name} and tell them what there is, in a few short lines.`],
+  ];
+  for (const [connection, detail] of sees) suggest(store, agent.id, suggestion(`Connect ${CONNECTIONS[connection].name}`, detail, CONNECTIONS[connection].allows, connection));
   return agent;
 }
 
@@ -354,32 +381,54 @@ Do it now. This run is a session of its own. It remembers no earlier run and not
 Your reply is sent to ${person.name} as a message and notifies them. If this run found nothing worth telling them, reply with only the word ${SILENT}.`;
 }
 
+/** What the agent is asked on the run of work it suggested, once the person has started it. */
+function workPrompt(work: Message, person: Person): string {
+  const { what, detail, why } = work.question!;
+  return `${person.name} started a piece of work you suggested: "${what}".${why ? ` You offered it because: ${why}` : ""} What you wrote for it:
+
+${detail}
+
+Do it now. This run is a session of its own, beside your chat with ${person.name}. It remembers nothing from the chat, so keep what you will need later in your memory.
+
+Your reply is sent to ${person.name} as the answer to the suggestion and notifies them. Say what you did and what, if anything, is left for them.`;
+}
+
+/** Work an agent offers to do, as the card that suggests it: what it is, what the agent will do, why it offers it now, and the app it connects when it connects one. */
+function suggestion(what: string, detail: string, why: string, connection?: Connection): Question {
+  return { kind: "work", ...(connection ? { connection } : {}), title: "Suggestion", what, facts: [], detail, ...(why ? { why } : {}) };
+}
+
+/** Puts a suggestion in an agent's chat, where it waits for the person to start it. `jobId` is the run that offered it, when one of the agent's own did. */
+function suggest(store: Store, agentId: string, question: Question, jobId?: string): void {
+  store.addMessage(agentId, "agent", asking(question), "done", { ask: "waiting", question, interim: true, jobId });
+}
+
 /** Whether a job's run chose to send nothing. */
 const silent = (reply: string) => reply.trim() === "" || new RegExp(`^\\W*${SILENT}\\W*$`, "i").test(reply);
 
 /**
  * A message as the agent reads it: the message it answers, the files sent
  * with it, and what the session hasn't seen. For a new session that is the
- * chat so far, and for one going it is the latest of what the agent's jobs
- * have sent, which says so when there was more.
+ * chat so far, and for one going it is the latest of what the agent's own
+ * runs have sent, which says so when there was more.
  * A message from another of the person's agents, `from`, says so first: that
  * agent asks something, or answers what this agent asked it, which is
  * `quoted`.
  */
-function promptFor(message: Message, person: Person, unseen: { recent: Message[]; quoted?: Message; fromJobs: Message[] }, from?: Agent): string {
+function promptFor(message: Message, person: Person, unseen: { recent: Message[]; quoted?: Message; fromRuns: Message[] }, from?: Agent): string {
   if (from) return fromAgent(message, person, unseen, from);
-  const { recent, quoted, fromJobs } = unseen;
+  const { recent, quoted, fromRuns } = unseen;
   const quote = quoted ? `Replying to ${quoted.sender === "person" ? "their own earlier message" : "your message"}: "${quoted.body.slice(0, QUOTE_CHARS)}"\n\n` : "";
   const files = message.attachments.length ? `\n\nSent with this message: ${message.attachments.join(", ")}` : "";
   const sent = `${quote}${message.body}${files}`.trim();
   const lines = (messages: Message[]) => messages.map((earlier) => `${earlier.sender === "person" ? person.name : "You"}: ${earlier.body.slice(0, RECENT_MESSAGE_CHARS)}`).join("\n\n");
   if (recent.length) return `This is a fresh session in a chat that was already going. The latest messages in it:\n\n${lines(recent)}\n\n${person.name}'s new message:\n\n${sent}`;
-  if (fromJobs.length) {
+  if (fromRuns.length) {
     const these =
-      fromJobs.length > RECENT_MESSAGES
+      fromRuns.length > RECENT_MESSAGES
         ? `messages this session hasn't seen. These are the latest ${RECENT_MESSAGES}, and \`search_history\` finds earlier ones by a word or phrase in them`
         : "these messages, which this session hasn't seen";
-    return `Since your last reply in this chat, your jobs sent ${person.name} ${these}:\n\n${lines(fromJobs.slice(-RECENT_MESSAGES))}\n\n${person.name}'s new message:\n\n${sent}`;
+    return `Your jobs and the work ${person.name} started run in sessions of their own. They sent ${person.name} ${these}:\n\n${lines(fromRuns.slice(-RECENT_MESSAGES))}\n\n${person.name}'s new message:\n\n${sent}`;
   }
   return sent;
 }
@@ -392,10 +441,18 @@ function fromAgent(message: Message, person: Person, { recent, quoted }: { recen
   return `${chat}${from.name}, another of ${person.name}'s agents, sent you the message below. ${person.name} didn't write it. Your reply goes back to ${from.name} and not to ${person.name}, so say what ${from.name} needs.\n\n${message.body}`;
 }
 
+/** The two lines of turns an agent has: its chat's, and beside them what it runs by itself. */
+const LANES = ["chat", "own"] as const;
+type Lane = (typeof LANES)[number];
+const laneKey = (lane: Lane, agentId: string) => `${lane} ${agentId}`;
+
 /**
- * Runs each agent's work one turn at a time: the messages it was sent, in the
- * order they came, and then any job whose time has come. A message the person
- * sends during a turn goes into that turn instead of waiting for the next.
+ * Runs each agent's work one turn at a time in each of its lanes. Its chat's
+ * lane has the messages it was sent, in the order they came, and a message
+ * the person sends during a turn goes into that turn instead of waiting for
+ * the next. Beside it, the agent's own lane has what it runs by itself, each
+ * in a session of its own: the suggestions the person started, and then any
+ * job whose time has come. So the chat stays free while that work runs.
  *
  * A turn runs on what the agent answers with as the turn starts, which the
  * agent keeps as `ran_on`. When the person has picked something else since
@@ -411,29 +468,33 @@ function fromAgent(message: Message, person: Person, { recent, quoted }: { recen
  * neither holds a turn open while it waits.
  */
 export function createQueue(store: Store, drivers: Drivers, connections: Connections, now: () => number = Date.now) {
+  // The lanes that are running, and what stops the turn each is on, both by `laneKey`.
   const busy = new Map<string, Promise<void>>();
-  // What stops the turn each working agent is running.
   const stops = new Map<string, AbortController>();
+  // The lanes kicked while they ran, by `laneKey`. Each looks once more as it ends, for what came as its loop was ending.
+  const kicked = new Set<string>();
+  // What each agent's own lane is on: the job, or the work the person started, by its id.
+  const own = new Map<string, string>();
   // The agents being deleted, whose queues end with the turn they are running.
   const removed = new Set<string>();
   // For an agent running a turn the person can talk to, what to call when they send another message.
   const arrivals = new Map<string, () => void>();
-  // The asks that wait for the person, by the message that asks: whose agent's it is, the connection it asks for when it asks for one, what to call with the person's answer, and what closes it unanswered, with what the agent is told.
-  const asks = new Map<string, { agentId: string; connection?: Connection; answer: (allow: boolean) => void; close: (words: string) => void }>();
+  // The asks that wait for the person, by the message that asks: whose agent's it is and which of its lanes raised it, the connection it asks for when it asks for one, what to call with the person's answer, and what closes it unanswered, with what the agent is told.
+  const asks = new Map<string, { agentId: string; lane: Lane; connection?: Connection; answer: (allow: boolean) => void; close: (words: string) => void }>();
   // When each person's provider was last asked where the limits of their plan stand.
   const limitsAsked = new Map<string, number>();
-  /** Closes the asks an agent has waiting, unanswered. */
-  const stopWaiting = (agentId: string, words: string) => {
-    for (const ask of [...asks.values()]) if (ask.agentId === agentId) ask.close(words);
+  /** Closes the asks one of an agent's lanes has waiting, unanswered. */
+  const stopWaiting = (agentId: string, lane: Lane, words: string) => {
+    for (const ask of [...asks.values()]) if (ask.agentId === agentId && ask.lane === lane) ask.close(words);
   };
 
-  async function drain(agentId: string): Promise<void> {
+  async function drain(agentId: string, lane: Lane): Promise<void> {
     while (!removed.has(agentId)) {
       const agent = store.agent(agentId);
       const person = agent && store.person(agent.person_id);
       if (!agent || !person) return;
       const stop = new AbortController();
-      stops.set(agentId, stop);
+      stops.set(laneKey(lane, agentId), stop);
       // Whether a message is something another agent asks this one, whose reply is owed to that agent.
       const asksMe = (each: Message | undefined) => each?.peer_id === agent.id && each.reply_to === null;
       // A turn the person stopped. Its messages that the agent had read are done with, and the messages the stop named that are still unread are left to send again. What another agent asked gets no answer.
@@ -451,10 +512,21 @@ export function createQueue(store: Store, drivers: Drivers, connections: Connect
       const { driver, apiKey } = signedIn(agent.provider);
       // What the agent's session is on: what its last turn ran on.
       const ranOn = agent.ran_on ?? selectionOf(agent);
-      const message = store.nextQueued(agentId);
-      const job = message ? undefined : store.dueJob(agentId, now());
+      const message = lane === "chat" ? store.nextQueued(agentId) : undefined;
+      const work = lane === "own" ? store.nextWork(agentId) : undefined;
+      const job = lane === "own" && !work ? store.dueJob(agentId, now()) : undefined;
+      // What the agent runs by itself, as its messages name it.
+      const jobId = (work ?? job)?.id;
+      if (jobId) own.set(agentId, jobId);
       // The files the agent has asked to send, which its next message takes.
       const files: Upload[] = [];
+      // What the agent has offered to do, which goes to the person once its reply has, in the place of the suggestions they haven't answered.
+      const offers: Question[] = [];
+      const suggestAll = () => {
+        if (offers.length === 0) return;
+        store.closeSuggestions(agent.id);
+        for (const question of offers.splice(0)) suggest(store, agent.id, question, jobId);
+      };
       const others = () => store.agentsFor(person.id).filter((each) => each.id !== agent.id);
       // Runs a turn on what the agent answers with, or on `on` when its session is still on something else.
       const turn = async (text: string, rest: Pick<Turn, "followUps" | "seen" | "replied" | "sendUpdate"> & { id?: string; kind: TurnKind }, on: Selection = agent) => {
@@ -462,8 +534,8 @@ export function createQueue(store: Store, drivers: Drivers, connections: Connect
         if (!account) throw new Error(`${person.name} hasn't set up ${PROVIDERS[on.provider].name} on this computer.`);
         const ask = (question: Question, withdrawn: AbortSignal) =>
           new Promise<Answer>((resolve) => {
-            // An ask raised while working on what another agent asked shows in that agent's chat too, where the person may be.
-            const message = store.addMessage(agent.id, "agent", asking(question), "done", { ask: "waiting", question, jobId: job?.id, peerId: store.askedOf(agent.id)[0]?.agent_id });
+            // An ask raised while working on what another agent asked shows in that agent's chat too, where the person may be. One raised by work the person started answers its suggestion.
+            const message = store.addMessage(agent.id, "agent", asking(question), "done", { ask: "waiting", question, jobId, replyTo: work?.id, peerId: lane === "chat" ? store.askedOf(agent.id)[0]?.agent_id : undefined });
             const settle = (answer: Exclude<Ask, "waiting">, words: string) => {
               clearTimeout(timer);
               withdrawn.removeEventListener("abort", late);
@@ -476,12 +548,13 @@ export function createQueue(store: Store, drivers: Drivers, connections: Connect
             withdrawn.addEventListener("abort", late);
             asks.set(message.id, {
               agentId: agent.id,
+              lane,
               connection: question.connection,
               answer: (allow) => settle(allow ? "allowed" : "refused", `${person.name} said no to this. Don't do it, or the same thing another way. Finish the rest and say in your reply what you left out.`),
               close: (words) => settle("unanswered", words),
             });
           });
-        // A job's run is a session of its own, which nothing comes back to. Any other turn carries on the chat's session.
+        // What the agent runs by itself is a session of its own, which nothing comes back to. Any other turn carries on the chat's session.
         const sessionId = rest.kind === "job" ? null : agent.session_id;
         const before = sessionId === null ? undefined : store.sessionUsed(agent.id, sessionId);
         const result = await driver.runTurn({
@@ -515,6 +588,12 @@ export function createQueue(store: Store, drivers: Drivers, connections: Connect
             return `${jobs.join("\n\n") || "You have no jobs."}\n\nIt is now ${clock(now())}.`;
           },
           cancelJob: (id) => (store.removeJob(agent.id, id) ? "Removed." : "You have no job with that id."),
+          suggest: ({ title, why, what }) => {
+            if (!title.trim() || !what.trim()) return "A suggestion needs a title and what you will do.";
+            if (offers.length >= SUGGESTIONS) return `${SUGGESTIONS} is the most to suggest at once. Keep the ones that matter most.`;
+            offers.push(suggestion(title.trim(), what.trim(), why.trim()));
+            return `Offered. It goes to ${person.name} as a card under your reply. Don't do it now: it runs in a session of its own once they start it.`;
+          },
           listAgents: () => others().map((each) => each.name).join("\n") || `${person.name} has no other agents.`,
           askAgent: (name, text) => {
             const other = others().find((each) => each.name.toLowerCase() === name.trim().toLowerCase());
@@ -549,7 +628,7 @@ export function createQueue(store: Store, drivers: Drivers, connections: Connect
           },
         })
           // An ask the turn leaves behind, as when it fails or is stopped, waits for nobody.
-          .finally(() => stopWaiting(agent.id, "The turn ended."));
+          .finally(() => stopWaiting(agent.id, lane, "The turn ended."));
         store.addUsage(agent.id, rest.kind, result, sessionId !== null);
         return result;
       };
@@ -559,8 +638,8 @@ export function createQueue(store: Store, drivers: Drivers, connections: Connect
         return apiKey ? words.replaceAll(apiKey, "your API key") : words;
       };
 
-      // A fresh start is no turn of the agent's own, so what the person picked waits for the turn after it.
-      const startsTurn = job !== undefined || (message !== undefined && message.sender !== "sidebots");
+      // A fresh start is no turn of the agent's own, so what the person picked waits for the turn after it. What the agent runs by itself is no turn of its chat's session, and runs on what the agent answers with now.
+      const startsTurn = message !== undefined && message.sender !== "sidebots";
       if (startsTurn && !sameSelection(ranOn, agent)) {
         const handsOver = ranOn.provider !== agent.provider && agent.session_id !== null;
         const switched = { from: ranOn, to: selectionOf(agent) };
@@ -579,22 +658,33 @@ export function createQueue(store: Store, drivers: Drivers, connections: Connect
 
       if (startsTurn && agent.ran_on === null) store.setRanOn(agent.id, agent);
 
-      if (job) {
+      if (work || job) {
+        if (work) store.setStatus(work.id, "running");
         try {
           const replies: string[] = [];
-          await turn(jobPrompt(job, person), { kind: "job", seen: () => undefined, replied: (reply) => replies.push(reply) });
+          await turn(work ? workPrompt(work, person) : jobPrompt(job!, person), { kind: "job", seen: () => undefined, replied: (reply) => replies.push(reply) });
           const reply = replies.at(-1) ?? "";
-          if (!silent(reply)) store.addMessage(agent.id, "agent", reply, "done", { jobId: job.id, files });
+          // A run stopped as its reply landed sends nothing, and work the person stopped is over already.
+          if (!stop.signal.aborted) {
+            if (work ? reply.trim() : !silent(reply)) store.addMessage(agent.id, "agent", reply, "done", { jobId, replyTo: work?.id, files });
+            suggestAll();
+            if (work) store.setStatus(work.id, "done");
+          }
         } catch (error) {
+          if (removed.has(agentId)) return;
           // A job that keeps failing says so once, not on every run.
           const latest = store.agentWithLatest(agent.id)?.latest;
-          if (!stop.signal.aborted && (latest?.sender !== "sidebots" || latest.status !== "failed")) store.addMessage(agent.id, "sidebots", `Sidebots couldn't run a job. ${reason(error)}`, "failed");
+          if (!stop.signal.aborted && (work || latest?.sender !== "sidebots" || latest.status !== "failed")) {
+            store.addMessage(agent.id, "sidebots", work ? `Sidebots couldn't finish "${work.question!.what}". ${reason(error)}` : `Sidebots couldn't run a job. ${reason(error)}`, "failed");
+            if (work) store.setStatus(work.id, "failed");
+          }
         }
-        if (stop.signal.aborted) stopped();
-        // The next run counts from the end of this one. A job that ran its one time is done.
-        const next = nextRun(job.schedule, now());
-        if (next === null) store.removeJob(agent.id, job.id);
-        else store.setJobNext(job.id, next);
+        if (job) {
+          // The next run counts from the end of this one. A job that ran its one time is done.
+          const next = nextRun(job.schedule, now());
+          if (next === null) store.removeJob(agent.id, job.id);
+          else store.setJobNext(job.id, next);
+        }
         continue;
       }
       if (!message) return;
@@ -645,10 +735,10 @@ export function createQueue(store: Store, drivers: Drivers, connections: Connect
         take: () => {
           const arrived = store.waitingFromPerson(agent.id).filter((each) => !sent.has(each.id));
           // The agent can't read a message while it waits on an ask, so a message is the person's answer to it.
-          if (arrived.length) stopWaiting(agent.id, `${person.name} sent a message instead of answering. Leave this undone and read their message.`);
+          if (arrived.length) stopWaiting(agent.id, lane, `${person.name} sent a message instead of answering. Leave this undone and read their message.`);
           return arrived.map((each) => {
             sent.add(each.id);
-            return { id: each.id, text: promptFor(each, person, { recent: [], quoted: quotedBy(each), fromJobs: [] }) };
+            return { id: each.id, text: promptFor(each, person, { recent: [], quoted: quotedBy(each), fromRuns: [] }) };
           });
         },
         onArrival: (listener) => {
@@ -668,30 +758,30 @@ export function createQueue(store: Store, drivers: Drivers, connections: Connect
         store.addMessage(agent.id, "agent", update.trim(), "done", { interim: true, files: files.splice(0) });
         return "Sent. Carry on with the work.";
       };
+      const recent = agent.session_id ? [] : store.messagesBefore(agent.id, message.id, RECENT_MESSAGES);
+      // What the agent's own runs sent that this session hasn't been told of, one more than the turn is shown, which is how it knows there was more. A new session reads the chat so far in its place, and another agent's message comes without it.
+      const fromRuns = from || recent.length ? [] : store.sentByRuns(agent.id, RECENT_MESSAGES + 1);
+      // The newest message the turn's prompt shows of the chat, which the session has been told of everything up to.
+      const shown = (recent.length ? recent : fromRuns).at(-1);
       try {
         const result = await turn(
-          promptFor(
-            message,
-            person,
-            {
-              recent: agent.session_id ? [] : store.messagesBefore(agent.id, message.id, RECENT_MESSAGES),
-              quoted: quotedBy(message),
-              // One more than the turn is shown, which is how it knows there was more.
-              fromJobs: store.sentByJobsBefore(agent.id, message.id, RECENT_MESSAGES + 1),
-            },
-            from,
-          ),
+          promptFor(message, person, { recent, quoted: quotedBy(message), fromRuns }, from),
           {
             kind: "reply",
             id: message.id,
             // Another agent's message is a turn of its own, as a job's run is: the person isn't waiting on it, and a message of theirs gets its own turn.
             ...(from ? {} : { followUps, sendUpdate }),
-            seen: (ids) => store.markSeen(ids),
+            seen: (ids) => {
+              store.markSeen(ids);
+              // The session has now read what its own runs had sent, as far as its prompt showed the chat.
+              if (shown && ids.includes(message.id)) store.toldOfRuns(agent.id, shown.id);
+            },
             replied: (reply, ids) => {
               // What another agent asked and has called off gets no answer, though the turn was too far along to end without one.
               if (store.message(agent.id, message.id)?.status === "failed") return;
               store.markSeen(ids);
               deliver(reply);
+              suggestAll();
               // What another agent asked is done with once its answer goes, which `deliver` sees to.
               for (const id of ids) if (!asksMe(store.message(agent.id, id))) store.setStatus(id, "done");
             },
@@ -716,19 +806,28 @@ export function createQueue(store: Store, drivers: Drivers, connections: Connect
     }
   }
 
-  /** Starts the agent's queue if it isn't running. If it is running a turn the person can talk to, a new message of theirs goes into that turn. */
-  function kick(agentId: string): Promise<void> {
-    const running = busy.get(agentId);
+  /** Starts one of an agent's lanes if it isn't running. */
+  function run(agentId: string, lane: Lane): Promise<void> {
+    const key = laneKey(lane, agentId);
+    const running = busy.get(key);
     if (running) {
-      arrivals.get(agentId)?.();
+      kicked.add(key);
       return running;
     }
-    const done = drain(agentId).finally(() => {
-      busy.delete(agentId);
-      stops.delete(agentId);
+    const done = drain(agentId, lane).finally(() => {
+      busy.delete(key);
+      stops.delete(key);
+      if (lane === "own") own.delete(agentId);
+      if (kicked.delete(key)) return run(agentId, lane);
     });
-    busy.set(agentId, done);
+    busy.set(key, done);
     return done;
+  }
+
+  /** Starts each of the agent's lanes that isn't running. If its chat is on a turn the person can talk to, a new message of theirs goes into that turn. */
+  function kick(agentId: string): Promise<void> {
+    if (busy.has(laneKey("chat", agentId))) arrivals.get(agentId)?.();
+    return Promise.all(LANES.map((lane) => run(agentId, lane))).then(() => undefined);
   }
 
   return {
@@ -745,8 +844,8 @@ export function createQueue(store: Store, drivers: Drivers, connections: Connect
     },
 
     /**
-     * Stops the turn the agent is running: its work on the person's messages,
-     * a job's run or a fresh start. The messages of theirs that the agent
+     * Stops the turn the agent's chat is on: its work on the person's
+     * messages, or a fresh start. The messages of theirs that the agent
      * hasn't read, sent into the turn or waiting for it to end, are left to
      * send again. The chat says "Stopped" once the turn has ended. The agent
      * keeps its session, so its next turn carries on from there. An agent
@@ -756,34 +855,68 @@ export function createQueue(store: Store, drivers: Drivers, connections: Connect
     stop(agentId: string, stopping = new Set<string>()): void {
       if (stopping.has(agentId)) return;
       stopping.add(agentId);
-      const stop = stops.get(agentId);
+      const stop = stops.get(laneKey("chat", agentId));
       // The stop carries the messages that were unread as it was asked for, so one sent after it gets its turn.
       if (stop && !stop.signal.aborted) stop.abort(store.waitingFromPerson(agentId).map((unread) => unread.id));
       // What the agent asked other agents is called off with it. An agent at work on it is stopped, and one that hasn't read it never does.
       for (const asked of store.asked(agentId)) {
         this.stop(asked.peer_id!, stopping);
-        if (asked.status === "queued" || !busy.has(asked.peer_id!)) store.setStatus(asked.id, "failed");
+        if (asked.status === "queued" || !busy.has(laneKey("chat", asked.peer_id!))) store.setStatus(asked.id, "failed");
       }
     },
 
-    /** Gives an ask the person's answer, and the agent goes on with it. False when the agent has no such ask waiting, and for a yes to an ask for a connection, which only making the connection says. */
+    /**
+     * Gives an ask the person's answer, and the agent goes on with it. False
+     * when the agent has no such ask waiting, and for a yes to an ask for a
+     * connection, which only making the connection says. A yes to a
+     * suggestion starts its work, beside the chat. A no to one they started
+     * calls the work off: it leaves the line when it waits for its run, and
+     * its run stops when it is on it.
+     */
     answer(agentId: string, messageId: string, allow: boolean): boolean {
       const ask = asks.get(messageId);
-      if (ask?.agentId !== agentId || (allow && ask.connection)) return false;
-      ask.answer(allow);
+      if (ask) {
+        if (ask.agentId !== agentId || (allow && ask.connection)) return false;
+        ask.answer(allow);
+        return true;
+      }
+      const suggestion = store.message(agentId, messageId);
+      if (!suggestion || suggestion.agent_id !== agentId || !isSuggestion(suggestion)) return false;
+      // A suggestion that connects an app is started by making the connection.
+      if (allow && suggestion.question?.connection) return false;
+      if (suggestion.ask === "waiting") {
+        store.answerAsk(messageId, allow ? "allowed" : "refused");
+        if (allow) void kick(agentId);
+        return true;
+      }
+      if (allow || suggestion.ask !== "allowed" || (suggestion.status !== "queued" && suggestion.status !== "running")) return false;
+      // The work is over from here, whether it waited for its run or its run now ends.
+      store.setStatus(messageId, "failed");
+      this.stopRun(agentId, messageId);
       return true;
     },
 
-    /** Has the agents that wait for the person to make a connection go on, once they have made it. */
+    /** Stops what the agent runs by itself, when it is on the job or the work with this id. False when it isn't. */
+    stopRun(agentId: string, id: string): boolean {
+      if (own.get(agentId) !== id) return false;
+      stops.get(laneKey("own", agentId))?.abort(new Error("Stopped."));
+      return true;
+    },
+
+    /** Has the agents that wait for the person to make a connection go on, once they have made it, and starts the suggestions that waited for it. */
     connected(personId: string, connection: Connection): void {
       for (const ask of [...asks.values()]) if (ask.connection === connection && store.agent(ask.agentId)?.person_id === personId) ask.answer(true);
+      for (const agent of store.agentsFor(personId)) {
+        for (const suggestion of store.waitingSuggestions(agent.id)) if (suggestion.question?.connection === connection) store.answerAsk(suggestion.id, "allowed");
+        void kick(agent.id);
+      }
     },
 
     /** Stops whatever the agent is running, waits for it to end, and removes the sessions each provider it ran on keeps for it, as the agent is deleted. */
     async remove(agent: Agent): Promise<void> {
       removed.add(agent.id);
-      stops.get(agent.id)?.abort();
-      await busy.get(agent.id)?.catch(() => undefined);
+      for (const lane of LANES) stops.get(laneKey(lane, agent.id))?.abort();
+      await Promise.all(LANES.map((lane) => busy.get(laneKey(lane, agent.id))?.catch(() => undefined)));
       try {
         for (const { provider, config_dir } of store.accounts(agent.person_id)) await drivers[provider].forget(store.agentHome(agent.id), config_dir);
       } finally {

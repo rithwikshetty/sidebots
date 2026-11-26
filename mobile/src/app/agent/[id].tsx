@@ -3,9 +3,10 @@ import { Alert, Keyboard, Pressable, ScrollView, StyleSheet, Switch, Text, TextI
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import Animated, { LayoutAnimationConfig } from "react-native-reanimated";
-import { ChevronRight, Trash2 } from "lucide-react-native";
-import { PROVIDERS, USAGE_DAYS, scheduleWords, type AgentWithLatest, type Job, type Offered } from "@server/contract";
-import { nextTime } from "@client/time";
+import { ChevronRight, Square, Trash2 } from "lucide-react-native";
+import { PROVIDERS, USAGE_DAYS, scheduleWords, type AgentWithLatest, type Job, type Message, type Offered } from "@server/contract";
+import { WORK } from "@client/suggestions";
+import { listTime, nextTime } from "@client/time";
 import { COST_NOTE, KINDS, dollars, usedBy } from "@client/usage";
 import { AvatarPicker } from "@/components/AvatarPicker";
 import { AvatarView } from "@/components/AvatarView";
@@ -15,17 +16,19 @@ import { FadingText } from "@/components/FadingText";
 import { IconButton } from "@/components/IconButton";
 import { Rule, Section, SectionTitle } from "@/components/Section";
 import { confirmDelete, problem } from "@/lib/alerts";
+import { useToday } from "@/lib/layout";
 import { HIDE, MOVE, POP_IN, SHOW } from "@/lib/motion";
-import { changeAgent, loadAbout, loadUsage, removeJob, useAbout, useAgent, useChatColor, useUsage, type AgentChanges } from "@/lib/state";
+import { openChat } from "@/lib/push";
+import { answerAsk, changeAgent, loadAbout, loadUsage, removeJob, useAbout, useAgent, useChatColor, useUsage, type AgentChanges } from "@/lib/state";
 import { useTheme } from "@/lib/theme";
 
 const TABS = { settings: "Settings", work: "Jobs & memory" } as const;
 type Tab = keyof typeof TABS;
 
 export default function AgentPage() {
-  const { id } = useLocalSearchParams<{ id: string }>();
+  const { id, tab } = useLocalSearchParams<{ id: string; tab?: string }>();
   const agent = useAgent(id);
-  return agent ? <AgentAbout agent={agent} /> : null;
+  return agent ? <AgentAbout agent={agent} opensOn={tab === "work" ? "work" : "settings"} /> : null;
 }
 
 /**
@@ -34,17 +37,20 @@ export default function AgentPage() {
  * turns the name into a field and brings up the avatars and the colours of its
  * chat to choose from, and Save keeps them. Below are two tabs. Settings
  * holds what the agent used in the last days, Mute and Hide, and Delete.
- * Jobs & memory holds what the agent works from: its jobs, which can be
- * removed here, the instructions it follows and what it remembers. The agent
- * writes those three itself, as it is told things in its chat. What loads
- * after the page opens fades in, and the sections below slide down to make
- * room for it.
+ * Jobs & memory holds what the agent works from: the work the person started
+ * from its suggestions, each of which opens where it is in the chat and can
+ * be stopped while it goes, its jobs, which can be removed here, the
+ * instructions it follows and what it remembers. The agent writes the last
+ * three itself, as it is told things in its chat. What loads after the page
+ * opens fades in, and the sections below slide down to make room for it. The
+ * page opens on the tab it is opened for, as the strip in a chat that says
+ * what the agent is working on opens Jobs & memory.
  */
-function AgentAbout({ agent }: { agent: AgentWithLatest }) {
+function AgentAbout({ agent, opensOn }: { agent: AgentWithLatest; opensOn: Tab }) {
   const theme = useTheme();
   const router = useRouter();
   const insets = useSafeAreaInsets();
-  const [tab, setTab] = useState<Tab>("settings");
+  const [tab, setTab] = useState<Tab>(opensOn);
   const [editing, setEditing] = useState(false);
   const [name, setName] = useState(agent.name);
   const [avatarId, setAvatarId] = useState(agent.avatar_id);
@@ -201,6 +207,8 @@ function WorkTab({ agent }: { agent: AgentWithLatest }) {
   const theme = useTheme();
   const router = useRouter();
   const about = useAbout(agent.id);
+  const today = useToday();
+  const stopWork = (work: Message) => void answerAsk(work, false).catch((failure) => problem("Couldn't stop it", failure));
   const forget = (job: Job) =>
     Alert.alert("Remove this job?", scheduleWords(job.schedule), [
       { text: "Cancel", style: "cancel" },
@@ -208,6 +216,27 @@ function WorkTab({ agent }: { agent: AgentWithLatest }) {
     ]);
   return (
     <>
+      <Section title="Work" note={about?.work.length ? undefined : "None. What you start from its suggestions shows here."}>
+        {about?.work.map((work, index) => (
+          <Animated.View key={work.id} entering={SHOW} exiting={HIDE} layout={MOVE}>
+            {index > 0 ? <Rule /> : null}
+            <Pressable onPress={() => openChat(agent.id, work.id)} accessibilityRole="button" accessibilityHint="Opens it in the chat" style={styles.row}>
+              <View style={styles.rowText}>
+                <Text numberOfLines={2} style={[styles.rowTitle, { color: theme.ink }]}>
+                  {work.question?.what}
+                </Text>
+                <FadingText style={[styles.rowNote, { color: theme.ink2 }]}>{`${WORK[work.status]} · ${listTime(work.created_at, today)}`}</FadingText>
+              </View>
+              {work.status === "queued" || work.status === "running" ? (
+                <IconButton icon={Square} label="Stop" iconSize={16} color={theme.danger} onPress={() => stopWork(work)} />
+              ) : (
+                <ChevronRight size={18} color={theme.ink2} />
+              )}
+            </Pressable>
+          </Animated.View>
+        ))}
+      </Section>
+
       <Section title="Jobs" note={about?.jobs.length ? undefined : "None. Ask it to remind you of something, or to keep an eye on something."}>
         {about?.jobs.map((job, index) => (
           <Animated.View key={job.id} entering={SHOW} exiting={HIDE} layout={MOVE}>

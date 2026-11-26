@@ -14,6 +14,7 @@ import * as Application from "expo-application";
 import { isDevice } from "expo-device";
 import * as Notifications from "expo-notifications";
 import { router } from "expo-router";
+import Storage from "expo-sqlite/kv-store";
 import * as TaskManager from "expo-task-manager";
 import type { AgentWithLatest, PushToken } from "@server/contract";
 import { isPaired, request } from "./api";
@@ -21,6 +22,8 @@ import { onAgents, useAgents } from "./state";
 
 // The chat open on the stack, which openChat closes sheets down to or puts another in place of, and what listens for it.
 let chatOnScreen: string | null = null;
+// Where the phone keeps the agent whose chat was open last, which the app opens on.
+const LAST_CHAT = "last-chat";
 const listeners = new Set<() => void>();
 // The chat opened last, and what hears that a chat is being opened, as the side menu, which shuts.
 let opened: OpenChat | null = null;
@@ -108,8 +111,7 @@ export type OpenChat = { agentId: string; messageId?: string };
 /**
  * Opens an agent's chat. The side menu shuts, a sheet over home or over the
  * chat already open closes, and a different agent's chat takes that one's
- * place, so Back still goes home and a split window keeps one chat beside
- * the agents. With `messageId`, the chat scrolls to that message and flashes
+ * place, so one chat is open at a time. With `messageId`, the chat scrolls to that message and flashes
  * it; each call is a new value, so opening the same message again flashes
  * it again.
  */
@@ -129,7 +131,24 @@ export function onOpenChat(listener: () => void): () => void {
 
 function setChatOnScreen(agentId: string | null): void {
   chatOnScreen = agentId;
+  if (agentId) void Storage.setItem(LAST_CHAT, agentId);
   listeners.forEach((listener) => listener());
+}
+
+/**
+ * Opens the chat the person was last in on this phone, or their first
+ * agent's, when they have agents and no chat is on its way to the screen
+ * already, as one a notification's tap opens is.
+ */
+export function openLastChat(agents: AgentWithLatest[]): void {
+  if (agents.length === 0 || agents.some((agent) => agent.id === opened?.agentId)) return;
+  const last = Storage.getItemSync(LAST_CHAT);
+  openChat(agents.some((agent) => agent.id === last) ? last! : agents[0].id);
+}
+
+/** How many of the person's messages from agents are unread, as the app's icon counts them: none of a muted agent's, and none of `but`, the agent whose chat is open. */
+export function unreadOf(agents: AgentWithLatest[], but?: string): number {
+  return agents.reduce((total, agent) => total + (agent.muted || agent.id === but ? 0 : agent.unread), 0);
 }
 
 function onChatOnScreen(listener: () => void): () => void {
@@ -137,7 +156,7 @@ function onChatOnScreen(listener: () => void): () => void {
   return () => listeners.delete(listener);
 }
 
-/** The agent whose chat is open on the stack, as the agents' column beside it marks it. */
+/** The agent whose chat is open on the stack, as the chat list marks it. */
 export function useChatOnScreen(): string | null {
   return useSyncExternalStore(onChatOnScreen, () => chatOnScreen);
 }
@@ -165,7 +184,7 @@ export function showChatOnScreen(agentId: string): () => void {
  * chat.
  */
 export function usePush(): void {
-  const unread = useAgents().reduce((total, agent) => total + (agent.muted ? 0 : agent.unread), 0);
+  const unread = unreadOf(useAgents());
   useEffect(() => {
     void Notifications.setBadgeCountAsync(unread).catch(() => undefined);
   }, [unread]);

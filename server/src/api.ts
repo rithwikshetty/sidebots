@@ -6,7 +6,7 @@ import { Readable } from "node:stream";
 import { Hono } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import { streamSSE } from "hono/streaming";
-import { COLOR, CONNECTIONS, CONTRACT_HEADER, CONTRACT_VERSION, KEEPALIVE_MS, MESSAGE_BYTES, PROVIDERS, effortMoved } from "./contract.ts";
+import { COLOR, CONNECTIONS, CONTRACT_HEADER, CONTRACT_VERSION, KEEPALIVE_MS, MESSAGE_BYTES, PROVIDERS, avatarStateOf, effortMoved } from "./contract.ts";
 import type { Connection, Effort, Model, Paired, Provider, PushToken, StreamEvent } from "./contract.ts";
 import type { Connections } from "./connections.ts";
 import type { AgentChanges, Device, Person, Store } from "./store.ts";
@@ -182,9 +182,11 @@ export function createApi(store: Store, queue: Queue, connections: Connections, 
     return c.json(store.about(agent));
   });
 
+  /** Removes one of an agent's jobs. A run of it that is under way stops. */
   app.delete("/agents/:id/jobs/:job", (c) => {
     const agent = ownAgent(c.var.person, c.req.param("id"));
     if (!agent || !store.removeJob(agent.id, c.req.param("job"))) return c.json({ error: "No such job." }, 404);
+    queue.stopRun(agent.id, c.req.param("job"));
     return c.json({});
   });
 
@@ -263,7 +265,7 @@ export function createApi(store: Store, queue: Queue, connections: Connections, 
     return c.json({});
   });
 
-  /** The person's answer to an ask: whether the agent may do what it asked about. Answers with the ask as it now stands. An ask for a connection takes only a no here, since making the connection is its yes. */
+  /** The person's answer to an ask: whether the agent may do what it asked about. Answers with the ask as it now stands. An ask for a connection takes only a no here, since making the connection is its yes. A yes to a suggestion starts its work, and a no to one they started stops it. */
   app.post("/agents/:id/asks/:message", async (c) => {
     const agent = ownAgent(c.var.person, c.req.param("id"));
     if (!agent) return c.json({ error: "No such agent." }, 404);
@@ -355,7 +357,7 @@ export function createApi(store: Store, queue: Queue, connections: Connections, 
     const push = pushToken(await c.req.json<Partial<PushToken>>());
     if (!push) return c.json({ error: NOT_A_PUSH_TOKEN }, 400);
     if (!pushes) return c.json({ error: "This computer sends nothing to Apple, so it can't end a Live Activity." }, 501);
-    if (!store.agentWithLatest(agent.id)!.working) return c.json({ error: "The agent isn't working." }, 409);
+    if (avatarStateOf(store.agentWithLatest(agent.id)!) !== "working") return c.json({ error: "The agent isn't working." }, 409);
     store.setActivityToken(c.var.device.id, agent.id, push);
     return c.json(push);
   });
@@ -376,7 +378,7 @@ export function createApi(store: Store, queue: Queue, connections: Connections, 
 
   /**
    * New messages and status changes for the person's agents, each with its
-   * agent as the home screen shows it, the agents the person adds, changes
+   * agent as the chat list shows it, the agents the person adds, changes
    * and deletes, and what a provider says of how they sign in to it, so every
    * device of theirs keeps up.
    */

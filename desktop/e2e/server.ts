@@ -31,6 +31,7 @@
 //   /ask twice                two asks in a row
 //   /connect gmail|calendar|notion
 //                             asks for a connection; signing in finishes with no Google or Notion
+//   /suggest                  offers three pieces of work as suggestions; one the person starts works until it is stopped
 //   /page, /page tall         an .html page coloured with the chat's CSS variables; the tall one is over 480px
 //   /page hostile             a page that tries to get out of its frame (scripted/files.ts says how)
 //   /image, /images <n>       PNG pictures made in code, wide, tall and square

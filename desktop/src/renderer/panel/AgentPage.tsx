@@ -1,12 +1,13 @@
 import { useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore, type CSSProperties, type KeyboardEvent, type ReactNode } from "react";
 import { ChevronRight, Trash2 } from "lucide-react";
-import { PROVIDERS, USAGE_DAYS, plainText, scheduleWords, type AgentWithLatest, type Job, type Offered } from "@server/contract.ts";
-import { nextTime } from "@client/time.ts";
+import { PROVIDERS, USAGE_DAYS, plainText, scheduleWords, type AgentWithLatest, type Job, type Message, type Offered } from "@server/contract.ts";
+import { WORK } from "@client/suggestions.ts";
+import { listTime, nextTime } from "@client/time.ts";
 import { COST_NOTE, KINDS, dollars, usedBy } from "@client/usage.ts";
 import { changeOrSay, confirmDelete, problem } from "../lib/alerts.ts";
 import { cn } from "../lib/cn.ts";
-import { loadAbout, loadUsage, removeJob, useAbout, useAgent, useChatColor, useUsage, type AgentChanges } from "../lib/store.ts";
-import { openPanel } from "../lib/view.ts";
+import { answerAsk, loadAbout, loadUsage, removeJob, useAbout, useAgent, useChatColor, useUsage, type AgentChanges } from "../lib/store.ts";
+import { openChat, openPanel, type AgentTab } from "../lib/view.ts";
 import { AvatarPicker } from "../ui/AvatarPicker.tsx";
 import { Avatar } from "../ui/Avatar.tsx";
 import { Button, IconButton } from "../ui/Button.tsx";
@@ -16,11 +17,10 @@ import { Switch } from "../ui/Switch.tsx";
 import { ColorPicker } from "./ColorPicker.tsx";
 import { LoadingRow, Row, RowButton, RowText, Section, SectionTitle } from "./Section.tsx";
 
-const TABS = { settings: "Settings", work: "Jobs & memory" } as const;
-type Tab = keyof typeof TABS;
+const TABS: Record<AgentTab, string> = { settings: "Settings", work: "Jobs & memory" };
 
 // The tab each agent's page was last on, and how far down it was, while the app runs, so going to a note and back keeps them.
-const tabs = new Map<string, Tab>();
+const tabs = new Map<string, AgentTab>();
 const scrolls = new Map<string, number>();
 
 // Whether the agent's name at the top of its page has scrolled under the panel's top bar, which then shows it.
@@ -105,25 +105,29 @@ function useLoading(load: () => Promise<void>, key: string): Loading {
  * and brings up the avatars and the colours of its chat to choose from, and
  * Save keeps what changed. Below are two tabs. Settings holds what the agent
  * used in the last days, Mute and Hide, and Delete. Jobs & memory holds what
- * the agent works from: its jobs, which can be removed here, the instructions
+ * the agent works on and from: the work the person started from its
+ * suggestions, each of which opens the chat at its suggestion and can be
+ * stopped here until it ends, its jobs, which can be removed here, the instructions
  * it follows and what it remembers, each of which opens to read in full. The
- * agent writes those three itself, as it is told things in its chat. Every
- * change but the edit's takes effect at once.
+ * agent writes its jobs, instructions and memories itself, as it is told
+ * things in its chat. Every change but the edit's takes effect at once. The
+ * page opens on the tab it was last on, or on `tab` when it is opened for
+ * one.
  */
-export function AgentPage({ agentId }: { agentId: string }) {
+export function AgentPage({ agentId, tab }: { agentId: string; tab?: AgentTab }) {
   const agent = useAgent(agentId);
-  return agent ? <AgentAbout key={agent.id} agent={agent} /> : null;
+  return agent ? <AgentAbout key={`${agent.id} ${tab}`} agent={agent} opensOn={tab} /> : null;
 }
 
-function AgentAbout({ agent }: { agent: AgentWithLatest }) {
-  const [tab, setTab] = useState<Tab>(() => tabs.get(agent.id) ?? "settings");
+function AgentAbout({ agent, opensOn }: { agent: AgentWithLatest; opensOn?: AgentTab }) {
+  const [tab, setTab] = useState<AgentTab>(() => opensOn ?? tabs.get(agent.id) ?? "settings");
   const [editing, setEditing] = useState(false);
-  // A turn is what changes what the agent used, its jobs and what it remembers, so a page left open fetches them again as one starts or ends and as the agent's latest message changes.
-  const turn = `${agent.id} ${agent.latest?.id} ${agent.working}`;
+  // A turn is what changes what the agent used, its work, its jobs and what it remembers, so a page left open fetches them again as one starts or ends, as the agent's latest message changes and as its work moves on, which the agent says again once a dropped stream is back.
+  const turn = `${agent.id} ${agent.latest?.id} ${agent.working} ${agent.work.map((work) => `${work.id}:${work.status}`).join(",")}`;
   const usage = useLoading(loadUsage, turn);
   const about = useLoading(() => loadAbout(agent.id), turn);
   const change = (changes: AgentChanges) => changeOrSay(agent.id, changes);
-  const pick = (next: Tab) => {
+  const pick = (next: AgentTab) => {
     tabs.set(agent.id, next);
     setTab(next);
   };
@@ -150,8 +154,8 @@ function Shown({
   about,
 }: {
   agent: AgentWithLatest;
-  tab: Tab;
-  pick: (tab: Tab) => void;
+  tab: AgentTab;
+  pick: (tab: AgentTab) => void;
   edit: () => void;
   edited: boolean;
   change: (changes: AgentChanges) => void;
@@ -341,6 +345,11 @@ function WorkTab({ agent, loading }: { agent: AgentWithLatest; loading: Loading 
   };
   return (
     <>
+      <Section title="Work" note={failed ?? (about && !about.work.length ? "None. What you start from its suggestions shows here." : undefined)} testId="agent-work">
+        {waiting}
+        {about?.work.map((work) => <WorkRow key={work.id} work={work} />)}
+      </Section>
+
       <Section title="Jobs" note={failed ?? (about && !about.jobs.length ? "None. Ask it to remind you of something, or to keep an eye on something." : undefined)} testId="agent-jobs">
         {waiting}
         {about?.jobs.map((job) => (
@@ -378,6 +387,33 @@ function WorkTab({ agent, loading }: { agent: AgentWithLatest; loading: Loading 
 /** Instructions as plain words, as the phone shows their start: each line of the markdown on a line of its own, so a heading reads apart from what follows it. */
 function instructionsPreview(instructions: string): string {
   return instructions.split("\n").map(plainText).filter(Boolean).join("\n");
+}
+
+/**
+ * Work the person started from one of the agent's suggestions: what it is,
+ * where it stands and when the agent offered it. A click opens the chat at
+ * the suggestion, and Stop ends it while it waits its turn or runs.
+ */
+function WorkRow({ work }: { work: Message }) {
+  const [stopping, setStopping] = useState(false);
+  const stop = () => {
+    setStopping(true);
+    answerAsk(work, false)
+      .catch((failure) => problem("Couldn't stop it", failure))
+      .finally(() => setStopping(false));
+  };
+  return (
+    <div className="flex items-center" data-testid="work">
+      <RowButton onClick={() => openChat(work.agent_id, work.id)} className="min-w-0 flex-1">
+        <RowText title={work.question?.what} note={`${WORK[work.status]} · ${listTime(work.created_at)}`} lines={2} />
+      </RowButton>
+      {work.status === "queued" || work.status === "running" ? (
+        <Button size="sm" busy={stopping} onClick={stop} className="mr-3 shrink-0" data-testid="stop-work">
+          Stop
+        </Button>
+      ) : null}
+    </div>
+  );
 }
 
 /** When a job next runs, and what it does. */

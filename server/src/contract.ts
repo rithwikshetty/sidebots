@@ -8,7 +8,7 @@
  * its own. The app sends its own in the same header, and the server refuses
  * to pair an app on another version.
  */
-export const CONTRACT_VERSION = 6;
+export const CONTRACT_VERSION = 7;
 export const CONTRACT_HEADER = "Sidebots-Contract";
 
 export type Sender = "person" | "agent" | "sidebots";
@@ -19,7 +19,10 @@ export type Status = "queued" | "running" | "done" | "failed";
  * answers, then `allowed` or `refused`. It is `unanswered` when the agent
  * stopped waiting first: the person took too long or sent a message instead,
  * or the turn ended. An ask for a connection is `allowed` once the person has
- * signed in to it.
+ * signed in to it. A suggestion waits on no turn, so it is `waiting` until
+ * the person starts it, which is `allowed`, or says not now, which is
+ * `refused`. It is `unanswered` once the agent's next suggestions take its
+ * place.
  */
 export type Ask = "waiting" | "allowed" | "refused" | "unanswered";
 /**
@@ -32,10 +35,14 @@ export type Ask = "waiting" | "allowed" | "refused" | "unanswered";
  * which Allow lets happen in full. `why` is the provider's reason for not
  * deciding this one by itself. An agent that needs one of the person's apps
  * asks for it the same way: the `kind` is `connection`, `connection` is the
- * app, and the person says yes by signing in to it.
+ * app, and the person says yes by signing in to it. An agent that offers to
+ * do a piece of work suggests it the same way: the `kind` is `work`, `what`
+ * names the work, `why` is the agent's reason for offering it now, `detail`
+ * is what the agent will do, and the person says yes by starting it. One
+ * with a `connection` starts once the person has signed in to that app.
  */
 export type Question = {
-  kind: "command" | "page" | "file" | "tool" | "connection";
+  kind: "command" | "page" | "file" | "tool" | "connection" | "work";
   title: string;
   what: string;
   facts: [label: string, value: string][];
@@ -62,16 +69,18 @@ export type Message = {
    * once it has, then `done` when it has answered or the person stopped it.
    * `failed` when its turn failed, or was stopped before the agent read it.
    * For a fresh start, the state of replacing the session. A failure notice
-   * is `failed`.
+   * is `failed`. For a suggestion the person started, the state of the work:
+   * `queued` until its run begins, `running` while it goes, then `done`, or
+   * `failed` when the run failed or the person stopped it.
    */
   status: Status;
-  /** When the agent read a message from the person, or null before it has. */
+  /** When the agent read a message from the person, or null before it has. For a message one of the agent's own runs sent, when its chat's session was told of it. */
   seen_at: number | null;
   /** The earlier message this one answers, when the person replied to one. */
   reply_to: string | null;
-  /** The job whose run sent it, for a message the agent sent by itself. */
+  /** What the agent was running by itself when it sent this: one of its jobs, or work the person started, by the id of its suggestion. */
   job_id: string | null;
-  /** An update the agent sent while still working. It notifies nobody and doesn't count as unread; the reply that follows does. */
+  /** A message that arrives quietly: an update the agent sent while still working, or a suggestion. It notifies nobody and doesn't count as unread; the reply it comes with does. */
   interim: boolean;
   /** For a message in which the agent asks before it does something, where the ask stands. Null for every other message. */
   ask: Ask | null;
@@ -196,8 +205,8 @@ export type SignIn = { url: string; redirect: string };
 /**
  * `fast` has the agent answer in its provider's fast mode, on a model that
  * has one. `read_at` is the time up to which the person has read the chat. A
- * `muted` agent sends no notifications. A `hidden` one is kept off the home
- * screen until it next has something to say. `color` fills the person's
+ * `muted` agent sends no notifications. A `hidden` one is kept off the chat
+ * list until it next has something to say. `color` fills the person's
  * messages in the agent's chat, as `#RRGGBB`; null takes the colour of its
  * avatar. `ran_on` is what the agent's last turn ran on, which its session
  * is on, and null before its first turn. `chat_changes` counts each time a
@@ -269,13 +278,21 @@ export function selectionWords(selection: Selection, other?: Selection): string[
 }
 
 /**
- * An agent as the home screen shows it. `working` is true while it has a turn
- * queued or running. `unread` counts the replies, the asks still waiting and
+ * An agent as the chat list shows it. `working` is true while it has a turn
+ * queued or running in its chat. `work` is what it does beside the chat: the
+ * suggestions the person started that haven't ended, the one its run is on
+ * first. `unread` counts the replies, the asks still waiting but for suggestions, and
  * the failure notices the person hasn't read. `latest` and `unread` leave out what agents say to
  * each other. `waiting_on` is the agent it asked something and hasn't heard
  * back from, when there is one.
  */
-export type AgentWithLatest = Agent & { latest: Message | null; working: boolean; unread: number; waiting_on: string | null };
+export type AgentWithLatest = Agent & { latest: Message | null; working: boolean; work: Message[]; unread: number; waiting_on: string | null };
+
+/** Whether a message is a suggestion: work the agent offers to do, which the person starts. */
+export const isSuggestion = (message: Pick<Message, "question">): boolean => message.question?.kind === "work";
+
+/** Whether an agent waits on the person's answer to an ask in a chat's messages, with a turn of the chat's held open for it. A suggestion holds no turn, and an ask one of the agent's own runs raised holds that run. */
+export const asksPerson = (agentId: string, messages: Message[]): boolean => messages.some((message) => message.ask === "waiting" && message.agent_id === agentId && message.job_id === null && !isSuggestion(message));
 
 /** Whether a message is one agent's to another, which the person can read and nobody is notified of. */
 export const betweenAgents = (message: Pick<Message, "peer_id" | "ask">): boolean => message.peer_id !== null && message.ask === null;
@@ -283,7 +300,8 @@ export const betweenAgents = (message: Pick<Message, "peer_id" | "ask">): boolea
 /**
  * Whether the person is told of a message as it comes: an agent's reply or
  * an ask still waiting, or a notice that a turn failed. An update while the
- * agent works, an ask's answer and what one agent says to another tell nobody.
+ * agent works, a suggestion, an ask's answer and what one agent says to
+ * another tell nobody.
  */
 export function notifies(message: Pick<Message, "sender" | "interim" | "ask" | "peer_id" | "status">): boolean {
   const answered = message.ask !== null && message.ask !== "waiting";
@@ -333,9 +351,9 @@ export function exchanges(messages: Message[]): Message[][] {
   return all;
 }
 
-/** The state an agent's avatar acts out: working while it has a turn, then failed when its last turn failed, replied while a reply waits to be read, and resting otherwise. */
+/** The state an agent's avatar acts out: working while it has a turn or work the person started, then failed when its last turn failed, replied while a reply waits to be read, and resting otherwise. */
 export function avatarStateOf(agent: AgentWithLatest): AvatarState {
-  if (agent.working) return "working";
+  if (agent.working || agent.work.length > 0) return "working";
   if (agent.latest?.sender === "sidebots" && agent.latest.status === "failed") return "failed";
   if (agent.unread > 0) return "replied";
   return "resting";
@@ -351,10 +369,12 @@ export type Schedule = { type: "every"; minutes: number } | { type: "daily"; tim
 export type Job = { id: string; agent_id: string; what: string; schedule: Schedule; next_at: number; created_at: number };
 /** Something an agent has learned, from its memory folder. */
 export type Memory = { name: string; description: string; body: string };
-/** What an agent's page shows about it: the instructions it follows, what it remembers and its jobs. */
-export type About = { instructions: string; memories: Memory[]; jobs: Job[] };
+/** How many of the suggestions the person started an agent's page lists. */
+export const WORK_LISTED = 20;
+/** What an agent's page shows about it: the instructions it follows, what it remembers, its jobs, and the latest of the suggestions the person started, newest first. */
+export type About = { instructions: string; memories: Memory[]; jobs: Job[]; work: Message[] };
 
-/** What a turn was for: a reply to the person, a run of one of the agent's jobs, or the memory save before a fresh start. */
+/** What a turn was for: a reply to the person, a run of one of the agent's jobs or of work the person started, or the memory save before a fresh start. */
 export type TurnKind = "reply" | "job" | "memory";
 /**
  * The turns of one kind that an agent ran: how many, what they cost in US
@@ -425,7 +445,7 @@ export function oneLine(message: Pick<Message, "body" | "question">): string {
 
 /**
  * What the event stream sends. A message that was added, changed status or
- * had its ask closed comes with its agent as the home screen shows it. An
+ * had its ask closed comes with its agent as the chat list shows it. An
  * agent that was added or changed comes the same way, with no message. A
  * deleted agent comes as its id, and each agent it had talked with comes
  * after it, since that agent's chat lost what the two said to each other. How

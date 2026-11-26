@@ -11,7 +11,7 @@ import { randomUUID } from "node:crypto";
 import { claude, question as claudeQuestion } from "../../../server/src/claude.ts";
 import { codex, question as codexQuestion } from "../../../server/src/codex.ts";
 import { CONNECTIONS, type Connection, type Limit, type Message, type Provider, type Question } from "../../../server/src/contract.ts";
-import { toolQuestion, type Answer, type Driver, type Drivers, type Prompt, type RunTurn, type Turn } from "../../../server/src/runner.ts";
+import { toolQuestion, type Answer, type Driver, type Drivers, type Offer, type Prompt, type RunTurn, type Turn } from "../../../server/src/runner.ts";
 import type { Store } from "../../../server/src/store.ts";
 import { PAGES, budget, invoice, packingList, picture, tickets, type Made } from "./files.ts";
 
@@ -52,6 +52,13 @@ export type Clock = ReturnType<typeof createClock>;
 
 /** What another agent is sent by `/agent-ask`, which has it ask the person before it acts. */
 export const TIDY_REQUEST = "Could you clear out the old invoices folder in Downloads? The tax return is filed, so nothing in it is needed any more.";
+
+/** The work `/suggest` offers the person, the one that matters most first. */
+export const SUGGESTIONS: Offer[] = [
+  { title: "Book the plumber for Thursday", why: "Hughes & Son have a slot on Thursday morning.", what: "Book Hughes & Son for Thursday morning to fix the dripping kitchen tap, and add it to the calendar." },
+  { title: "Compare home insurance quotes", why: "The home insurance renews on Friday at £40 more.", what: "Get three quotes for the same cover as the current home insurance, and set out the price and excess of each." },
+  { title: "Move the dentist to next week", why: "The dentist at 2 clashes with the school pick-up.", what: "Ask the dentist's surgery for a slot next week after 4, and move the appointment once they confirm." },
+];
 
 /** Thrown inside a turn once it is stopped, so it ends at once with no reply. */
 const STOPPED = Symbol("stopped");
@@ -230,6 +237,7 @@ const HELP = `I'm a scripted agent for trying Sidebots. I understand:
 - \`/fail [limit|signed-out|key|overloaded]\`: fail as the provider would
 - \`/ask command|file|page|tool|twice\`: ask before acting
 - \`/connect gmail|calendar|notion\`: ask for a connection
+- \`/suggest\`: offer three pieces of work
 - \`/page [tall|hostile]\`, \`/image\`, \`/images <n>\`, \`/files\`, \`/mixed\`: send files
 - \`/agent <name> <question>\`, \`/agent-ask <name>\`: talk to another agent
 - \`/job\`, \`/update\`, \`/silent\`, \`/echo-files\``;
@@ -269,6 +277,12 @@ export function createScript(store: Store, { pause, actions, clock }: { pause: (
     // A turn with no message of its own: the memory save before a fresh start, or a run of a job.
     if (!message) {
       if (prompt.text.startsWith("This session is about to be replaced")) return "Saved.";
+      // The run of work the person started from a suggestion works until it is stopped, so where it stands can be seen.
+      const started = /started a piece of work you suggested: "(.*)"\./.exec(prompt.text)?.[1];
+      if (started !== undefined) {
+        await wait(24 * 60 * 60_000);
+        return `Done: ${started}.`;
+      }
       await wait(pause());
       const action = takeAction();
       if (action && "hold" in action) {
@@ -353,6 +367,10 @@ export function createScript(store: Store, { pause, actions, clock }: { pause: (
         if (/already connected/.test(said)) return `${name} was already connected, so I'm all set.`;
         return `Okay, I won't connect ${name} for now.`;
       }
+      case "/suggest":
+        await wait(pause());
+        for (const offer of SUGGESTIONS) turn.suggest(offer);
+        return "Here's your week. Hughes & Son can come on Thursday, the home insurance renews on Friday, and the dentist clashes with the school pick-up.";
       case "/page": {
         await wait(pause());
         if (argument === "hostile") {

@@ -3,6 +3,7 @@ import { FilePlus2 } from "lucide-react";
 import type { AgentWithLatest, Message } from "@server/contract.ts";
 import { MAX_FILES } from "@client/files.ts";
 import { preview } from "@client/messages.ts";
+import { workBeside } from "@client/suggestions.ts";
 import { changeOrSay, problem } from "../lib/alerts.ts";
 import { markRead, send, stop, useAgent, useMessages, useOnline } from "../lib/store.ts";
 import { useLooking } from "../lib/view.ts";
@@ -160,6 +161,7 @@ function ChatWith({ agent }: { agent: AgentWithLatest }) {
           onRemove={(file) => update({ files: session.files.filter((each) => each !== file) })}
           replyTo={session.replyTo}
           onCancelReply={() => update({ replyTo: null })}
+          beside={workBeside(agent, messages)}
           onSend={() => void onSend()}
           onStop={agent.working || waitingOn ? onStop : undefined}
           online={online}

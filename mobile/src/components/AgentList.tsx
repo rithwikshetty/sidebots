@@ -1,26 +1,26 @@
-import { useEffect, useRef, useState, type ComponentType, type ReactNode, type RefObject } from "react";
+import { useEffect, useState, type ComponentType, type ReactNode } from "react";
 import { Pressable, StyleSheet, Text, TextInput, View } from "react-native";
 import Animated, { LayoutAnimationConfig, useAnimatedStyle, withTiming } from "react-native-reanimated";
-import Swipeable, { type SwipeableMethods } from "react-native-gesture-handler/ReanimatedSwipeable";
 import { useRouter } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { Bell, BellOff, ChevronRight, Eye, EyeOff, Menu, Plus, Search, Trash2, X } from "lucide-react-native";
+import { BellOff, ChevronRight, Plus, Search, X } from "lucide-react-native";
 import { avatarStateOf, type AgentWithLatest, type Found } from "@server/contract";
 import { foundLine, preview } from "@client/messages";
 import { listTime } from "@client/time";
 import { Glass } from "@/components/Glass";
 import { AvatarView } from "@/components/AvatarView";
+import { Computer } from "@/components/Computer";
 import { EdgeFade } from "@/components/EdgeFade";
 import { FadingText } from "@/components/FadingText";
-import { useSideMenu } from "@/components/SideMenu";
 import { confirmDelete, problem } from "@/lib/alerts";
 import { UPDATE, type Behind } from "@/lib/api";
 import { useWorkingLine } from "@/lib/lines";
 import { EASE, HIDE, MOVE, POP_IN, POP_OUT, SHOW } from "@/lib/motion";
-import { changeAgent, findMessages, useAgent, useAgents, useAvatars, useBehind, useOnline, type AgentChanges } from "@/lib/state";
+import { changeAgent, findMessages, useAgent, useAgents, useAvatars, useBehind, useOnline } from "@/lib/state";
 import { useSplit, useToday, useWindowControls } from "@/lib/layout";
 import { openChat, useChatOnScreen } from "@/lib/push";
 import { useTheme } from "@/lib/theme";
+import { MessageMenuView, type MessageMenuAction } from "../../modules/message-menu/src";
 import { ScrollWaitsForMenuSwipe } from "../../modules/side-menu-swipe/src";
 
 // The height of the bar that floats at the top, which is the size of each round button in it.
@@ -29,10 +29,8 @@ const BAR = 44;
 const FIXED_MAX_SCALE = 1.3;
 // How long the person rests from typing before the server is asked.
 const SEARCH_DELAY_MS = 200;
-// The width of each action a swipe on a row shows.
-const ACTION = 76;
 
-/** What the home screen says in place of the agents when the computer or the app is behind. */
+/** What the app says in place of the agents when the computer or the app is behind. */
 const BEHIND_NOTE: Record<Behind, string> = {
   computer: "It's older than this app. Your agents show here again once it's updated.",
   app: "Sidebots on your computer is newer than this app. Your agents show here again once it's updated.",
@@ -42,20 +40,20 @@ const BEHIND_NOTE: Record<Behind, string> = {
 type Row = { agent: AgentWithLatest; found?: Found };
 
 /**
- * The person's agents: the home screen, or in a split window the column
- * beside the chat, where the agent whose chat is open is marked. It has no
- * title bar and no heading: the agents, with glass buttons floating over them
- * at the top, one for the side menu on the left and, on the right, one for
- * search and one for a new agent. Search puts a glass field in the buttons'
- * place, with the keyboard up and a button to close it. A swipe right opens
- * the side menu, and a swipe left on an agent shows what can be done to it:
- * mute, hide and delete. Hidden agents wait under a line at the list's end,
- * which a tap opens. A person with no agents yet is pointed at the + button.
- * When the computer and the app speak different versions of the contract, a
- * line saying which to update takes the agents' place. While the search
- * field holds text, the list is the agents whose name matches and then the
- * messages that contain it, from every chat. Rows slide to their new places
- * as agents move up the list, and fade in and out as they come and go.
+ * The person's agents: the side menu a window of one column keeps them in,
+ * which is also its home screen while no chat is open, or in a split window
+ * the column beside the chat. The agent whose chat is open is marked. At the top are the app's name and glass buttons for search
+ * and a new agent. Search puts a glass field in their place, with the
+ * keyboard up and a button to close it. A long press on an agent opens what
+ * can be done to it: mute, hide and delete. Hidden agents wait under a line
+ * at the list's end, which a tap opens. A person with no agents yet is
+ * pointed at the + button. When the computer and the app speak different
+ * versions of the contract, a line saying which to update takes the agents'
+ * place. While the search field holds text, the list is the agents whose
+ * name matches and then the messages that contain it, from every chat. Rows
+ * slide to their new places as agents move up the list, and fade in and out
+ * as they come and go. At the foot is the computer the device has paired
+ * with, which opens Settings.
  */
 export function AgentList() {
   const theme = useTheme();
@@ -67,18 +65,18 @@ export function AgentList() {
   // The avatars come with the computer's first answer, so until then the phone can't tell whether there are no agents.
   const loaded = useAvatars().length > 0;
   const empty = loaded && agents.length === 0;
-  const menu = useSideMenu();
   const controls = useWindowControls();
+  // The side menu is the colour of what the screens slide off, and the open chat's row is raised from it. Beside the chat, the agents are on the page colour.
+  const split = useSplit();
+  const surface = split ? theme.bg : theme.field;
+  const marked = split ? theme.field : theme.raised;
   const [searching, setSearching] = useState(false);
   const [typed, setTyped] = useState("");
   const search = typed.trim();
   const found = useFound(search);
   const [showHidden, setShowHidden] = useState(false);
-  // The row whose actions are showing, which closes when another row's open.
-  const opened = useRef<SwipeableMethods | null>(null);
-  // The agent whose chat is open beside the list.
-  const chat = useChatOnScreen();
-  const open = useSplit() ? chat : null;
+  // The agent whose chat is open.
+  const open = useChatOnScreen();
 
   const rows: Row[] = behind
     ? []
@@ -92,16 +90,16 @@ export function AgentList() {
         ]
       : agents.filter((agent) => !agent.hidden).map((agent) => ({ agent }));
   const hidden = search || behind ? [] : agents.filter((agent) => agent.hidden);
-  const swipeRow = (agent: AgentWithLatest) => (
+  const agentRow = (agent: AgentWithLatest) => (
     <Animated.View key={agent.id} entering={SHOW} exiting={HIDE}>
-      <AgentActions agent={agent} opened={opened}>
-        <AgentRow agent={agent} search={search} online={online} selected={agent.id === open} onPress={() => openChat(agent.id)} />
+      <AgentActions agent={agent}>
+        <AgentRow agent={agent} search={search} online={online} marked={agent.id === open ? marked : undefined} onPress={() => openChat(agent.id)} />
       </AgentActions>
     </Animated.View>
   );
 
   return (
-    <View style={[styles.screen, { backgroundColor: theme.bg }]}>
+    <View style={[styles.screen, { backgroundColor: surface }]}>
       {/* The rows the list opens with show as they are; ones that come later fade in. */}
       <LayoutAnimationConfig skipEntering>
         <Animated.FlatList
@@ -109,11 +107,12 @@ export function AgentList() {
           keyExtractor={(row) => row.found?.id ?? row.agent.id}
           itemLayoutAnimation={MOVE}
           contentInsetAdjustmentBehavior="never"
-          contentContainerStyle={{ flexGrow: 1, paddingTop: insets.top + BAR + 12, paddingBottom: insets.bottom + 16 }}
+          contentContainerStyle={{ flexGrow: 1, paddingTop: insets.top + BAR + 12, paddingBottom: 16 }}
           // A drag lowers the keyboard, and a tap on a row opens it with the keyboard still up.
           keyboardDismissMode="on-drag"
           keyboardShouldPersistTaps="handled"
-          ListHeaderComponent={<ScrollWaitsForMenuSwipe />}
+          // In the side menu, a swipe across closes it, and the list's scroll waits for that swipe to judge each drag.
+          ListHeaderComponent={split ? undefined : <ScrollWaitsForMenuSwipe />}
           ListEmptyComponent={
             behind ? (
               <Notice title={UPDATE[behind]} note={BEHIND_NOTE[behind]} />
@@ -134,7 +133,7 @@ export function AgentList() {
                   <Text style={[styles.hiddenText, { color: theme.ink2 }]}>Hidden · {hidden.length}</Text>
                   <Turning open={showHidden} />
                 </Pressable>
-                {showHidden ? hidden.map(swipeRow) : null}
+                {showHidden ? hidden.map(agentRow) : null}
               </>
             ) : undefined
           }
@@ -144,12 +143,12 @@ export function AgentList() {
                 <AgentRow agent={item.agent} found={item.found} search={search} online={online} onPress={() => openChat(item.agent.id, item.found?.id)} />
               </Animated.View>
             ) : (
-              swipeRow(item.agent)
+              agentRow(item.agent)
             )
           }
         />
       </LayoutAnimationConfig>
-      <EdgeFade edge="top" height={insets.top + BAR + 16} solid={insets.top} />
+      <EdgeFade edge="top" height={insets.top + BAR + 16} solid={insets.top} color={surface} />
       {searching ? (
         <Animated.View key="search" entering={SHOW} exiting={HIDE} style={[styles.bar, { top: insets.top, marginLeft: controls }]}>
           <Glass style={styles.searchGlass}>
@@ -179,13 +178,23 @@ export function AgentList() {
         </Animated.View>
       ) : (
         <Animated.View key="buttons" entering={SHOW} exiting={HIDE} pointerEvents="box-none" style={[styles.bar, { top: insets.top, marginLeft: controls }]}>
-          <BarButton icon={Menu} label="Menu" onPress={menu.open} />
+          <Text accessibilityRole="header" style={[styles.wordmark, { color: theme.ink }]}>
+            Sidebots
+          </Text>
           <View style={styles.barEnd}>
             {behind || empty ? null : <BarButton icon={Search} label="Search" onPress={() => setSearching(true)} />}
             {behind ? null : <BarButton icon={Plus} label="New agent" onPress={() => router.push("/new-agent")} />}
           </View>
         </Animated.View>
       )}
+      <Pressable
+        onPress={() => router.push("/settings")}
+        accessibilityRole="button"
+        accessibilityHint="Opens Settings"
+        style={({ pressed }) => [styles.computer, { borderTopColor: theme.line, paddingBottom: Math.max(insets.bottom, 12), backgroundColor: pressed ? theme.line : "transparent" }]}>
+        <Computer />
+        <ChevronRight size={18} strokeWidth={2} color={theme.ink2} />
+      </Pressable>
     </View>
   );
 }
@@ -230,55 +239,24 @@ function useFound(text: string): Found[] | null {
 }
 
 /**
- * Wraps an agent's row so that a swipe left shows its actions: mute, hide and
- * delete. Mute stops its notifications. Hide takes it off the list until it
- * next has something to say. Delete asks first.
+ * Wraps an agent's row so that a long press opens what can be done to it:
+ * mute, hide and delete. Mute stops its notifications. Hide takes it off the
+ * list until it next has something to say. Delete asks first.
  */
-function AgentActions({ agent, opened, children }: { agent: AgentWithLatest; opened: RefObject<SwipeableMethods | null>; children: ReactNode }) {
-  const theme = useTheme();
-  const row = useRef<SwipeableMethods>(null);
-  const { holdSwipe } = useSideMenu();
-  // Whether this row's actions are showing. A row that leaves the list with them showing, as when a search no longer finds it, hands the swipe back.
-  const showing = useRef(false);
-  useEffect(
-    () => () => {
-      if (showing.current) holdSwipe(false);
-    },
-    [holdSwipe],
-  );
-  const change = (changes: AgentChanges) => void changeAgent(agent.id, changes).catch((failure) => problem("Couldn't change that", failure));
-  const act = (action: () => void) => () => {
-    row.current?.close();
-    action();
+function AgentActions({ agent, children }: { agent: AgentWithLatest; children: ReactNode }) {
+  const actions: MessageMenuAction[] = [
+    { id: "mute", title: agent.muted ? "Unmute" : "Mute", systemImage: agent.muted ? "bell" : "bell.slash", group: "keeps" },
+    { id: "hide", title: agent.hidden ? "Unhide" : "Hide", systemImage: agent.hidden ? "eye" : "eye.slash", group: "keeps" },
+    { id: "delete", title: "Delete agent", systemImage: "trash", destructive: true, group: "removes" },
+  ];
+  const act = (id: string) => {
+    if (id === "delete") return confirmDelete(agent);
+    void changeAgent(agent.id, id === "mute" ? { muted: !agent.muted } : { hidden: !agent.hidden }).catch((failure) => problem("Couldn't change that", failure));
   };
   return (
-    <Swipeable
-      ref={row}
-      friction={1.5}
-      rightThreshold={ACTION / 2}
-      overshootRight={false}
-      onSwipeableWillOpen={() => {
-        if (opened.current !== row.current) opened.current?.close();
-        opened.current = row.current;
-        showing.current = true;
-        holdSwipe(true);
-      }}
-      // The row another one's opening closed has already handed the swipe on.
-      onSwipeableWillClose={() => {
-        showing.current = false;
-        if (opened.current !== row.current) return;
-        opened.current = null;
-        holdSwipe(false);
-      }}
-      renderRightActions={() => (
-        <View style={styles.actions}>
-          <RowAction icon={agent.muted ? Bell : BellOff} label={agent.muted ? "Unmute" : "Mute"} color={theme.ink2} onPress={act(() => change({ muted: !agent.muted }))} />
-          <RowAction icon={agent.hidden ? Eye : EyeOff} label={agent.hidden ? "Unhide" : "Hide"} color={theme.tint} onPress={act(() => change({ hidden: !agent.hidden }))} />
-          <RowAction icon={Trash2} label="Delete" color={theme.danger} onPress={act(() => confirmDelete(agent))} />
-        </View>
-      )}>
+    <MessageMenuView actions={actions} onAction={({ nativeEvent }) => act(nativeEvent.id)}>
       {children}
-    </Swipeable>
+    </MessageMenuView>
   );
 }
 
@@ -293,19 +271,8 @@ function Turning({ open }: { open: boolean }) {
   );
 }
 
-/** One of the actions behind a row: its icon over its name, on its colour. */
-function RowAction({ icon: Icon, label, color, onPress }: { icon: ComponentType<{ size?: number; color?: string; strokeWidth?: number }>; label: string; color: string; onPress: () => void }) {
-  const theme = useTheme();
-  return (
-    <Pressable onPress={onPress} accessibilityRole="button" accessibilityLabel={label} style={({ pressed }) => [styles.action, { backgroundColor: color, opacity: pressed ? 0.75 : 1 }]}>
-      <Icon size={22} strokeWidth={2} color={theme.onTint} />
-      <Text style={[styles.actionText, { color: theme.onTint }]}>{label}</Text>
-    </Pressable>
-  );
-}
-
-/** An agent as a row of the list. With `found`, the row shows that message from its chat in place of the latest one. A `selected` row is the chat open beside the list. */
-function AgentRow({ agent, found, search, online, selected = false, onPress }: { agent: AgentWithLatest; found?: Found; search: string; online: boolean; selected?: boolean; onPress: () => void }) {
+/** An agent as a row of the list. With `found`, the row shows that message from its chat in place of the latest one. The row of the chat that is open is filled with `marked`, as a row is while a finger is on it. */
+function AgentRow({ agent, found, search, online, marked, onPress }: { agent: AgentWithLatest; found?: Found; search: string; online: boolean; marked?: string; onPress: () => void }) {
   const theme = useTheme();
   const avatarState = found ? "resting" : avatarStateOf(agent);
   const working = online && avatarState === "working";
@@ -317,8 +284,8 @@ function AgentRow({ agent, found, search, online, selected = false, onPress }: {
   return (
     <Pressable
       onPress={onPress}
-      accessibilityState={{ selected }}
-      style={({ pressed }) => [styles.row, { backgroundColor: pressed || selected ? theme.field : theme.bg }]}>
+      accessibilityState={{ selected: marked !== undefined }}
+      style={({ pressed }) => [styles.row, { backgroundColor: marked ?? (pressed ? theme.line : "transparent") }]}>
       <AvatarView avatarId={agent.avatar_id} state={online ? avatarState : "resting"} size={48} dimmed={!online} />
       <View style={[styles.body, { borderBottomColor: theme.line }]}>
         <View style={styles.top}>
@@ -356,7 +323,8 @@ function AgentRow({ agent, found, search, online, selected = false, onPress }: {
 
 const styles = StyleSheet.create({
   screen: { flex: 1 },
-  bar: { position: "absolute", left: 16, right: 16, zIndex: 2, flexDirection: "row", justifyContent: "space-between", gap: 8 },
+  bar: { position: "absolute", left: 16, right: 16, zIndex: 2, flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 8 },
+  wordmark: { fontSize: 22, lineHeight: 28, fontWeight: "600", paddingLeft: 8 },
   barEnd: { flexDirection: "row", gap: 8 },
   barButton: { width: BAR, height: BAR, borderRadius: BAR / 2, alignItems: "center", justifyContent: "center", overflow: "hidden" },
   searchGlass: { flex: 1, height: BAR, borderRadius: BAR / 2, flexDirection: "row", alignItems: "center", gap: 8, paddingLeft: 14, paddingRight: 8, overflow: "hidden" },
@@ -370,9 +338,7 @@ const styles = StyleSheet.create({
   top: { flexDirection: "row", justifyContent: "space-between", alignItems: "baseline", gap: 8 },
   title: { flex: 1, flexDirection: "row", alignItems: "center", gap: 6 },
   name: { flexShrink: 1, fontSize: 17, fontWeight: "600" },
-  actions: { flexDirection: "row" },
-  action: { width: ACTION, alignItems: "center", justifyContent: "center", gap: 4 },
-  actionText: { fontSize: 12, fontWeight: "600" },
+  computer: { flexDirection: "row", alignItems: "center", gap: 14, paddingLeft: 24, paddingRight: 20, paddingTop: 12, borderTopWidth: StyleSheet.hairlineWidth },
   hidden: { flexDirection: "row", alignItems: "center", gap: 4, paddingHorizontal: 16, paddingVertical: 14 },
   hiddenText: { fontSize: 15 },
   time: { fontSize: 15 },
