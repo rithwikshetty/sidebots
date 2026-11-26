@@ -5,7 +5,6 @@
   --ink-2: #98989f;
   --line: #1f1f22;
   --field: #1c1c1e;
-  --bubble: #262629;
   --accent: #2a62d4;
   --link: #7eaaff;
   color-scheme: dark;
@@ -34,7 +33,7 @@ h1, h2 { font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", syste
 .bar nav a, footer a { color: var(--ink-2); font-size: 15px; text-decoration: none; }
 .bar nav a:hover, footer a:hover { color: var(--ink); }
 
-/* The hero: what Sidebots is, the download, and the app's home screen rising out of a blue light. */
+/* The hero: what Sidebots is, the download, and its window standing in a blue light. */
 .hero { display: flex; flex-direction: column; align-items: center; text-align: center; padding-top: 88px; }
 h1 { max-width: 11em; font-size: clamp(44px, 7.4vw, 88px); line-height: 1.02; letter-spacing: -0.045em; }
 .lede { margin-top: 24px; max-width: 31em; font-size: 20px; line-height: 1.45; color: var(--ink-2); text-wrap: balance; }
@@ -59,21 +58,115 @@ h1 { max-width: 11em; font-size: clamp(44px, 7.4vw, 88px); line-height: 1.02; le
 .stage {
   position: relative;
   width: 100%;
-  height: 560px;
-  margin-top: 72px;
+  margin-top: 24px;
+  padding-top: 104px;
   display: flex;
   justify-content: center;
   overflow: hidden;
   border-bottom: 1px solid var(--line);
-  -webkit-mask-image: linear-gradient(#000 70%, transparent);
-  mask-image: linear-gradient(#000 70%, transparent);
 }
 .stage::before {
   content: "";
   position: absolute;
   inset: 0;
-  background: radial-gradient(48% 80% at 50% 70%, rgb(42 98 212 / 0.7), transparent 72%);
+  background: radial-gradient(62% 56% at 50% 38%, rgb(42 98 212 / 0.62), transparent 72%);
 }
+/* The window, from two pictures of the real one: Maya at work, then its reply over it. */
+.window {
+  position: relative;
+  flex: none;
+  width: min(1000px, 100%);
+  aspect-ratio: 1100 / 780;
+  border-radius: 12px 12px 0 0;
+  overflow: hidden;
+  background: #000000;
+  box-shadow: 0 0 0 1px #3a3a3e, 0 40px 120px rgb(0 0 0 / 0.6);
+}
+.window img { position: absolute; inset: 0; width: 100%; height: 100%; }
+.window .done { animation: appear 600ms ease-out 4200ms both; }
+/* The window's three buttons, where the Mac draws them over it. */
+.window i { position: absolute; top: 2.44%; left: 1.45%; width: 1.09%; aspect-ratio: 1; border-radius: 50%; background: #ff5f57; }
+.window i:nth-of-type(2) { left: 3.27%; background: #febc2e; }
+.window i:nth-of-type(3) { left: 5.09%; background: #28c840; }
+@keyframes appear { from { opacity: 0; } }
+/*
+ * An agent's avatar, cut from its spritesheet as the app does: 8 cells across,
+ * 192 by 208 each, with the 144-pixel drawing 24 in and 48 down, and one row
+ * per state. At a third of its size, each drawing pixel is 3 screen pixels.
+ */
+.avatar {
+  --scale: 0.3333;
+  --frames: 6;
+  --row: 0;
+  --frame-ms: 450ms;
+  display: inline-block;
+  flex: none;
+  width: calc(144px * var(--scale));
+  height: calc(153px * var(--scale));
+  background-image: var(--sheet);
+  background-size: calc(1536px * var(--scale)) calc(832px * var(--scale));
+  background-position-y: calc(-1 * (var(--row) * 208px + 39px) * var(--scale));
+  image-rendering: pixelated;
+  animation: frames calc(var(--frames) * var(--frame-ms)) steps(var(--frames)) infinite;
+}
+.avatar.working { --row: 1; --frame-ms: 150ms; }
+.avatar.replied { --row: 2; --frame-ms: 300ms; }
+@keyframes frames {
+  from { background-position-x: calc(-24px * var(--scale)); }
+  to { background-position-x: calc(-1 * (var(--frames) * 192px + 24px) * var(--scale)); }
+}
+@keyframes arrive { from { opacity: 0; transform: translateY(6px); } }
+.arrive, .arrive + .count { animation: arrive 400ms ease-out; }
+@media (prefers-reduced-motion: reduce) {
+  .avatar { animation: none; background-position-x: calc(-24px * var(--scale)); }
+  .window .done { animation: none; }
+}
+
+/* A feature: a few words beside the part of the app they are about. */
+.feature { display: grid; grid-template-columns: 5fr 7fr; align-items: center; gap: 72px; padding: 96px 0; border-bottom: 1px solid var(--line); }
+.flip { grid-template-columns: 7fr 5fr; }
+.flip .words { order: 2; }
+h2 { font-size: clamp(30px, 3.6vw, 42px); line-height: 1.08; letter-spacing: -0.035em; }
+.words p { margin-top: 16px; max-width: 27em; font-size: 18px; color: var(--ink-2); }
+.facts { margin-top: 24px; display: grid; gap: 10px; font-size: 16px; color: var(--ink-2); }
+.facts li { padding-left: 26px; background: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M3 8.5l3.200 3.200L13 5' fill='none' stroke='%237eaaff' stroke-width='1.75' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") 0 4px / 16px no-repeat; }
+.shot {
+  min-height: 400px;
+  padding: 48px 20px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--line);
+  border-radius: 24px;
+  background: radial-gradient(90% 90% at 50% 110%, rgb(42 98 212 / 0.34), transparent 70%), #050506;
+}
+
+/* A part of the window, from a picture of the real one. Its top right corner is the window's own, or its bottom right for one that shows the window's foot, and the rest runs off the edges. */
+.part { display: block; min-height: 0; padding: 7% 7% 0 0; overflow: hidden; }
+.part img { display: block; width: 100%; height: auto; border: solid #3a3a3e; border-width: 1px 1px 0 0; border-radius: 0 10px 0 0; }
+.foot { padding: 0 7% 7% 0; }
+.foot img { border-width: 0 1px 1px 0; border-radius: 0 0 10px 0; }
+
+/* Maya on the computer: at work, then replied, with its reply as the notification the computer shows. */
+.desk { position: relative; align-self: stretch; width: 100%; padding-top: 132px; display: flex; flex-direction: column; align-items: center; }
+.notice { position: absolute; top: 0; right: 0; width: min(348px, 100%); padding: 12px 14px 13px 12px; display: flex; gap: 10px; border: 1px solid #3a3a3e; border-radius: 20px; background: #232325; box-shadow: 0 24px 80px rgb(0 0 0 / 0.5); font-size: 13px; line-height: 17px; }
+.notice img { flex: none; border-radius: 10px; }
+.notice time { font-size: 12px; }
+.who { display: grid; justify-items: center; }
+.who .avatar { --scale: 1; grid-area: 1 / 1; }
+.who .working, .busy { opacity: 0; }
+.pill { margin-top: -8px; padding: 3px 11px; border-radius: 999px; background: var(--field); font-size: 12px; font-weight: 600; line-height: 16px; }
+.busy { margin-top: 14px; font-size: 15px; font-style: italic; color: var(--ink-2); }
+
+/* It plays out once in view: Maya works, then the notification comes and Maya has replied. */
+.waiting .notice, .waiting .replied { opacity: 0; }
+.waiting .working, .waiting .busy { opacity: 1; }
+.playing .notice { animation: land 520ms cubic-bezier(0.2, 0.9, 0.3, 1) 2600ms both; }
+.playing .avatar, .playing .busy { transition: opacity 160ms linear 2600ms; }
+@keyframes land { from { opacity: 0; transform: translateX(40px); } }
+
+/* The phone, running off the foot of its picture, with the app's home screen on it: one chat per agent. */
+.handset { min-height: 0; height: 540px; padding: 48px 20px 0; align-items: flex-start; overflow: hidden; }
 .phone {
   position: relative;
   flex: none;
@@ -106,111 +199,6 @@ h1 { max-width: 11em; font-size: clamp(44px, 7.4vw, 88px); line-height: 1.02; le
 .preview.working { font-style: italic; }
 .count { min-width: 22px; height: 22px; padding: 0 7px; border-radius: 11px; background: var(--accent); font-size: 13px; font-weight: 600; line-height: 22px; text-align: center; }
 
-/*
- * An agent's avatar, cut from its spritesheet as the app does: 8 cells across,
- * 192 by 208 each, with the 144-pixel drawing 24 in and 48 down, and one row
- * per state. At a third of its size, each drawing pixel is 3 screen pixels.
- */
-.avatar {
-  --scale: 0.3333;
-  --frames: 6;
-  --row: 0;
-  --frame-ms: 450ms;
-  display: inline-block;
-  flex: none;
-  width: calc(144px * var(--scale));
-  height: calc(153px * var(--scale));
-  background-image: var(--sheet);
-  background-size: calc(1536px * var(--scale)) calc(832px * var(--scale));
-  background-position-y: calc(-1 * (var(--row) * 208px + 39px) * var(--scale));
-  image-rendering: pixelated;
-  animation: frames calc(var(--frames) * var(--frame-ms)) steps(var(--frames)) infinite;
-}
-.avatar.working { --row: 1; --frame-ms: 150ms; }
-.avatar.replied { --row: 2; --frame-ms: 300ms; }
-@keyframes frames {
-  from { background-position-x: calc(-24px * var(--scale)); }
-  to { background-position-x: calc(-1 * (var(--frames) * 192px + 24px) * var(--scale)); }
-}
-@keyframes arrive { from { opacity: 0; transform: translateY(6px); } }
-.arrive, .arrive + .count { animation: arrive 400ms ease-out; }
-@media (prefers-reduced-motion: reduce) {
-  .avatar { animation: none; background-position-x: calc(-24px * var(--scale)); }
-}
-
-/* A feature: a few words beside the part of the app they are about. */
-.feature { display: grid; grid-template-columns: 1fr 1fr; align-items: center; gap: 72px; padding: 96px 0; border-bottom: 1px solid var(--line); }
-.flip .words { order: 2; }
-h2 { font-size: clamp(30px, 3.6vw, 42px); line-height: 1.08; letter-spacing: -0.035em; }
-.words p { margin-top: 16px; max-width: 27em; font-size: 18px; color: var(--ink-2); }
-.facts { margin-top: 24px; display: grid; gap: 10px; font-size: 16px; color: var(--ink-2); }
-.facts li { padding-left: 26px; background: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M3 8.5l3.200 3.200L13 5' fill='none' stroke='%237eaaff' stroke-width='1.75' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") 0 4px / 16px no-repeat; }
-.shot {
-  min-height: 400px;
-  padding: 48px 20px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  border: 1px solid var(--line);
-  border-radius: 24px;
-  background: radial-gradient(90% 90% at 50% 110%, rgb(42 98 212 / 0.34), transparent 70%), #050506;
-}
-
-.thread { width: min(380px, 100%); display: flex; flex-direction: column; gap: 6px; }
-.who { align-self: center; display: flex; flex-direction: column; align-items: center; margin-bottom: 14px; }
-.pill { margin-top: -5px; padding: 3px 11px; border-radius: 999px; background: var(--field); font-size: 12px; font-weight: 600; line-height: 16px; }
-.bubble { max-width: 80%; padding: 8px 14px; border-radius: 20px; font-size: 17px; line-height: 22px; }
-.mine { align-self: flex-end; background: var(--accent); border-bottom-right-radius: 6px; }
-.theirs { width: fit-content; background: var(--bubble); border-bottom-left-radius: 6px; }
-.receipt { align-self: flex-end; margin: -2px 4px 0 0; font-size: 11px; line-height: 15px; color: var(--ink-2); }
-.answer { position: relative; margin-top: 6px; }
-.sent { margin-bottom: 14px; display: grid; gap: 8px; }
-.named { display: flex; align-items: center; justify-content: space-between; margin-bottom: -2px; padding: 0 6px 0 2px; font-size: 13px; line-height: 18px; color: var(--ink-2); }
-.flat { padding: 12px 14px; border: 1px solid #2c2c2e; border-radius: 14px; font-size: 17px; line-height: 22px; }
-.flat div { display: flex; justify-content: space-between; gap: 12px; }
-.flat b { font-weight: 600; }
-.flat span { display: block; margin-top: 2px; font-size: 15px; line-height: 20px; color: var(--ink-2); }
-.flat span b { color: var(--ink); }
-.sent i { margin: 4px 2px 0; font-size: 15px; line-height: 20px; font-weight: 500; font-style: normal; color: var(--link); }
-.pick { border-color: var(--accent); }
-.busy { position: absolute; top: 4px; left: 2px; display: flex; align-items: center; gap: 10px; font-size: 15px; font-style: italic; color: var(--ink-2); opacity: 0; }
-
-/* The chat plays out as it does on the phone: the message, its receipt, the agent at work, then the one reply in its place. */
-.waiting .mine, .waiting .receipt, .waiting .sent, .waiting .theirs { opacity: 0; }
-.playing .mine { animation: arrive 420ms ease-out both; }
-.playing .receipt { animation: arrive 420ms ease-out 700ms both; }
-.playing .busy { animation: busy 2600ms ease-out 1300ms both; }
-.playing .sent, .playing .theirs { animation: arrive 420ms ease-out 3900ms both; }
-@keyframes busy { 0%, 100% { opacity: 0; } 12%, 88% { opacity: 1; } }
-
-/* The panel Sidebots shows on the computer. */
-.panel { width: 300px; padding: 6px; border: 1px solid #38383b; border-radius: 13px; background: #232325; box-shadow: 0 24px 80px rgb(0 0 0 / 0.5); font-size: 13px; line-height: 16px; }
-.panel hr { margin: 6px 0; border: 0; border-top: 1px solid #3a3a3d; }
-.panel h3 { padding: 0 10px 2px; font-size: 11px; font-weight: 600; color: var(--ink-2); }
-.app { display: flex; align-items: center; gap: 10px; padding: 6px 10px 2px; }
-.app img { border-radius: 8px; }
-.app b { display: block; font-weight: 600; }
-.app span { display: flex; align-items: center; gap: 5px; font-size: 12px; color: var(--ink-2); }
-.dot { width: 7px; height: 7px; border-radius: 50%; background: #30d158; }
-.item { display: flex; align-items: center; gap: 10px; padding: 4px 10px; }
-.item small { display: block; font-size: 11px; color: var(--ink-2); }
-.tile { flex: none; width: 26px; height: 26px; border-radius: 50%; background: rgb(255 255 255 / 0.1); display: grid; place-items: center; }
-.tile svg { width: 14px; height: 14px; }
-.change { margin-left: auto; padding: 2px 8px; border-radius: 5px; background: rgb(255 255 255 / 0.14); font-size: 11px; }
-.plain { display: flex; align-items: center; justify-content: space-between; padding: 5px 10px; }
-.plain kbd { font: inherit; color: var(--ink-2); }
-.switch { width: 26px; height: 15px; border-radius: 8px; background: var(--accent); position: relative; }
-.switch::after { content: ""; position: absolute; top: 1.5px; right: 1.5px; width: 12px; height: 12px; border-radius: 50%; background: #ffffff; }
-
-/* An agent's jobs, as its page in the app lists them. */
-.jobs { width: min(380px, 100%); }
-.jobs h3 { padding: 0 16px 8px; font-size: 13px; font-weight: 400; color: var(--ink-2); }
-.card { border-radius: 14px; background: var(--field); }
-.job { padding: 12px 16px; display: grid; gap: 2px; }
-.job + .job { border-top: 1px solid #2c2c2e; }
-.job b { font-weight: 400; }
-.job span { font-size: 14px; line-height: 19px; color: var(--ink-2); }
-
 .film, .setup, .know { padding: 104px 0; border-bottom: 1px solid var(--line); }
 .film { text-align: center; }
 .film video { display: block; margin-top: 40px; width: 100%; height: auto; border: 1px solid var(--line); border-radius: 20px; background: #000000; }
@@ -231,8 +219,9 @@ footer img { border-radius: 5px; }
 @media (max-width: 820px) {
   .hero { padding-top: 56px; }
   .lede { font-size: 18px; }
-  .stage { height: 480px; margin-top: 56px; }
-  .feature { grid-template-columns: 1fr; gap: 48px; padding: 72px 0; }
+  .stage { margin-top: 16px; padding-top: 72px; justify-content: flex-start; -webkit-mask-image: linear-gradient(90deg, #000 72%, transparent); mask-image: linear-gradient(90deg, #000 72%, transparent); }
+  .window { width: 720px; margin-left: 16px; border-radius: 12px 0 0 0; }
+  .feature, .flip { grid-template-columns: 1fr; gap: 48px; padding: 72px 0; }
   .flip .words { order: 0; }
   .setup, .know { padding: 72px 0; }
   .setup ol, .know dl { grid-template-columns: 1fr; gap: 28px; }
