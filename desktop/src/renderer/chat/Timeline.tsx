@@ -235,11 +235,11 @@ export const Timeline = memo(function Timeline({
   // Suggestions offered together show as a stack, and those that went unstarted are gone.
   const stacks = useMemo(() => stacksIn(messages), [messages]);
   const shown = useMemo(() => messages.filter((message) => (!betweenAgents(message) || standings.has(message.id)) && !stacks.hidden.has(message.id)), [messages, standings, stacks]);
-  // The suggestions at the top of their stacks as the chat last drew them. One that isn't among them came up from under another.
-  const drawnTops = useRef<Set<string> | null>(null);
-  const surfaced = useMemo(() => new Set([...stacks.top.keys()].filter((id) => drawnTops.current !== null && !drawnTops.current.has(id))), [stacks]);
+  // The suggestions that were under another as the chat last drew them. One of them that is now at the top of its stack came up from under.
+  const under = useRef<Set<string>>(new Set());
+  const surfaced = useMemo(() => new Set([...stacks.top.keys()].filter((id) => under.current.has(id))), [stacks]);
   useEffect(() => {
-    drawnTops.current = new Set(stacks.top.keys());
+    under.current = stacks.hidden;
   }, [stacks]);
   // The person's newest message, which carries the chat's receipt.
   const newestMine = chat.findLast((message) => message.sender === "person")?.id;

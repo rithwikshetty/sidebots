@@ -79,10 +79,10 @@ function ChatWith({ agent }: { agent: AgentWithLatest }) {
   const waitsOnPerson = asksPerson(agent.id, chat);
   // The suggestions the agent offered together show as a stack, one at a time.
   const stacks = useMemo(() => stacksIn(messages), [messages]);
-  // The suggestions at the top of their stacks as the chat last drew them. One that isn't among them came up from under another, and fades in.
-  const tops = useRef<Set<string> | null>(null);
+  // The suggestions that were under another as the chat last drew them. One of them that is now at the top of its stack came up from under, and fades in.
+  const under = useRef<Set<string>>(new Set());
   useEffect(() => {
-    tops.current = new Set(stacks.top.keys());
+    under.current = stacks.hidden;
   }, [stacks]);
   // What the agent does beside the chat, which the strip over the message field says.
   const beside = workBeside(agent, chat);
@@ -339,7 +339,7 @@ function ChatWith({ agent }: { agent: AgentWithLatest }) {
           const older = newestFirst[index + 1];
           const standing = standings.get(item.id);
           return (
-            <Row message={item} openedAt={openedAt} flashing={item.id === flashing} surfaced={stacks.top.has(item.id) && tops.current !== null && !tops.current.has(item.id)}>
+            <Row message={item} openedAt={openedAt} flashing={item.id === flashing} surfaced={stacks.top.has(item.id) && under.current.has(item.id)}>
               {!older || !sameDay(older.created_at, item.created_at) ? (
                 <Text style={[styles.day, { color: theme.ink2 }]}>{dayLabel(item.created_at, today)}</Text>
               ) : null}
