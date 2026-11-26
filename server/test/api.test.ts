@@ -420,7 +420,7 @@ test("a person with an API key has every turn, job and fresh start run on it, an
 
   const messages = (await call(HER, "GET", `/agents/${hers.id}/messages`)).json;
   assert.equal(messages.at(-1).body, "Sidebots couldn't finish this. Anthropic refused your API key.");
-  // The same notice goes to the home screen and to the phone as a notification.
+  // The same notice goes to the list of agents and to the phone as a notification.
   await pushed();
   const sent = [messages, (await call(HER, "GET", "/agents")).json, notices];
   assert.equal(JSON.stringify(sent).includes(KEY), false);
@@ -525,7 +525,7 @@ test("the event stream carries the agents the person adds, changes and deletes o
     .map((line) => JSON.parse(line.slice(6)));
   assert.deepEqual([changed.name, changed.muted, changed.hidden], ["Theodore", true, true]);
   assert.deepEqual(events, [
-    { message: null, agent: { ...added, latest: null, working: false, unread: 0, waiting_on: null } },
+    { message: null, agent: { ...added, latest: null, working: false, work: [], unread: 0, waiting_on: null } },
     { message: null, agent: changed },
     { deleted: added.id },
   ]);
@@ -1327,7 +1327,7 @@ test("a job runs when its time comes, in a session of its own, and only a run wi
   // The chat's session hears what the job sent with the next message.
   await say(ME, agent.id, "buy it");
   await queue.kick(agent.id);
-  assert.match(runs[2][0], /your jobs sent Alex these messages[\s\S]*You: The price dropped to 300\.[\s\S]*Alex's new message:\n\nbuy it$/);
+  assert.match(runs[2][0], /They sent Alex these messages[\s\S]*You: The price dropped to 300\.[\s\S]*Alex's new message:\n\nbuy it$/);
   assert.deepEqual(runs[2].slice(1), ["session-1", true]);
 
   // The person can remove it, and then nothing runs.
@@ -1353,6 +1353,14 @@ test("a person starts with an agent that knows it briefs them every morning, has
   const [listed] = (await call(ME, "GET", "/agents")).json;
   assert.deepEqual([listed.name, listed.avatar_id, listed.unread], ["Ruby", "cog", 1]);
   assert.match(listed.latest.body, /^Hi, I'm Ruby\. Every morning at 8/);
+  // Under it are the two apps a brief reads, each offered as a card that connects it.
+  const offered = (await call(ME, "GET", `/agents/${ruby.id}/messages`)).json.slice(1);
+  assert.deepEqual(offered.map((m: { ask: string; question: Question }) => [m.ask, m.question.kind, m.question.what, m.question.connection]), [
+    ["waiting", "work", "Connect Google Calendar", "calendar"],
+    ["waiting", "work", "Connect Gmail", "gmail"],
+  ]);
+  // A yes to one is making the connection, as for an agent's own ask for one.
+  assert.equal((await call(ME, "POST", `/agents/${ruby.id}/asks/${offered[0].id}`, { allow: true })).status, 409);
   const about = (await call(ME, "GET", `/agents/${ruby.id}/about`)).json;
   assert.match(about.instructions, /You brief Alex every morning/);
   assert.doesNotMatch(about.instructions, /You don't know what you're for yet/);
@@ -1363,13 +1371,38 @@ test("a person starts with an agent that knows it briefs them every morning, has
   assert.equal(runs.length, 0);
   time = new Date(2026, 10, 17, 8, 0).getTime();
   await queue.kick(ruby.id);
-  assert.match(runs[0], /\(Every day at 08:00\)[\s\S]*Brief Alex on their day/);
+  assert.match(runs[0], /\(Every day at 08:00\)[\s\S]*Brief Alex on their day[\s\S]*offer it with `suggest`/);
   const bodies = (await call(ME, "GET", `/agents/${ruby.id}/messages`)).json.map((m: { body: string }) => m.body);
   assert.equal(bodies.at(-1), "Standup at 10, and Sam wants an answer on the quote.");
-  assert.equal(bodies.length, 2);
+  assert.equal(bodies.length, 4);
 });
 
-test("a reply is shown the latest twenty of what the agent's jobs sent since its last one, and told when there were more", async () => {
+test("connecting an app from the first agent's suggestion starts the agent on what it now sees there", async () => {
+  const runs: string[] = [];
+  const { store, queue, web, call } = setup(async (turn) => {
+    runs.push(turn.prompt.text);
+    return reply("Two emails need you.", "work-session");
+  });
+  google(web, "alex@example.com");
+  const ruby = addFirstAgent(store, store.personByName(ME)!);
+  const gmail = (await call(ME, "GET", `/agents/${ruby.id}/messages`)).json[2];
+
+  const signIn = (await call(ME, "POST", "/connections/gmail/sign-in")).json as { url: string; redirect: string };
+  const made = await call(ME, "PUT", "/connections/gmail", { url: `${signIn.redirect}?state=${new URL(signIn.url).searchParams.get("state")}&code=one-time` });
+  assert.equal(made.status, 200);
+  await queue.kick(ruby.id);
+
+  const after = (await call(ME, "GET", `/agents/${ruby.id}/messages`)).json.slice(1);
+  assert.deepEqual(after.map((m: Message) => [m.question?.what ?? m.body, m.ask, m.status, m.reply_to]), [
+    ["Connect Google Calendar", "waiting", "done", null],
+    ["Connect Gmail", "allowed", "done", null],
+    ["Two emails need you.", null, "done", gmail.id],
+  ]);
+  assert.match(runs[0], /^Alex started a piece of work you suggested: "Connect Gmail"\.[\s\S]*Gmail is connected now\./);
+  assert.equal(runs.length, 1);
+});
+
+test("a reply is shown the latest twenty of what the agent's jobs sent that its session hasn't been told of, and told when there were more", async () => {
   let time = new Date(2026, 10, 16, 9, 0).getTime();
   const prompts: string[] = [];
   let posts = 0;
@@ -1398,13 +1431,13 @@ test("a reply is shown the latest twenty of what the agent's jobs sent since its
 
   // Twenty is all of them.
   await sayAfter(20, "how is it going");
-  assert.equal(prompts[0], `Since your last reply in this chat, your jobs sent Alex these messages, which this session hasn't seen:\n\n${shown(1, 20)}\n\nAlex's new message:\n\nhow is it going`);
+  assert.equal(prompts[0], `Your jobs and the work Alex started run in sessions of their own. They sent Alex these messages, which this session hasn't seen:\n\n${shown(1, 20)}\n\nAlex's new message:\n\nhow is it going`);
 
   // Of twenty-two since that reply, the first two are left out.
   await sayAfter(22, "buy it");
   assert.equal(
     prompts[1],
-    `Since your last reply in this chat, your jobs sent Alex messages this session hasn't seen. These are the latest 20, and \`search_history\` finds earlier ones by a word or phrase in them:\n\n${shown(23, 42)}\n\nAlex's new message:\n\nbuy it`,
+    `Your jobs and the work Alex started run in sessions of their own. They sent Alex messages this session hasn't seen. These are the latest 20, and \`search_history\` finds earlier ones by a word or phrase in them:\n\n${shown(23, 42)}\n\nAlex's new message:\n\nbuy it`,
   );
 });
 
@@ -1871,7 +1904,7 @@ test("a stopped turn leaves what the agent never read to send again, and a messa
   assert.deepEqual([turns.length, turns[1].prompt.text, turns[1].sessionId], [2, "only the band, after all", "session-1"]);
 });
 
-test("stopping a job's run ends it with no reply, leaves a message that waited for it to send again, and the job keeps to its schedule", async () => {
+test("a job runs beside the chat, so a message sent meanwhile has its turn, and removing the job stops its run", async () => {
   let time = new Date(2026, 10, 16, 9, 0).getTime();
   const runs: Turn[] = [];
   const { store, queue, call, say } = setup(async (turn) => {
@@ -1879,6 +1912,7 @@ test("stopping a job's run ends it with no reply, leaves a message that waited f
       turn.scheduleJob({ what: "Check the price.", every_minutes: 5 });
       return reply("Watching.");
     }
+    if (!turn.prompt.text.startsWith("This is a run of one of your jobs")) return reply("Not yet.");
     runs.push(turn);
     return untilStopped(turn, "job-session");
   }, () => time);
@@ -1889,21 +1923,211 @@ test("stopping a job's run ends it with no reply, leaves a message that waited f
   time += 5 * 60_000;
   const running = queue.kick(agent.id);
   await say(ME, agent.id, "any drop yet?");
-  time += 60_000;
-  await call(ME, "POST", `/agents/${agent.id}/stop`);
-  await running;
-
-  const messages = (await call(ME, "GET", `/agents/${agent.id}/messages`)).json;
-  assert.deepEqual(messages.map((m: { sender: string; body: string; status: string }) => [m.sender, m.body, m.status]), [
+  await pushed();
+  // The chat had its turn while the job's run goes on, and stopping the chat leaves the run alone.
+  const bodies = async () => (await call(ME, "GET", `/agents/${agent.id}/messages`)).json.map((m: { sender: string; body: string; status: string }) => [m.sender, m.body, m.status]);
+  assert.deepEqual(await bodies(), [
     ["person", "watch the price", "done"],
     ["agent", "Watching.", "done"],
-    ["person", "any drop yet?", "failed"],
-    ["sidebots", "Stopped", "done"],
+    ["person", "any drop yet?", "done"],
+    ["agent", "Not yet.", "done"],
   ]);
-  assert.equal(runs.length, 1);
-  // The next run counts from when this one was stopped, and the chat's session is the one it had.
-  assert.equal(store.jobs(agent.id)[0].next_at, time + 5 * 60_000);
+  await call(ME, "POST", `/agents/${agent.id}/stop`);
+  assert.equal(runs[0].stop.signal.aborted, false);
+
+  time += 60_000;
+  const [job] = store.jobs(agent.id);
+  assert.equal((await call(ME, "DELETE", `/agents/${agent.id}/jobs/${job.id}`)).status, 200);
+  await running;
+  assert.equal(runs[0].stop.signal.aborted, true);
+  assert.equal((await bodies()).length, 4);
+  assert.deepEqual(store.jobs(agent.id), []);
+  // The chat's session is the one it had.
   assert.equal((await call(ME, "GET", "/agents")).json[0].session_id, "session-1");
+});
+
+test("an agent offers work as suggestions under its reply, which tell nobody by themselves, and its next ones take the place of those left unanswered", async () => {
+  const { store, queue, call, say, phoneOf, open } = setup(async (turn) => {
+    if (turn.prompt.text === "what's on today?") {
+      assert.match(turn.suggest({ title: "Reply to the plumber's quote", why: "Marlow Plumbing asked for an answer by Friday.", what: "Draft a yes to the quote." }), /^Offered\. It goes to Alex as a card under your reply\./);
+      assert.match(turn.suggest({ title: "Renew the car insurance", why: "It runs out on 3 December.", what: "Compare three quotes." }), /^Offered\./);
+      assert.equal(turn.suggest({ title: " ", why: "", what: "Something." }), "A suggestion needs a title and what you will do.");
+      assert.match(turn.suggest({ title: "Book the dentist", why: "", what: "Find a slot next week." }), /^Offered\./);
+      assert.equal(turn.suggest({ title: "A fourth", why: "", what: "Something." }), "3 is the most to suggest at once. Keep the ones that matter most.");
+      return reply("The dentist at 11:30, and two emails need a reply.");
+    }
+    turn.suggest({ title: "Water the plants", why: "", what: "Remind Alex this evening." });
+    return reply("Nothing new.");
+  });
+  const sent: Notice[] = [];
+  startPush(store, async (_device, notice) => {
+    if ("sealed" in notice) sent.push(open(phoneOf(ME), notice));
+    return "sent";
+  }, 0);
+  await call(ME, "PUT", "/push-token", { token: "a".repeat(64), environment: "production" });
+  const agent = (await call(ME, "POST", "/agents", { name: "Ruby", avatarId: "cog" })).json;
+  type Said = { id: string; body: string; ask: string | null; interim: boolean; status: string; question: Question | null };
+  const chat = async (): Promise<Said[]> => (await call(ME, "GET", `/agents/${agent.id}/messages`)).json;
+
+  await say(ME, agent.id, "what's on today?");
+  await queue.kick(agent.id);
+  await pushed();
+  const first = await chat();
+  // The reply comes first, and what the agent offered follows it.
+  assert.deepEqual(first.map((m) => [m.body.split("\n")[0], m.ask, m.interim]), [
+    ["what's on today?", null, false],
+    ["The dentist at 11:30, and two emails need a reply.", null, false],
+    ["Suggestion: Reply to the plumber's quote", "waiting", true],
+    ["Suggestion: Renew the car insurance", "waiting", true],
+    ["Suggestion: Book the dentist", "waiting", true],
+  ]);
+  assert.deepEqual(first[2].question, { kind: "work", title: "Suggestion", what: "Reply to the plumber's quote", facts: [], detail: "Draft a yes to the quote.", why: "Marlow Plumbing asked for an answer by Friday." });
+  assert.deepEqual(first[4].question, { kind: "work", title: "Suggestion", what: "Book the dentist", facts: [], detail: "Find a slot next week." });
+  // Only the reply notified the person, and only it is unread.
+  assert.deepEqual(sent.map((notice) => notice.body), ["The dentist at 11:30, and two emails need a reply."]);
+  const [shown] = (await call(ME, "GET", "/agents")).json;
+  assert.deepEqual([shown.unread, shown.working, shown.work], [1, false, []]);
+
+  // Not now, which only the person the agent belongs to can say.
+  assert.equal((await call(HER, "POST", `/agents/${agent.id}/asks/${first[3].id}`, { allow: false })).status, 404);
+  const refused = await call(ME, "POST", `/agents/${agent.id}/asks/${first[3].id}`, { allow: false });
+  assert.deepEqual([refused.status, refused.json.ask, refused.json.status], [200, "refused", "done"]);
+  assert.equal((await call(ME, "POST", `/agents/${agent.id}/asks/${first[3].id}`, { allow: true })).status, 409);
+
+  await say(ME, agent.id, "anything else?");
+  await queue.kick(agent.id);
+  assert.deepEqual((await chat()).filter((m) => m.question).map((m) => [m.question!.what, m.ask]), [
+    ["Reply to the plumber's quote", "unanswered"],
+    ["Renew the car insurance", "refused"],
+    ["Book the dentist", "unanswered"],
+    ["Water the plants", "waiting"],
+  ]);
+  // One that gave way can no longer be started.
+  assert.equal((await call(ME, "POST", `/agents/${agent.id}/asks/${first[2].id}`, { allow: true })).status, 409);
+});
+
+test("work the person starts from a suggestion runs beside the chat, in a session of its own, and its reply answers the suggestion", async () => {
+  let finish!: () => void;
+  const held = new Promise<void>((resolve) => (finish = resolve));
+  const turns: [string, string | null, boolean, boolean][] = [];
+  const { queue, call, say } = setup(async (turn) => {
+    turns.push([turn.prompt.text, turn.sessionId, turn.keepSession, turn.followUps !== undefined]);
+    if (turn.prompt.text === "what's on today?") {
+      turn.suggest({ title: "Reply to the plumber's quote", why: "Marlow Plumbing asked for an answer by Friday.", what: "Draft a yes to the quote." });
+      return reply("Two emails need a reply.");
+    }
+    if (turn.prompt.text.includes("started a piece of work you suggested")) {
+      await held;
+      turn.suggest({ title: "Book the plumber's visit", why: "The quote is accepted.", what: "Offer Thursday morning." });
+      return reply("The draft is ready.", "work-session");
+    }
+    return reply(turn.prompt.text.endsWith("send it") ? "Sent." : "Dinner is at 7.");
+  });
+  const agent = (await call(ME, "POST", "/agents", { name: "Ruby", avatarId: "cog" })).json;
+  type Said = { id: string; body: string; ask: string | null; status: string; reply_to: string | null; job_id: string | null; interim: boolean };
+  const chat = async (): Promise<Said[]> => (await call(ME, "GET", `/agents/${agent.id}/messages`)).json;
+  const shown = async () => (await call(ME, "GET", "/agents")).json[0];
+  await say(ME, agent.id, "what's on today?");
+  await queue.kick(agent.id);
+  const card = (await chat())[2];
+
+  const started = await call(ME, "POST", `/agents/${agent.id}/asks/${card.id}`, { allow: true });
+  assert.deepEqual([started.status, started.json.ask, started.json.status], [200, "allowed", "running"]);
+  assert.equal((await call(ME, "POST", `/agents/${agent.id}/asks/${card.id}`, { allow: true })).status, 409);
+
+  // While its run goes on, the chat is free: the agent answers there, and counts as at work beside it.
+  await say(ME, agent.id, "what time is dinner?");
+  await pushed();
+  assert.deepEqual((await chat()).slice(3).map((m) => m.body), ["what time is dinner?", "Dinner is at 7."]);
+  let agentNow = await shown();
+  assert.deepEqual([agentNow.working, agentNow.work.map((work: Said) => [work.id, work.status])], [false, [[card.id, "running"]]]);
+  assert.equal((await call(ME, "PUT", `/agents/${agent.id}/activity-token`, { token: "b".repeat(128), environment: "production" })).status, 200);
+
+  finish();
+  await queue.kick(agent.id);
+  const after = await chat();
+  // What the run replied answers the suggestion, and what it offered next follows.
+  assert.deepEqual(after.slice(5).map((m) => [m.body.split("\n")[0], m.reply_to, m.job_id, m.interim]), [
+    ["The draft is ready.", card.id, card.id, false],
+    ["Suggestion: Book the plumber's visit", null, card.id, true],
+  ]);
+  assert.equal(after[2].status, "done");
+  agentNow = await shown();
+  assert.deepEqual([agentNow.work, agentNow.session_id, agentNow.unread], [[], "session-1", 3]);
+  // The run was given what the agent wrote for it, in a session of its own that nobody talks to.
+  const run = turns.find(([text]) => text.includes("started a piece of work you suggested"))!;
+  assert.match(run[0], /^Alex started a piece of work you suggested: "Reply to the plumber's quote"\. You offered it because: Marlow Plumbing asked for an answer by Friday\. What you wrote for it:\n\nDraft a yes to the quote\.\n\nDo it now\./);
+  assert.deepEqual(run.slice(1), [null, false, false]);
+  assert.deepEqual((await call(ME, "GET", `/agents/${agent.id}/about`)).json.work.map((work: Said) => [work.id, work.status]), [[card.id, "done"]]);
+
+  // The chat's session hears what the run sent with the next message, though it replied in between, and hears it once.
+  await say(ME, agent.id, "send it");
+  await queue.kick(agent.id);
+  assert.match(turns.at(-1)![0], /^Your jobs and the work Alex started run in sessions of their own\. They sent Alex these messages, which this session hasn't seen:\n\nYou: The draft is ready\.\n\nYou: Suggestion: Book the plumber's visit[\s\S]*Alex's new message:\n\nsend it$/);
+  assert.deepEqual(turns.at(-1)!.slice(1), ["session-1", true, true]);
+  await say(ME, agent.id, "thanks");
+  await queue.kick(agent.id);
+  assert.equal(turns.at(-1)![0], "thanks");
+});
+
+test("work that fails says so, an ask it raises answers its suggestion and outlasts the chat's turns, and a no to work that was started stops it", async () => {
+  const runs: Turn[] = [];
+  let fails = true;
+  const { queue, call, say } = setup(async (turn) => {
+    if (turn.prompt.text === "plan the week") {
+      for (const title of ["Chase the invoice", "Tidy the inbox", "Book the van"]) turn.suggest({ title, why: "", what: `${title}.` });
+      return reply("Three things.");
+    }
+    if (!turn.prompt.text.includes("started a piece of work you suggested")) return reply("ok");
+    if (fails) throw new Error("The provider is down.");
+    runs.push(turn);
+    if (turn.prompt.text.includes('"Tidy the inbox"')) {
+      const answer = await turn.ask(command("rm -rf ~/old"), turn.stop.signal);
+      return reply(answer.allowed ? "Tidied." : "Left as it was.", "work-session");
+    }
+    return untilStopped(turn, "work-session");
+  });
+  const agent = (await call(ME, "POST", "/agents", { name: "Ruby", avatarId: "cog" })).json;
+  type Said = { id: string; sender: string; body: string; ask: string | null; status: string; reply_to: string | null };
+  const chat = async (): Promise<Said[]> => (await call(ME, "GET", `/agents/${agent.id}/messages`)).json;
+  const answer = (id: string, allow: boolean) => call(ME, "POST", `/agents/${agent.id}/asks/${id}`, { allow });
+  await say(ME, agent.id, "plan the week");
+  await queue.kick(agent.id);
+  const [invoice, inbox, van] = (await chat()).slice(2);
+
+  // A run that fails leaves the work failed, and the chat says why.
+  await answer(invoice.id, true);
+  await queue.kick(agent.id);
+  let now = await chat();
+  assert.deepEqual([now[2].ask, now[2].status], ["allowed", "failed"]);
+  assert.deepEqual([now.at(-1)!.sender, now.at(-1)!.body, now.at(-1)!.status], ["sidebots", 'Sidebots couldn\'t finish "Chase the invoice". The provider is down.', "failed"]);
+
+  // An ask the run raises answers its suggestion. A message in the chat has its own turn, and doesn't close it.
+  fails = false;
+  await answer(inbox.id, true);
+  await pushed();
+  const asked = (await chat()).at(-1)!;
+  assert.deepEqual([asked.ask, asked.reply_to], ["waiting", inbox.id]);
+  await say(ME, agent.id, "how is it going?");
+  await pushed();
+  assert.deepEqual((await chat()).slice(-2).map((m) => m.body), ["how is it going?", "ok"]);
+  assert.equal((await chat()).find((m) => m.id === asked.id)!.ask, "waiting");
+
+  // Work that waits for its run leaves the line on a no, and a no to the one that runs stops it.
+  await answer(van.id, true);
+  assert.equal((await chat()).find((m) => m.id === van.id)!.status, "queued");
+  assert.deepEqual([(await answer(van.id, false)).status, (await chat()).find((m) => m.id === van.id)!.status], [200, "failed"]);
+  assert.equal((await answer(van.id, false)).status, 409);
+  // The answer says the work is over at once, before its run has ended.
+  const stopped = await answer(inbox.id, false);
+  assert.deepEqual([stopped.status, stopped.json.status], [200, "failed"]);
+  await queue.kick(agent.id);
+  now = await chat();
+  assert.deepEqual([runs.length, runs[0].stop.signal.aborted], [1, true]);
+  assert.deepEqual([now.find((m) => m.id === inbox.id)!.status, now.find((m) => m.id === asked.id)!.ask], ["failed", "unanswered"]);
+  // Nothing was sent for the stopped run, and the agent has no work left.
+  assert.deepEqual(now.slice(-2).map((m) => m.body), ["how is it going?", "ok"]);
+  assert.deepEqual((await call(ME, "GET", "/agents")).json[0].work, []);
 });
 
 test("stopping a fresh start calls it off, and the agent keeps its session", async () => {

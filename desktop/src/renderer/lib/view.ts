@@ -12,14 +12,15 @@ import { onFocusChange, onResize, onVisibility } from "./window.ts";
 /**
  * What the panel at the right shows, always about one agent: a page it sent,
  * its pictures from one message starting at `index`, what it and another
- * agent said to each other, its settings, or its instructions or one of its
- * memories.
+ * agent said to each other, its page, or its instructions or one of its
+ * memories. Its page opens on the tab it was last on, or on its work when
+ * the view says so.
  */
 export type PanelView =
   | { kind: "page"; agentId: string; path: string; title: string }
   | { kind: "images"; agentId: string; paths: string[]; index: number }
   | { kind: "exchange"; agentId: string; messageId: string }
-  | { kind: "agent"; agentId: string }
+  | { kind: "agent"; agentId: string; tab?: "work" }
   | { kind: "note"; agentId: string; note: { kind: "instructions" } | { kind: "memory"; name: string } };
 
 export type SettingsSection = "usage" | "connections" | "phones" | "about";

@@ -4,11 +4,12 @@ import { Stack, useFocusEffect, useLocalSearchParams, useRouter } from "expo-rou
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { KeyboardChatScrollView, KeyboardController, KeyboardEvents, KeyboardStickyView } from "react-native-keyboard-controller";
 import Animated, { FadeOut, useSharedValue } from "react-native-reanimated";
-import { Reply, X } from "lucide-react-native";
-import { avatarStateOf, betweenAgents, exchanges, type AgentWithLatest, type Ask, type Message, type Question } from "@server/contract";
+import { ChevronRight, Reply, X } from "lucide-react-native";
+import { asksPerson, avatarStateOf, betweenAgents, exchanges, isSuggestion, type AgentWithLatest, type Ask, type Message, type Question } from "@server/contract";
 import { standingOf } from "@client/exchanges";
 import { fileName, fitsInMessage, isImage, isPage, MAX_FILES, SIZE_LIMIT_NOTICE } from "@client/files";
 import { preview } from "@client/messages";
+import { WORK, stacksIn, workBeside, type Stacked } from "@client/suggestions";
 import { dayLabel, listTime, sameDay } from "@client/time";
 import { AskCard } from "@/components/AskCard";
 import { ChatBubble } from "@/components/ChatBubble";
@@ -16,6 +17,7 @@ import { BAR_HEIGHT, ChatHeader, HEADER_CLEARANCE, HEADER_OVERHANG } from "@/com
 import { Composer } from "@/components/Composer";
 import { Exchange } from "@/components/Exchange";
 import { FadingText } from "@/components/FadingText";
+import { FlowDot } from "@/components/FlowDot";
 import { Glass } from "@/components/Glass";
 import { IconButton } from "@/components/IconButton";
 import { Markdown } from "@/components/Markdown";
@@ -27,12 +29,13 @@ import { problem } from "@/lib/alerts";
 import { attachment } from "@/lib/api";
 import { pick, type Picked, type PickSource } from "@/lib/files";
 import { haptics } from "@/lib/haptics";
-import { useAppActive, useReadingMargin, useSplit, useToday } from "@/lib/layout";
+import { useAppActive, useReadingMargin, useSideMenu, useSplit, useToday } from "@/lib/layout";
 import { useWorkingLine } from "@/lib/lines";
 import { HIDE, MOVE, SHOW, arrive } from "@/lib/motion";
 import { askForPush, showChatOnScreen, useOpenChat } from "@/lib/push";
-import { answerAsk, backToNewest, connect, freshStart, loadMessages, loadOlder, markRead, newestPage, resend, send, stop, useAgent, useChatColor, useHole, useMessages, useOnline } from "@/lib/state";
+import { answerAsk, backToNewest, connect, freshStart, loadMessages, loadOlder, markRead, newestPage, resend, send, stop, useAgent, useAgents, useChatColor, useHole, useMessages, useOnline } from "@/lib/state";
 import { ChatColor, type Theme, useTheme } from "@/lib/theme";
+import { ScrollWaitsForMenuSwipe } from "../../../modules/side-menu-swipe/src";
 
 export default function Chat() {
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -58,8 +61,11 @@ function ChatWith({ agent }: { agent: AgentWithLatest }) {
   const insets = useSafeAreaInsets();
   const router = useRouter();
   const online = useOnline();
-  // Beside the agents' column the chat has no Back, and its messages keep to the reading column in a wide one.
+  // Beside the agents' column the chat has no menu to open, and its messages keep to the reading column in a wide one.
   const split = useSplit();
+  const menu = useSideMenu();
+  // What the person's other agents sent that they haven't read, which the menu's button counts as the app's icon does.
+  const elsewhere = useAgents().reduce((total, each) => total + (each.id === agent.id || each.muted ? 0 : each.unread), 0);
   const margin = useReadingMargin();
   const avatarState = avatarStateOf(agent);
   const today = useToday();
@@ -70,7 +76,16 @@ function ChatWith({ agent }: { agent: AgentWithLatest }) {
   // The agent this one asked something and hasn't heard back from.
   const waitingOn = useAgent(agent.waiting_on ?? "");
   // Whether the agent waits on the person's answer to an ask of its own, which is then the last thing in the chat.
-  const asksPerson = chat.some((message) => message.ask === "waiting" && message.agent_id === agent.id);
+  const waitsOnPerson = asksPerson(agent.id, chat);
+  // The suggestions the agent offered together show as a stack, one at a time.
+  const stacks = useMemo(() => stacksIn(messages), [messages]);
+  // The suggestions at the top of their stacks as the chat last drew them. One that isn't among them came up from under another, and fades in.
+  const tops = useRef<Set<string> | null>(null);
+  useEffect(() => {
+    tops.current = new Set(stacks.top.keys());
+  }, [stacks]);
+  // What the agent does beside the chat, which the strip over the message field says.
+  const beside = workBeside(agent, chat);
   // What the agent and another said to each other shows as one line for each exchange, where the newest thing in it was asked.
   const standings = useMemo(() => {
     const each = exchanges(messages).map((exchange) => standingOf(exchange, messages));
@@ -106,7 +121,7 @@ function ChatWith({ agent }: { agent: AgentWithLatest }) {
   // view, which lifts the messages with the keyboard in the same motion as the
   // composer. Its rows run newest first.
   const list = useRef<FlatList<Message>>(null);
-  const newestFirst = useMemo(() => messages.filter((message) => !betweenAgents(message) || standings.has(message.id)).reverse(), [messages, standings]);
+  const newestFirst = useMemo(() => messages.filter((message) => (!betweenAgents(message) || standings.has(message.id)) && !stacks.hidden.has(message.id)).reverse(), [messages, standings, stacks]);
   // The composer floats over the list's end; a spacer of its height keeps the last message above it.
   const [composerHeight, setComposerHeight] = useState(COMPOSER_ESTIMATE + insets.bottom);
   // Whether the newest message is on screen, and the room the keyboard takes at the list's end.
@@ -313,8 +328,10 @@ function ChatWith({ agent }: { agent: AgentWithLatest }) {
                   />
                 </Animated.View>
               ) : null}
-              {hole !== undefined ? <ActivityIndicator accessibilityLabel="Loading messages" color={theme.ink2} style={styles.hole} /> : agent.working && online && !asksPerson ? <WorkingRow /> : null}
+              {hole !== undefined ? <ActivityIndicator accessibilityLabel="Loading messages" color={theme.ink2} style={styles.hole} /> : agent.working && online && !waitsOnPerson ? <WorkingRow /> : null}
             </View>
+            {/* A swipe right opens the side menu, and the list's scroll waits for that swipe to judge each drag. */}
+            {split ? null : <ScrollWaitsForMenuSwipe />}
             <View style={{ height: composerHeight }} />
           </View>
         }
@@ -322,7 +339,7 @@ function ChatWith({ agent }: { agent: AgentWithLatest }) {
           const older = newestFirst[index + 1];
           const standing = standings.get(item.id);
           return (
-            <Row message={item} openedAt={openedAt} flashing={item.id === flashing}>
+            <Row message={item} openedAt={openedAt} flashing={item.id === flashing} surfaced={stacks.top.has(item.id) && tops.current !== null && !tops.current.has(item.id)}>
               {!older || !sameDay(older.created_at, item.created_at) ? (
                 <Text style={[styles.day, { color: theme.ink2 }]}>{dayLabel(item.created_at, today)}</Text>
               ) : null}
@@ -340,6 +357,7 @@ function ChatWith({ agent }: { agent: AgentWithLatest }) {
                   theme={theme}
                   // An ask another agent raised while working for this one says whose it is.
                   from={item.agent_id === agent.id ? undefined : item.agent_id}
+                  place={stacks.top.get(item.id)}
                   receipt={item.id === newestMine}
                   onReply={() => setReplyTo(item)}
                   onResend={() => onResend(item)}
@@ -354,7 +372,8 @@ function ChatWith({ agent }: { agent: AgentWithLatest }) {
         avatarId={agent.avatar_id}
         avatarState={online ? (avatarState === "replied" ? "resting" : avatarState) : "resting"}
         dimmed={!online}
-        onBack={split ? undefined : () => router.back()}
+        unread={elsewhere}
+        onMenu={split ? undefined : menu.open}
         onAbout={() => router.push(`/agent/${agent.id}`)}
         onFreshStart={() => void freshStart(agent.id).catch((failure) => problem("Couldn't start fresh", failure))}
       />
@@ -373,6 +392,34 @@ function ChatWith({ agent }: { agent: AgentWithLatest }) {
                 </View>
                 <IconButton icon={X} label="Cancel reply" size={28} iconSize={16} color={theme.ink2} onPress={() => setReplyTo(null)} />
               </Glass>
+            </Animated.View>
+          ) : null}
+          {beside ? (
+            <Animated.View entering={SHOW} exiting={HIDE} layout={MOVE} style={styles.above}>
+              <Pressable
+                onPress={() => router.push({ pathname: "/agent/[id]", params: { id: agent.id, tab: "work" } })}
+                accessibilityRole="button"
+                accessibilityLabel={`${beside.title}, ${beside.state}`}
+                accessibilityHint="Opens what the agent is working on">
+                <Glass interactive style={styles.replying}>
+                  <View style={styles.flow}>
+                    {[0, 1, 2].map((dot) => (
+                      <FlowDot key={dot} index={dot} running={beside.running} size={4} color={theme.ink2} />
+                    ))}
+                  </View>
+                  <View style={styles.replyingText}>
+                    <Text numberOfLines={1} style={[styles.replyingTitle, { color: theme.ink }]}>
+                      {beside.title}
+                    </Text>
+                    <FadingText numberOfLines={1} style={[styles.replyingQuote, { color: theme.ink2 }]}>
+                      {beside.more ? `${beside.state} · ${beside.more} more` : beside.state}
+                    </FadingText>
+                  </View>
+                  <View style={styles.opens}>
+                    <ChevronRight size={16} strokeWidth={2} color={theme.ink2} />
+                  </View>
+                </Glass>
+              </Pressable>
             </Animated.View>
           ) : null}
           {/* The composer's own view, as Assist's bar, so its open and close transition measures from
@@ -405,12 +452,13 @@ function WorkingRow() {
  * A row of the chat. A message that came in while the chat was open rises
  * into place the first time it shows, and the person's own settles from its
  * faded copy where it already sits. The history the chat opens on, and a row
- * scrolled back into view, show as they are. The message the chat was opened
- * at is washed in the chat's colour, which fades away.
+ * scrolled back into view, show as they are, but for a suggestion that
+ * `surfaced` from under another, which fades in. The message the chat was
+ * opened at is washed in the chat's colour, which fades away.
  */
-function Row({ message, openedAt, flashing, children }: { message: Message; openedAt: number; flashing: boolean; children: ReactNode }) {
+function Row({ message, openedAt, flashing, surfaced, children }: { message: Message; openedAt: number; flashing: boolean; surfaced: boolean; children: ReactNode }) {
   const theme = useTheme();
-  const [entering] = useState(() => (message.created_at < openedAt || arrived.has(message.id) ? undefined : message.sender === "person" ? SETTLE : RISE));
+  const [entering] = useState(() => (message.created_at < openedAt || arrived.has(message.id) ? (surfaced ? SHOW : undefined) : message.sender === "person" ? SETTLE : RISE));
   useEffect(() => {
     arrived.add(message.id);
   }, [message.id]);
@@ -435,6 +483,7 @@ function Bubble({
   quoted,
   theme,
   from,
+  place,
   receipt,
   onReply,
   onResend,
@@ -444,6 +493,8 @@ function Bubble({
   theme: Theme;
   /** The agent that sent it, when that isn't the chat's own. */
   from?: string;
+  /** Its place in a stack of suggestions, when it is the one that shows. */
+  place?: Stacked;
   /** Whether the message carries the chat's receipt, as the person's newest does. */
   receipt: boolean;
   onReply: () => void;
@@ -457,7 +508,7 @@ function Bubble({
   const drawn = (item: Shown) => !mine && isPage(item.name);
   return (
     <SwipeToReply onReply={onReply}>
-      <View style={mine ? styles.mine : styles.theirs}>
+      <View style={[mine ? styles.mine : styles.theirs, place?.under ? (place.under > 1 ? styles.overTwo : styles.overOne) : null]}>
         <Sent
           body={message.body}
           quote={message.reply_to ? (quoted ? preview(quoted) : "An earlier message") : undefined}
@@ -468,6 +519,7 @@ function Bubble({
           theme={theme}
           asked={message.question ?? undefined}
           from={from}
+          place={place}
           foot={message.ask ? <AskAnswer message={message} ask={message.ask} theme={theme} /> : undefined}
         />
         {mine && message.status === "failed" ? (
@@ -500,12 +552,14 @@ function Receipt({ message, theme }: { message: Message; theme: Theme }) {
  * for the person's answer, and how the ask ended once it has. The agent goes
  * on, or leaves the thing undone, as soon as one is tapped. An ask for a
  * connection has Connect, which takes the person through the app's sign-in,
- * and the agent goes on once they have signed in.
+ * and the agent goes on once they have signed in. A suggestion has Start and
+ * Not now, and once started says where its work stands.
  */
 function AskAnswer({ message, ask, theme }: { message: Message; ask: Ask; theme: Theme }) {
   const [sending, setSending] = useState(false);
   const connection = message.question?.connection;
-  if (ask !== "waiting") return <FadingText style={[styles.asked, { color: theme.ink2 }]}>{(connection ? CONNECTED : ASKED)[ask]}</FadingText>;
+  const suggestion = isSuggestion(message);
+  if (ask !== "waiting") return <FadingText style={[styles.asked, { color: theme.ink2 }]}>{suggestion && ask === "allowed" ? WORK[message.status] : (connection ? CONNECTED : ASKED)[ask]}</FadingText>;
   const answer = (allow: boolean) => {
     haptics.select();
     setSending(true);
@@ -517,10 +571,10 @@ function AskAnswer({ message, ask, theme }: { message: Message; ask: Ask; theme:
     <Animated.View exiting={HIDE} style={styles.answers}>
       {/* On the bubble's grey, the quieter button is the page colour, as code is. */}
       <Pressable onPress={() => answer(false)} disabled={sending} accessibilityRole="button" style={({ pressed }) => [styles.answer, { backgroundColor: theme.bg, opacity: pressed || sending ? 0.6 : 1 }]}>
-        <Text style={[styles.answerText, { color: theme.ink }]}>{connection ? "Not now" : "Don't allow"}</Text>
+        <Text style={[styles.answerText, { color: theme.ink }]}>{connection || suggestion ? "Not now" : "Don't allow"}</Text>
       </Pressable>
       <Pressable onPress={() => answer(true)} disabled={sending} accessibilityRole="button" style={({ pressed }) => [styles.answer, { backgroundColor: theme.tint, opacity: pressed || sending ? 0.6 : 1 }]}>
-        <Text style={[styles.answerText, { color: theme.onTint }]}>{connection ? "Connect" : "Allow"}</Text>
+        <Text style={[styles.answerText, { color: theme.onTint }]}>{connection ? "Connect" : suggestion ? "Start" : "Allow"}</Text>
       </Pressable>
     </Animated.View>
   );
@@ -533,9 +587,10 @@ function AskAnswer({ message, ask, theme }: { message: Message; ask: Ask; theme:
  * markdown; the person's are as they typed them. An ask shows what is
  * `asked` as its card, in place of the words, with the agent it is `from`
  * when that isn't the chat's own. `foot` sits under either, inside the
- * bubble.
+ * bubble. A suggestion at the top of a stack says its `place` in it, and the
+ * edge of one more peeks from under its bubble, or of two.
  */
-function Sent({ body, quote, photos, pages = [], files, mine, theme, asked, from, foot }: { body: string; quote?: string; photos: Shown[]; pages?: Shown[]; files: Shown[]; mine: boolean; theme: Theme; asked?: Question; from?: string; foot?: ReactNode }) {
+function Sent({ body, quote, photos, pages = [], files, mine, theme, asked, from, place, foot }: { body: string; quote?: string; photos: Shown[]; pages?: Shown[]; files: Shown[]; mine: boolean; theme: Theme; asked?: Question; from?: string; place?: Stacked; foot?: ReactNode }) {
   const quiet = mine ? theme.onTint : theme.ink2;
   return (
     <>
@@ -556,7 +611,7 @@ function Sent({ body, quote, photos, pages = [], files, mine, theme, asked, from
             </View>
           ) : null}
           {asked ? (
-            <AskCard question={asked} from={from} />
+            <AskCard question={asked} from={from} place={place} />
           ) : body && mine ? (
             <Text selectable style={[styles.text, { color: theme.onTint }]}>
               {body}
@@ -565,6 +620,8 @@ function Sent({ body, quote, photos, pages = [], files, mine, theme, asked, from
             <Markdown text={body} />
           ) : null}
           {foot}
+          {place?.under ? <View pointerEvents="none" style={[styles.under, styles.underOne, { backgroundColor: theme.bubble }]} /> : null}
+          {place && place.under > 1 ? <View pointerEvents="none" style={[styles.under, styles.underTwo, { backgroundColor: theme.bubble }]} /> : null}
         </ChatBubble>
       ) : null}
     </>
@@ -629,6 +686,14 @@ const styles = StyleSheet.create({
   replyingText: { flex: 1 },
   replyingTitle: { fontSize: 13, fontWeight: "600" },
   replyingQuote: { fontSize: 13, lineHeight: 18 },
+  flow: { flexDirection: "row", gap: 4 },
+  opens: { width: 28, height: 28, alignItems: "center", justifyContent: "center" },
+  // The edges of the suggestions under the one that shows, and the room they take below its bubble.
+  under: { position: "absolute", height: 6, borderBottomLeftRadius: 12, borderBottomRightRadius: 12 },
+  underOne: { left: 12, right: 12, bottom: -6, opacity: 0.6 },
+  underTwo: { left: 26, right: 26, bottom: -11, opacity: 0.35 },
+  overOne: { marginBottom: 6 },
+  overTwo: { marginBottom: 11 },
   note: { alignSelf: "center", textAlign: "center", fontSize: 13, lineHeight: 18, marginTop: 10, paddingHorizontal: 24 },
   hint: { textAlign: "center", fontSize: 15, lineHeight: 20, paddingHorizontal: 24 },
   receipt: { fontSize: 11, lineHeight: 15, marginTop: 2, marginRight: 4 },

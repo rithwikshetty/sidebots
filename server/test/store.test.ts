@@ -18,7 +18,7 @@ function withAgents() {
   return { home, store, person, maya: store.createAgent(person, "Maya", "mochi", "claude"), theo: store.createAgent(person, "Theo", "mochi", "claude") };
 }
 
-test("what runs with every message, and with every look at the home screen or a chat, finds its messages by an index, so none of it reads every message there is", (t) => {
+test("what runs with every message, and with every look at the list of agents or a chat, finds its messages by an index, so none of it reads every message there is", (t) => {
   // Every statement the store compiles, from the first it compiles as it opens.
   const compiled = t.mock.method(DatabaseSync.prototype, "prepare");
   const { home, store, person, maya, theo } = withAgents();
@@ -33,8 +33,11 @@ test("what runs with every message, and with every look at the home screen or a 
   store.messages(maya.id, { before: first.id, through: first.id });
   store.message(theo.id, first.id);
   store.messagesBefore(maya.id, first.id, 10);
-  store.sentByJobsBefore(maya.id, first.id, 10);
+  store.sentByRunsBefore(maya.id, first.id, 10);
+  store.toldOfRuns(maya.id, first.id);
   store.nextQueued(theo.id);
+  store.nextWork(maya.id);
+  store.closeSuggestions(maya.id);
   store.waitingFromPerson(maya.id);
   store.asked(maya.id);
   store.askedOf(theo.id);
@@ -44,8 +47,8 @@ test("what runs with every message, and with every look at the home screen or a 
 
   const db = new DatabaseSync(join(home, "sidebots.sqlite"));
   const plan = (sql: string) => (db.prepare(`explain query plan ${sql}`).all() as { detail: string }[]).map((step) => step.detail).join(", ");
-  // The four the home screen asks of each agent, a chat's four pages, and what the runner asks before and after a turn.
-  assert.ok(statements.length >= 17, `${statements.length} statements`);
+  // The five the list of agents asks of each agent, a chat's four pages, and what the runner asks before and after a turn.
+  assert.ok(statements.length >= 21, `${statements.length} statements`);
   for (const sql of statements) assert.doesNotMatch(plan(sql), /SCAN messages/, sql);
   // Each index serves what it is there for: an agent's latest message, what is unread, whether it works, what it waits on, and a page of its chat. Without its index, each of these reads the agent's whole chat, which is no scan of every message.
   const served = (asks: string) => {
@@ -56,7 +59,8 @@ test("what runs with every message, and with every look at the home screen or a 
   assert.match(served("order by rowid desc limit 1"), /INDEX messages_agent \(/);
   assert.match(served("count(*) as unread"), /INDEX messages_agent_created \(/);
   assert.match(served("select 1 from messages"), /INDEX messages_unfinished \(/);
-  assert.match(served("indexed by"), /INDEX messages_unfinished \(/);
+  assert.match(served("indexed by messages_unfinished"), /INDEX messages_unfinished \(/);
+  assert.match(served("indexed by messages_untold"), /INDEX messages_untold \(/);
   assert.match(served("union select"), /INDEX messages_agent \(.*INDEX messages_peer \(/);
   // A page is read in order, so none of the four sorts the chat to find it.
   const pages = statements.filter((sql) => sql.includes("union select"));
@@ -185,20 +189,57 @@ test("deleting an agent moves the count of each chat that held what it said", ()
   assert.deepEqual(store.messages(maya.id), []);
 });
 
-test("what an agent's jobs sent since it last replied is the latest few of them, oldest first", () => {
+test("what an agent's own runs sent that its chat's session hasn't been told of is the latest few of them, oldest first, until it is told", () => {
   const { store, maya } = withAgents();
   const bodies = (messages: { body: string }[]) => messages.map((message) => message.body);
-  store.addMessage(maya.id, "agent", "post before the reply", "done", { jobId: "job" });
+  const before = store.addMessage(maya.id, "agent", "post before the reply", "done", { jobId: "job" }).body;
+  // A reply that came after, from a turn that was under way, is no sign its session saw the post.
   store.addMessage(maya.id, "agent", "The reply.", "done");
-  const posts = Array.from({ length: 30 }, (_, index) => store.addMessage(maya.id, "agent", `post ${index}`, "done", { jobId: "job" }).body);
+  const posts = [before, ...Array.from({ length: 30 }, (_, index) => store.addMessage(maya.id, "agent", `post ${index}`, "done", { jobId: "job" }).body)];
   const next = store.addMessage(maya.id, "person", "Any news?", "queued");
+  const after = store.addMessage(maya.id, "agent", "post after the message", "done", { jobId: "job" });
 
-  assert.deepEqual(bodies(store.sentByJobsBefore(maya.id, next.id, 5)), posts.slice(25));
-  // With room for more, it ends at the reply, and what a job sent before that stays out.
-  assert.deepEqual(bodies(store.sentByJobsBefore(maya.id, next.id, 40)), posts);
-  // Once the agent has replied again, there is nothing its session hasn't seen.
-  store.addMessage(maya.id, "agent", "Nothing new.", "done");
-  assert.deepEqual(store.sentByJobsBefore(maya.id, store.addMessage(maya.id, "person", "And now?", "queued").id, 5), []);
+  assert.deepEqual(bodies(store.sentByRunsBefore(maya.id, next.id, 5)), posts.slice(26));
+  assert.deepEqual(bodies(store.sentByRunsBefore(maya.id, next.id, 40)), posts);
+  // Once the session has read the message, it has been told of all that came before it, and of nothing after.
+  store.toldOfRuns(maya.id, next.id);
+  assert.deepEqual(store.sentByRunsBefore(maya.id, next.id, 40), []);
+  assert.equal(typeof store.messages(maya.id)[0].seen_at, "number");
+  assert.deepEqual(bodies(store.sentByRunsBefore(maya.id, store.addMessage(maya.id, "person", "And now?", "queued").id, 5)), [after.body]);
+});
+
+test("a suggestion waits quietly until the person answers, and one they start is the agent's work until its run ends", () => {
+  const { store, person, maya } = withAgents();
+  const offer = (what: string) => store.addMessage(maya.id, "agent", `Suggestion: ${what}`, "done", { ask: "waiting", interim: true, question: { kind: "work", title: "Suggestion", what, facts: [], detail: "Do it." } });
+  store.addMessage(maya.id, "agent", "Two things today.", "done");
+  const [first, second, third] = ["Reply to the plumber", "Renew the insurance", "Book the dentist"].map(offer);
+  const shown = () => store.agentsFor(person.id).find((agent) => agent.id === maya.id)!;
+  // Only the reply is unread, and nothing waits on the agent.
+  assert.deepEqual([shown().unread, shown().working, shown().work], [1, false, []]);
+  assert.equal(store.nextWork(maya.id), undefined);
+
+  // Started, it waits for its run, beside the chat: the agent has work, and no turn in its chat.
+  store.answerAsk(second.id, "allowed");
+  store.answerAsk(first.id, "allowed");
+  store.answerAsk(third.id, "refused");
+  assert.deepEqual(store.messages(maya.id).slice(1).map((message) => [message.ask, message.status]), [["allowed", "queued"], ["allowed", "queued"], ["refused", "done"]]);
+  assert.equal(store.nextQueued(maya.id), undefined);
+  assert.equal(store.nextWork(maya.id)?.id, first.id);
+  store.setStatus(second.id, "running");
+  // The one its run is on comes first.
+  assert.deepEqual([shown().working, shown().work.map((work) => work.id)], [false, [second.id, first.id]]);
+
+  // A server that stopped part way puts the run back in line, and leaves a suggestion nobody answered waiting.
+  const fourth = offer("Water the plants");
+  const turnAsk = store.addMessage(maya.id, "agent", "Run a command", "done", { ask: "waiting", question: { kind: "command", title: "Run a command", what: "List", facts: [], detail: "ls" } });
+  assert.deepEqual(store.requeueInterrupted(), [maya.id]);
+  assert.deepEqual([store.message(maya.id, second.id)?.status, store.message(maya.id, fourth.id)?.ask, store.message(maya.id, turnAsk.id)?.ask], ["queued", "waiting", "unanswered"]);
+
+  // Its page lists what was started, newest first, and its next suggestions take the place of the ones left waiting.
+  store.setStatus(second.id, "done");
+  assert.deepEqual(store.about(maya).work.map((work) => [work.id, work.status]), [[second.id, "done"], [first.id, "queued"]]);
+  store.closeSuggestions(maya.id);
+  assert.equal(store.message(maya.id, fourth.id)?.ask, "unanswered");
 });
 
 test("a turn counts on the day it ran by the computer's clock, and a day without one counts nothing", (t) => {

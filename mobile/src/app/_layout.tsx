@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
-import { StyleSheet, View, useWindowDimensions } from "react-native";
+import { Keyboard, StyleSheet, View, useWindowDimensions } from "react-native";
 import { DarkTheme, DefaultTheme, Stack, ThemeProvider, usePathname } from "expo-router";
 import { StatusBar } from "expo-status-bar";
 import { Drawer, useDrawerProgress } from "react-native-drawer-layout";
@@ -9,33 +9,32 @@ import Animated, { interpolate, useAnimatedStyle } from "react-native-reanimated
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { AgentList } from "@/components/AgentList";
 import { BAR_HEIGHT } from "@/components/ChatHeader";
-import { SideMenu, SideMenuContext } from "@/components/SideMenu";
 import { usePaired } from "@/lib/api";
 import { haptics } from "@/lib/haptics";
 import { onOpenChat } from "@/lib/push";
-import { SIDEBAR_WIDTH, useWindowLayout, WindowLayout } from "@/lib/layout";
+import { SIDEBAR_WIDTH, SideMenu, useWindowLayout, WindowLayout } from "@/lib/layout";
 import { startSync } from "@/lib/state";
 import { useTheme } from "@/lib/theme";
 import { WindowControlsRoom } from "../../modules/window-controls/src";
 
-// Home is always the first screen, even under a chat that a tap on its agent's Live Activity opens.
+// Home is always the first screen, under the chat that is open.
 export const unstable_settings = { anchor: "index" };
 
 /**
- * Every screen, in one stack, inside the side menu. The menu stays still
- * while the screens slide aside to uncover it. A window that splits keeps the
- * agents in a column at its left, with the stack beside it, where a chat
- * takes the place of the one before it without moving, and Back has nowhere
- * to go. On the home screen, or anywhere on the agents' column, a swipe
- * right opens the menu, diagonals included; deeper in the stack the swipe
- * belongs to going back. The list's scroll waits for the menu to judge
- * each drag (`ScrollWaitsForMenuSwipe` in the list): more right than up or
- * down is the menu's, anything else is the list's or a row's. A row with its
- * actions showing holds the swipe, so a swipe right closes it first. The menu
- * gives a light tap as it opens, and shuts when a chat opens, as from a
- * notification, and when the phone disconnects. The
- * strip under the status bar where every screen's top buttons sit measures
- * the room the window's controls take there.
+ * Every screen, in one stack. A window of one column keeps the person's
+ * agents in a side menu, which stays still while the screens slide aside to
+ * uncover it. A window that splits keeps the agents in a column at its left,
+ * with the stack beside it, and has no menu. Either way a chat takes the
+ * place of the one before it without moving, and Back has nowhere to go. On
+ * the home screen or a chat, a swipe right opens the menu, diagonals
+ * included, and a sheet over them keeps its swipes to itself. The chat's
+ * scroll waits for the menu to judge each drag (`ScrollWaitsForMenuSwipe` in
+ * the list): more right than up or down is the menu's, anything else is the
+ * list's or a message's. The menu gives a light tap as it opens and lowers
+ * the keyboard, and shuts when a chat opens, as from a notification, and
+ * when the phone disconnects. The strip under the status bar where every
+ * screen's top buttons sit measures the room the window's controls take
+ * there.
  */
 export default function Layout() {
   const theme = useTheme();
@@ -47,8 +46,9 @@ export default function Layout() {
   const layout = useWindowLayout(controls);
   const split = layout.split && paired;
   const [menuOpen, setMenuOpen] = useState(false);
-  const [swipeHeld, setSwipeHeld] = useState(false);
-  const menu = useMemo(() => ({ open: () => setMenuOpen(true), holdSwipe: setSwipeHeld }), []);
+  const menu = useMemo(() => ({ open: () => setMenuOpen(true) }), []);
+  // The screens the menu is behind: the home screen and a chat.
+  const overMenu = pathname === "/" || pathname.startsWith("/chat/");
   // The drawer builds its swipe with gesture-handler's legacy builder. Both
   // ends of the offset are set, since the builder keeps the drawer's own end
   // for any it isn't given; a screen's width either way is further than a
@@ -62,11 +62,13 @@ export default function Layout() {
   );
   useEffect(startSync, []);
   useEffect(() => {
-    if (menuOpen) haptics.menu();
+    if (!menuOpen) return;
+    haptics.menu();
+    Keyboard.dismiss();
   }, [menuOpen]);
   useEffect(() => {
-    if (!paired) setMenuOpen(false);
-  }, [paired]);
+    if (!paired || split) setMenuOpen(false);
+  }, [paired, split]);
   useEffect(() => onOpenChat(() => setMenuOpen(false)), []);
 
   const base = theme.dark ? DarkTheme : DefaultTheme;
@@ -83,19 +85,19 @@ export default function Layout() {
         <ThemeProvider value={navigation}>
           <WindowLayout.Provider value={layout}>
             <StatusBar style="auto" />
-            <SideMenuContext.Provider value={menu}>
+            <SideMenu.Provider value={menu}>
               <Drawer
                 open={menuOpen}
                 onOpen={menu.open}
                 onClose={() => setMenuOpen(false)}
                 drawerType="back"
-                swipeEnabled={menuOpen || ((split || pathname === "/") && !swipeHeld)}
-                swipeEdgeWidth={split ? SIDEBAR_WIDTH : width}
+                swipeEnabled={!split && (menuOpen || overMenu)}
+                swipeEdgeWidth={width}
                 configureGestureHandler={swipeOpensMenu}
                 style={{ backgroundColor: theme.field }}
                 drawerStyle={{ width: Math.min(width * 0.8, 340), backgroundColor: theme.field }}
                 overlayStyle={styles.overlay}
-                renderDrawerContent={() => <SideMenu />}>
+                renderDrawerContent={() => (split ? null : <Menu />)}>
                 <Shell>
                   <View style={styles.columns}>
                     {split ? (
@@ -108,14 +110,15 @@ export default function Layout() {
                         {/* A phone that hasn't paired with a computer has the welcome and pairing screens and nothing else, and opens on welcome. Once paired, it has everything but those. */}
                         <Stack.Protected guard={paired} redirectTo="/welcome">
                           <Stack.Screen name="index" />
-                          <Stack.Screen name="chat/[id]" options={split ? CHAT_BESIDE_AGENTS : undefined} />
+                          <Stack.Screen name="chat/[id]" options={CHAT_IN_PLACE} />
                           <Stack.Screen name="new-agent" options={{ presentation: "formSheet", sheetAllowedDetents: [0.62], sheetGrabberVisible: true }} />
                           {/* The drawer where what an agent answers with is chosen, which comes up over its chat and pulls up to show all of a long list. */}
                           <Stack.Screen name="model/[id]" options={{ presentation: "formSheet", sheetAllowedDetents: [0.75, 1], sheetGrabberVisible: true }} />
-                          {/* An agent's page, a note opened from it, an exchange between two agents, usage and connections, each a sheet over what is behind. */}
+                          {/* An agent's page, a note opened from it, an exchange between two agents, settings, usage and connections, each a sheet over what is behind. */}
                           <Stack.Screen name="agent/[id]" options={{ presentation: "modal" }} />
                           <Stack.Screen name="note" options={{ presentation: "modal" }} />
                           <Stack.Screen name="exchange" options={{ presentation: "modal" }} />
+                          <Stack.Screen name="settings" options={{ presentation: "modal" }} />
                           <Stack.Screen name="usage" options={{ presentation: "modal" }} />
                           <Stack.Screen name="connections" options={{ presentation: "modal" }} />
                           <Stack.Screen
@@ -132,7 +135,7 @@ export default function Layout() {
                   </View>
                 </Shell>
               </Drawer>
-            </SideMenuContext.Provider>
+            </SideMenu.Provider>
             <WindowControlsRoom pointerEvents="none" onRoom={({ nativeEvent }) => setControls(nativeEvent.leading)} style={[styles.controls, { top: insets.top }]} />
           </WindowLayout.Provider>
         </ThemeProvider>
@@ -141,8 +144,19 @@ export default function Layout() {
   );
 }
 
-// A chat beside the agents' column shows in place, and has no swipe back to the empty side.
-const CHAT_BESIDE_AGENTS = { animation: "none", gestureEnabled: false } as const;
+// A chat shows in place, and has no swipe back to the home screen under it.
+const CHAT_IN_PLACE = { animation: "none", gestureEnabled: false } as const;
+
+/** The side menu the screens slide off: the person's agents, which fade up from faint as the screens uncover them. */
+function Menu() {
+  const progress = useDrawerProgress();
+  const fade = useAnimatedStyle(() => ({ opacity: interpolate(progress.value, [0, 1], [0.3, 1], "clamp") }));
+  return (
+    <Animated.View style={[styles.menu, fade]}>
+      <AgentList />
+    </Animated.View>
+  );
+}
 
 const SHELL_RADIUS = 48;
 
@@ -171,6 +185,7 @@ function Shell({ children }: { children: ReactNode }) {
 
 const styles = StyleSheet.create({
   overlay: { backgroundColor: "transparent" },
+  menu: { flex: 1 },
   controls: { position: "absolute", left: 0, right: 0, height: BAR_HEIGHT },
   columns: { flex: 1, flexDirection: "row" },
   sidebar: { width: SIDEBAR_WIDTH, borderRightWidth: StyleSheet.hairlineWidth },

@@ -194,7 +194,7 @@ function addAgent(name: string, avatarId: string, at: number): Agent {
   };
   agents.push(agent);
   chats[agent.id] = [];
-  abouts[agent.id] = { instructions: `# ${name}\n\nYou are ${name}, one of Alex's agents.`, memories: [], jobs: [] };
+  abouts[agent.id] = { instructions: `# ${name}\n\nYou are ${name}, one of Alex's agents.`, memories: [], jobs: [], work: [] };
   return agent;
 }
 
@@ -213,6 +213,7 @@ function start(): void {
       instructions: `# ${name}\n\n${instructions}`,
       memories,
       jobs: jobs.map(([what, schedule], index) => ({ id: `job-${index}`, agent_id: agent.id, what, schedule, next_at: nextRun(schedule, now), created_at: now - 9 * DAY })),
+      work: [],
     };
   }
 }
@@ -224,6 +225,7 @@ function shown(agent: Agent): AgentWithLatest {
     ...agent,
     latest: chat.at(-1) ?? null,
     working: chat.some((each) => each.status === "queued" || each.status === "running"),
+    work: [],
     unread: chat.filter((each) => each.sender === "agent" && each.created_at > agent.read_at).length,
     waiting_on: null,
   };

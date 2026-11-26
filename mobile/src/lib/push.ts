@@ -3,7 +3,7 @@
 // the extension in targets/notifications opens it as it arrives. The app says
 // whether they may come, which phone takes them, and what a tap on one opens.
 // They are for when the person is away: while the app is open none shows or
-// sounds, and the chat list carries the unread counts. One stays on the phone
+// sounds, and the agents' list carries the unread counts. One stays on the phone
 // while its chat has something unread, and goes when the person reads the
 // chat, here or on another device. A tap on one opens its chat through
 // openChat, the one way into a chat, which knows the chat open on the stack.
@@ -14,6 +14,7 @@ import * as Application from "expo-application";
 import { isDevice } from "expo-device";
 import * as Notifications from "expo-notifications";
 import { router } from "expo-router";
+import Storage from "expo-sqlite/kv-store";
 import * as TaskManager from "expo-task-manager";
 import type { AgentWithLatest, PushToken } from "@server/contract";
 import { isPaired, request } from "./api";
@@ -21,6 +22,8 @@ import { onAgents, useAgents } from "./state";
 
 // The chat open on the stack, which openChat closes sheets down to or puts another in place of, and what listens for it.
 let chatOnScreen: string | null = null;
+// Where the phone keeps the agent whose chat was open last, which the app opens on.
+const LAST_CHAT = "last-chat";
 const listeners = new Set<() => void>();
 // The chat opened last, and what hears that a chat is being opened, as the side menu, which shuts.
 let opened: OpenChat | null = null;
@@ -108,8 +111,7 @@ export type OpenChat = { agentId: string; messageId?: string };
 /**
  * Opens an agent's chat. The side menu shuts, a sheet over home or over the
  * chat already open closes, and a different agent's chat takes that one's
- * place, so Back still goes home and a split window keeps one chat beside
- * the agents. With `messageId`, the chat scrolls to that message and flashes
+ * place, so one chat is open at a time. With `messageId`, the chat scrolls to that message and flashes
  * it; each call is a new value, so opening the same message again flashes
  * it again.
  */
@@ -129,7 +131,13 @@ export function onOpenChat(listener: () => void): () => void {
 
 function setChatOnScreen(agentId: string | null): void {
   chatOnScreen = agentId;
+  if (agentId) void Storage.setItem(LAST_CHAT, agentId);
   listeners.forEach((listener) => listener());
+}
+
+/** The agent whose chat was open last on this phone, if it has opened one. */
+export function lastChat(): string | null {
+  return Storage.getItemSync(LAST_CHAT);
 }
 
 function onChatOnScreen(listener: () => void): () => void {
@@ -137,7 +145,7 @@ function onChatOnScreen(listener: () => void): () => void {
   return () => listeners.delete(listener);
 }
 
-/** The agent whose chat is open on the stack, as the agents' column beside it marks it. */
+/** The agent whose chat is open on the stack, as the agents' list marks it. */
 export function useChatOnScreen(): string | null {
   return useSyncExternalStore(onChatOnScreen, () => chatOnScreen);
 }

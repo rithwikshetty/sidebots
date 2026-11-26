@@ -2,7 +2,8 @@
 // always one column. The iPad turns every way and iPadOS sizes the app's
 // window to any width, so a screen sizes itself from the window, never from
 // the device. A window as wide as an iPad held upright splits: the agents
-// take a column at its left, and the chat the rest. An iPad app in a window
+// take a column at its left, and the chat the rest. A window of one column
+// keeps the agents in a menu at its side, which its screens slide off. An iPad app in a window
 // of its own has the window's controls at the top left, which what sits
 // there moves aside for. The root layout works all of it out once, and every
 // screen reads it.
@@ -70,6 +71,13 @@ export function useWindowLayout(controls: number): WindowLayout {
     const chat = split ? front - SIDEBAR_WIDTH : front;
     return { split, readingMargin: Math.max(0, Math.floor((chat - READING_WIDTH) / 2)), controls };
   }, [front, controls]);
+}
+
+/** Opens the side menu, where a window of one column keeps the agents, from the screens that slide off it. */
+export const SideMenu = createContext<{ open(): void }>({ open() {} });
+
+export function useSideMenu() {
+  return useContext(SideMenu);
 }
 
 /** Whether the window splits, with the agents in a column beside the chat. */

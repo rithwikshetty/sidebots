@@ -6,7 +6,7 @@ import { basename, join, resolve } from "node:path";
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
 
-import { COLOR, PAGE, PROVIDERS, RUN, USAGE_DAYS, betweenAgents, readableColor, selectionOf } from "./contract.ts";
+import { COLOR, PAGE, PROVIDERS, RUN, USAGE_DAYS, WORK_LISTED, betweenAgents, readableColor, selectionOf } from "./contract.ts";
 import type { About, Agent, AgentWithLatest, Ask, Avatar, Connection, Day, Found, Job, Limit, Memory, Message, Plan, Provider, PushToken, Question, Schedule, Selection, Sender, Status, Switched, TurnKind, Usage, Used } from "./contract.ts";
 
 export type Person = { id: string; name: string };
@@ -29,7 +29,7 @@ export type AgentChanges = Partial<Pick<Agent, "name" | "avatar_id" | "provider"
 /**
  * What the store tells its listeners about: a message that was added, changed
  * status or had its ask closed, with the agents whose chats it is in, or an
- * agent that was added or changed, each as the home screen now shows it, or an
+ * agent that was added or changed, each as the list of agents now shows it, or an
  * agent that was deleted, or how a person signs in to a provider, as a
  * provider just said.
  */
@@ -83,6 +83,10 @@ const TABLE_CHANGES: (string | { table: string; change: string })[] = [
   // An agent in the middle of a session ran its last turn on what it answers with now.
   "update agents set ran_on = json_object('provider', provider, 'model', model, 'effort', effort, 'fast', json('false')) where session_id is not null",
   "alter table agents add column chat_changes integer not null default 0",
+  // What an agent's jobs sent before its chat's latest reply, that reply's session was told of as its turn began.
+  "update messages set seen_at = created_at where job_id is not null and seen_at is null and rowid < coalesce((select max(said.rowid) from messages said where said.agent_id = messages.agent_id and said.sender = 'agent' and said.job_id is null and (said.peer_id is null or said.ask is not null)), 0)",
+  // The brief a person's first agent starts with offers the work it finds, as one made today does.
+  "update jobs set what = what || ' When something in it is work you could do for them, offer it with \`suggest\`.' where what like 'Brief % on their day. Read today''s calendar, the mail that has come since your last brief%' and what not like '%\`suggest\`%'",
 ];
 
 const SCHEMA = `
@@ -203,6 +207,8 @@ create index if not exists messages_agent_created on messages (agent_id, created
 create index if not exists messages_peer on messages (peer_id) where peer_id is not null;
 -- The few messages whose turn hasn't ended: what waits on an agent, and whether it works.
 create index if not exists messages_unfinished on messages (status) where status = 'queued' or status = 'running';
+-- The few messages an agent's own runs sent that its chat's session hasn't been told of.
+create index if not exists messages_untold on messages (agent_id) where job_id is not null and seen_at is null;
 `;
 
 /**
@@ -252,10 +258,15 @@ const IN_CHAT = "(agent_id = ?1 or peer_id = ?1)";
  */
 const pageOfChat = (where: string, limit: string, end: "newest" | "oldest" = "newest") =>
   `rowid in (select rowid from messages where agent_id = ?1 and ${where} union select rowid from messages where peer_id = ?1 and ${where} order by 1 ${end === "newest" ? "desc" : "asc"} limit ${limit})`;
-// What waits on an agent: the messages in its chat that aren't for another agent, and other agents' messages to it.
-const FOR_AGENT = "((agent_id = ?1 and peer_id is null) or (peer_id = ?1 and ask is null))";
+// What waits on an agent's turn in its chat: the messages in its chat that aren't for another agent, and other agents' messages to it. An ask waits on the person, and a suggestion they started runs beside the chat.
+const FOR_AGENT = "(ask is null and ((agent_id = ?1 and peer_id is null) or peer_id = ?1))";
+// A suggestion: an ask that came quietly, with the reply it was offered with.
+const SUGGESTION = "(interim = 1 and ask is not null)";
 // A message whose turn hasn't ended: it waits to be read, or the agent works on it. It is worded as `messages_unfinished` is, which is how SQLite knows the index holds every such message.
 const UNFINISHED = "(status = 'queued' or status = 'running')";
+
+// What an agent's own runs sent that its chat's session hasn't been told of. It is worded as `messages_untold` is, which is how SQLite knows the index holds every such message.
+const UNTOLD = "(job_id is not null and seen_at is null)";
 
 // A message's columns, with its row's place in the table as the order it came in.
 const MESSAGE = 'rowid as "order", *';
@@ -366,6 +377,8 @@ export function openStore(home: string) {
     return { provider, apiKey, limits: apiKey ? [] : (limitsOf.all(personId, provider, Date.now()) as Limit[]) };
   };
 
+  // What an agent's own runs sent before a message that its chat's session hasn't been told of. `?1` is the agent's id and `?2` the message's.
+  const UNTOLD_BEFORE = `select ${MESSAGE} from messages indexed by messages_untold where agent_id = ?1 and ${UNTOLD} and ${WITH_PERSON} and rowid < (select rowid from messages where id = ?2)`;
   const one = (sql: string, ...values: (string | number)[]): Message | undefined => {
     const row = db.prepare(sql).get(...values) as Row | undefined;
     return row && toMessage(row);
@@ -386,10 +399,14 @@ export function openStore(home: string) {
   };
   const clearPushToken = db.prepare("update devices set push_token = null, environment = null, app = null where push_token = ?");
   const jobsFor = (agentId: string): Job[] => (db.prepare("select * from jobs where agent_id = ? order by next_at").all(agentId) as JobRow[]).map(toJob);
+  // The suggestions the person started that haven't ended, the one whose run began first, then the ones that wait for it.
+  const work = (agentId: string): Message[] => many(`select ${MESSAGE} from messages indexed by messages_unfinished where agent_id = ? and ${SUGGESTION} and ${UNFINISHED} order by status = 'queued', rowid`, agentId);
   const withLatest = (agent: Agent): AgentWithLatest => ({
     ...agent,
-    latest: one(`select ${MESSAGE} from messages where agent_id = ? and ${WITH_PERSON} order by rowid desc limit 1`, agent.id) ?? null,
+    // A suggestion comes under the reply it was offered with, which is what the agent said last.
+    latest: one(`select ${MESSAGE} from messages where agent_id = ? and ${WITH_PERSON} and not ${SUGGESTION} order by rowid desc limit 1`, agent.id) ?? null,
     working: pendingTurn.get(agent.id) !== undefined,
+    work: work(agent.id),
     unread: (unread.get(agent.id, agent.read_at) as { unread: number }).unread,
     waiting_on: asked(agent.id)[0]?.peer_id ?? null,
   });
@@ -634,6 +651,7 @@ export function openStore(home: string) {
         instructions: read(join(folder, PROVIDERS[agent.provider].instructions)),
         memories: files.sort().map((file) => toMemory(file, read(join(memory, file)))),
         jobs: jobsFor(agent.id),
+        work: many(`select ${MESSAGE} from messages where agent_id = ? and ${SUGGESTION} and ask = 'allowed' order by rowid desc limit ?`, agent.id, WORK_LISTED),
       };
     },
 
@@ -789,7 +807,7 @@ export function openStore(home: string) {
       else db.prepare("insert or replace into settings (name, value) values ('counts', 'off')").run();
     },
 
-    /** Records that the person has read everything in the chat so far, and says so when that leaves less unread, so their other devices hear of it. Returns the agent as the home screen now shows it. */
+    /** Records that the person has read everything in the chat so far, and says so when that leaves less unread, so their other devices hear of it. Returns the agent as the list of agents now shows it. */
     markRead(agentId: string): AgentWithLatest | undefined {
       const shown = agentWithLatest(agentId);
       if (!shown || shown.unread === 0) return shown;
@@ -807,7 +825,7 @@ export function openStore(home: string) {
     /**
      * Saves a message, with any files sent with it written into the agent's
      * `attachments/` folder. A reply, an ask or a failure notice brings a hidden
-     * agent back to the home screen, unless the agent is muted. An update while
+     * agent back to the list of agents, unless the agent is muted. An update while
      * the agent works doesn't, and neither does what it says to another agent.
      */
     addMessage(agentId: string, sender: Sender, body: string, status: Status, { files = [], replyTo, jobId, interim = false, ask, question, peerId, switched }: Extras = {}): Message {
@@ -894,11 +912,26 @@ export function openStore(home: string) {
       if (message) messageChanged(message);
     },
 
-    /** Records where an ask that was waiting now stands. */
+    /** Records where an ask that was waiting now stands. A suggestion the person started waits for its run from then. */
     answerAsk(messageId: string, answer: Exclude<Ask, "waiting">): void {
-      const answered = db.prepare("update messages set ask = ? where id = ? and ask = 'waiting'").run(answer, messageId).changes > 0;
+      const answered = db.prepare(`update messages set ask = ?1, status = iif(?1 = 'allowed' and ${SUGGESTION}, 'queued', status) where id = ?2 and ask = 'waiting'`).run(answer, messageId).changes > 0;
       const message = answered ? one(`select ${MESSAGE} from messages where id = ?`, messageId) : undefined;
       if (message) messageChanged(message);
+    },
+
+    /** The suggestions an agent has waiting for the person's answer, oldest first. */
+    waitingSuggestions(agentId: string): Message[] {
+      return many(`select ${MESSAGE} from messages where agent_id = ? and ${SUGGESTION} and ask = 'waiting' order by rowid`, agentId);
+    },
+
+    /** Closes the suggestions an agent has waiting, unanswered, as its next ones take their place. */
+    closeSuggestions(agentId: string): void {
+      for (const waiting of this.waitingSuggestions(agentId)) this.answerAsk(waiting.id, "unanswered");
+    },
+
+    /** The suggestion the person started that has waited longest for its run. */
+    nextWork(agentId: string): Message | undefined {
+      return one(`select ${MESSAGE} from messages indexed by messages_unfinished where agent_id = ? and ${SUGGESTION} and ${UNFINISHED} and status = 'queued' order by rowid limit 1`, agentId);
     },
 
     /**
@@ -934,22 +967,22 @@ export function openStore(home: string) {
     },
 
     /**
-     * The latest `limit` of what the agent's jobs have sent since the agent
-     * last replied in the chat, before a message, oldest first. The session a
-     * reply comes from never saw them. It reads back from the message and
-     * stops at that reply, so it reads what it returns and one message more.
+     * The latest `limit` of what the agent's own runs, of its jobs and of
+     * work the person started, sent before a message that its chat's session
+     * hasn't been told of, oldest first. Those runs are sessions of their
+     * own, beside the chat's, so the chat's session never saw them.
      */
-    sentByJobsBefore(agentId: string, messageId: string, limit: number): Message[] {
-      const latest: Message[] = [];
-      const back = db.prepare(
-        `select ${MESSAGE} from messages where sender = 'agent' and ${WITH_PERSON} and agent_id = ?1 and rowid < (select rowid from messages where id = ?2)
-         order by rowid desc limit ?3`,
-      );
-      for (const row of back.iterate(agentId, messageId, limit) as Iterable<Row>) {
-        if (row.job_id === null) break;
-        latest.push(toMessage(row));
+    sentByRunsBefore(agentId: string, messageId: string, limit: number): Message[] {
+      return many(`${UNTOLD_BEFORE} order by rowid desc limit ?3`, agentId, messageId, limit).reverse();
+    },
+
+    /** Records that the agent's chat's session has been told of what its own runs sent before a message, which `seen_at` then says when. */
+    toldOfRuns(agentId: string, messageId: string): void {
+      const now = Date.now();
+      for (const told of many(UNTOLD_BEFORE, agentId, messageId)) {
+        db.prepare("update messages set seen_at = ? where id = ?").run(now, told.id);
+        messageChanged({ ...told, seen_at: now });
       }
-      return latest.reverse();
     },
 
     /** The last few things the person and the agent said to each other before a message, oldest first. */
@@ -990,14 +1023,15 @@ export function openStore(home: string) {
      * Puts turns that a stopped server left running back in the queue, with
      * the asks they left waiting closed, and lists the agents with queued
      * turns. A switch notice that was handing over is done with, since the
-     * turn it came before hands over again.
+     * turn it came before hands over again. A suggestion waits on no turn,
+     * so one the person hasn't answered waits on.
      */
     requeueInterrupted(): string[] {
       db.prepare("update messages set status = 'done' where status = 'running' and switched is not null").run();
       db.prepare("update messages set status = 'queued' where status = 'running'").run();
-      db.prepare("update messages set ask = 'unanswered' where ask = 'waiting'").run();
-      // A message one agent sent another waits in the other's queue.
-      const rows = db.prepare("select distinct coalesce(peer_id, agent_id) as agent_id from messages where status = 'queued'").all() as { agent_id: string }[];
+      db.prepare(`update messages set ask = 'unanswered' where ask = 'waiting' and not ${SUGGESTION}`).run();
+      // A message one agent sent another waits in the other's queue. A suggestion the person started waits in its own agent's.
+      const rows = db.prepare("select distinct iif(ask is null, coalesce(peer_id, agent_id), agent_id) as agent_id from messages where status = 'queued'").all() as { agent_id: string }[];
       return rows.map((row) => row.agent_id);
     },
 

@@ -14,7 +14,7 @@ Sidebots opens as a window on the computer that runs it. The window lists the pe
 
 ## The shared client: `client/`
 
-`client/` holds what both apps do the same way: the store of agents, messages, avatars, usage and connections; the event stream and its retries; the changes to agents that wait for the server; paging through a chat; the errors a call can end in; and the small pure helpers (times, the working lines, usage sums, file kinds, names and limits, the style a page starts with, the chat colours, a message as one line, a found message as one line, where an exchange between agents stands, and what to ask before something that can't be undone). It imports the contract and nothing else, as the contract imports nothing, so each app builds it with its own tools.
+`client/` holds what both apps do the same way: the store of agents, messages, avatars, usage and connections; the event stream and its retries; the changes to agents that wait for the server; paging through a chat; the errors a call can end in; and the small pure helpers (times, the working lines, usage sums, file kinds, names and limits, the style a page starts with, the chat colours, a message as one line, a found message as one line, where an exchange between agents stands, how a chat stacks the suggestions an agent offered together, what the strip over the message field says of work beside the chat, and what to ask before something that can't be undone). It imports the contract and nothing else, as the contract imports nothing, so each app builds it with its own tools.
 
 Each app gives the store the few things that differ: how to call the server, how to open the event stream, where to save the copy it keeps, when the app comes back to the front, how a file goes into a form, and how a sign-in opens. `mobile/src/lib/state.ts` and `api.ts` keep the phone's side of that: pairing, the Keychain, the demo computer, Expo's fetch and storage. The desktop's side is in `desktop/src/renderer/lib`.
 
@@ -74,7 +74,7 @@ A device has a `kind`: `phone` or `desktop`. A desktop names its kind as it pair
 
 - `client/` has unit tests for the store: events, paging, pending changes, asks, the retry of a dropped stream.
 - The desktop's main process has unit tests for the proxy, pairing, the connection, the host, what the window may ask and what a page may do.
-- `desktop/e2e` drives the built app with Playwright against a real server whose providers are scripted, through every screen and state: empty, working, asks, failures, files, pages, search, settings, light and dark, narrow and wide.
+- `desktop/e2e` drives the built app with Playwright against a real server whose providers are scripted, through every screen and state: empty, working, asks, suggestions and the work started from them, failures, files, pages, search, settings, light and dark, narrow and wide.
 
 ## Out of scope
 

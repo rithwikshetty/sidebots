@@ -1,6 +1,7 @@
 import { useState } from "react";
-import { Cable, ChevronRight, FilePenLine, Globe, Plug, Terminal } from "lucide-react";
-import { fenced, type Ask, type Message, type Question } from "@server/contract.ts";
+import { Cable, ChevronRight, FilePenLine, Globe, Lightbulb, Plug, Terminal } from "lucide-react";
+import { fenced, isSuggestion, type Ask, type Message, type Question } from "@server/contract.ts";
+import { WORK, type Stacked } from "@client/suggestions.ts";
 import { problem } from "../lib/alerts.ts";
 import { cn } from "../lib/cn.ts";
 import { answerAsk, connect, useAgent, useConnections } from "../lib/store.ts";
@@ -9,9 +10,9 @@ import { BrandLogo } from "../ui/BrandLogo.tsx";
 import { Button } from "../ui/Button.tsx";
 import { Markdown } from "./Markdown.tsx";
 
-const ICONS = { command: Terminal, page: Globe, file: FilePenLine, tool: Plug, connection: Cable };
+const ICONS = { command: Terminal, page: Globe, file: FilePenLine, tool: Plug, connection: Cable, work: Lightbulb };
 // What an ask of each kind keeps behind its button, as the words after "Show" and "Hide". An ask for a connection keeps nothing there.
-const DETAIL = { command: "the command", page: "the address", file: "the file", tool: "everything it was given", connection: "" };
+const DETAIL = { command: "the command", page: "the address", file: "the file", tool: "everything it was given", connection: "", work: "what it will do" };
 // How an ask ended, as its bubble says it.
 const ASKED: Record<Exclude<Ask, "waiting">, string> = { allowed: "Allowed", refused: "Not allowed", unanswered: "Not answered" };
 // How an ask for a connection ended.
@@ -24,9 +25,11 @@ const CONNECTED: typeof ASKED = { allowed: "Connected", refused: "Not connected"
  * person reads words first and can still see all that Allow lets happen.
  * `from` is the agent that asks, for an ask shown in another agent's chat,
  * and the card then says whose it is. An ask for a connection wears the
- * connection's logo, once the window has the computer's list of them.
+ * connection's logo, once the window has the computer's list of them. A
+ * suggestion at the top of a stack says its `place` among those the agent
+ * offered with it.
  */
-export function AskCard({ question, from }: { question: Question; from?: string }) {
+export function AskCard({ question, from, place }: { question: Question; from?: string; place?: Stacked }) {
   const asker = useAgent(from ?? "");
   const [open, setOpen] = useState(false);
   const Icon = ICONS[question.kind];
@@ -42,6 +45,11 @@ export function AskCard({ question, from }: { question: Question; from?: string 
       <div className="flex items-center gap-1.5 text-ink2">
         {logo ? <BrandLogo logo={logo} size={14} /> : <Icon aria-hidden className="size-3.5 shrink-0" strokeWidth={2.25} />}
         <span className="text-sm font-semibold">{question.title}</span>
+        {place && place.of > 1 ? (
+          <span className="ml-auto pl-3 text-sm text-ink2 tabular-nums" data-testid="ask-place">
+            {place.at} of {place.of}
+          </span>
+        ) : null}
       </div>
       <p className="mt-px mb-1.5 text-message font-semibold">{question.what}</p>
       {question.facts.map(([label, value]) => (
@@ -77,15 +85,20 @@ export function AskCard({ question, from }: { question: Question; from?: string 
  * for the person's answer, and how the ask ended once it has. The agent goes
  * on, or leaves the thing undone, as soon as one is pressed. An ask for a
  * connection has Not now and Connect, which takes the person through the
- * app's sign-in, and the agent goes on once they have signed in.
+ * app's sign-in, and the agent goes on once they have signed in. A
+ * suggestion has Not now and Start, or Connect when its work needs an app the
+ * person hasn't signed in to, and once started its foot says where its work
+ * stands.
  */
 export function AskAnswer({ message, ask }: { message: Message; ask: Ask }) {
   const [sending, setSending] = useState(false);
   const connection = message.question?.connection;
+  const suggestion = isSuggestion(message);
   if (ask !== "waiting") {
+    const outcome = suggestion && ask === "allowed" ? WORK[message.status] : (connection ? CONNECTED : ASKED)[ask];
     return (
-      <p key={ask} className="mb-0.5 animate-fade-in text-sm font-semibold text-ink2" data-testid="ask-outcome">
-        {(connection ? CONNECTED : ASKED)[ask]}
+      <p key={outcome} className="mb-0.5 animate-fade-in text-sm font-semibold text-ink2" data-testid="ask-outcome">
+        {outcome}
       </p>
     );
   }
@@ -98,10 +111,10 @@ export function AskAnswer({ message, ask }: { message: Message; ask: Ask }) {
   return (
     <div className="mt-0.5 mb-1.5 flex gap-2" data-testid="ask-answers">
       <Button size="lg" onClick={() => answer(false)} disabled={sending} className="min-w-28 flex-1 bg-canvas shadow-none hover:bg-canvas/80">
-        {connection ? "Not now" : "Don't allow"}
+        {connection || suggestion ? "Not now" : "Don't allow"}
       </Button>
       <Button size="lg" variant="primary" onClick={() => answer(true)} disabled={sending} className="min-w-28 flex-1 bg-chat">
-        {connection ? "Connect" : "Allow"}
+        {connection ? "Connect" : suggestion ? "Start" : "Allow"}
       </Button>
     </div>
   );

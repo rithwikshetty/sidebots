@@ -27,6 +27,7 @@ const agent = (id: string, more: Partial<AgentWithLatest> = {}): AgentWithLatest
   created_at: 0,
   latest: null,
   working: false,
+  work: [],
   unread: 0,
   waiting_on: null,
   ...more,
@@ -119,7 +120,7 @@ function app(t: TestContext, saved: object = {}) {
   };
   const streams: (() => Promise<Response> | Response)[] = [];
   const opened: AbortSignal[] = [];
-  const kept: Record<string, string> = { "cache-7": JSON.stringify(saved) };
+  const kept: Record<string, string> = { "cache-8": JSON.stringify(saved) };
   const heard = { front: (_dropped = false) => {}, refused: 0, signIn: null as string | null, changed: (_listener: () => void) => () => {} };
   const store = createStore<string>({
     async request<T>(path: string, init: { method?: string; body?: unknown } = {}) {
@@ -153,7 +154,7 @@ function app(t: TestContext, saved: object = {}) {
   /** What the store has saved, once the wait before a save has passed. */
   const savedNow = () => {
     t.mock.timers.tick(300);
-    return JSON.parse(kept["cache-7"]);
+    return JSON.parse(kept["cache-8"]);
   };
   const asked = () => calls.map((call) => `${call.method} ${call.path}`);
   return { store, calls, asked, answers, streams, opened, heard, savedNow, tick: (ms: number) => t.mock.timers.tick(ms) };
@@ -366,7 +367,7 @@ test("catching up with the computer lets go of what the app kept of agents that 
   const { store, answers, streams, savedNow } = app(t, {
     agents: [agent("mochi"), agent("cog")],
     messages: { mochi: [row("hello")], cog: [row("hi", { agent_id: "cog" })] },
-    about: { cog: { instructions: "", memories: [], jobs: [] } },
+    about: { cog: { instructions: "", memories: [], jobs: [], work: [] } },
     pending: { cog: { muted: true } },
   });
   answers["GET /agents"] = () => [agent("mochi")];
@@ -1404,4 +1405,29 @@ test("clearing the store lets go of everything it kept", async (t) => {
   store.clear();
   assert.deepEqual([store.useAgents(), store.useMessages("mochi"), store.useOnline()], [[], [], true]);
   assert.deepEqual(savedNow(), { agents: [], messages: {}, caughtUp: {}, avatars: [], about: {}, usage: null, connections: null, pending: {} });
+});
+
+test("an agent's page lists a suggestion the person starts as its work, and follows where the work stands", async (t) => {
+  const { store, answers, streams } = app(t);
+  const events = stream();
+  streams.push(() => events.response);
+  const offered = (ask: Message["ask"], status: Message["status"]) =>
+    row("Reply to the plumber", { ask, status, interim: true, question: { kind: "work", title: "Suggestion", what: "Reply to the plumber", facts: [], detail: "Draft a yes." } });
+  answers["GET /agents"] = () => [agent("mochi")];
+  answers["GET /agents/mochi/about"] = () => ({ instructions: "", memories: [], jobs: [], work: [] });
+  store.startSync();
+  await settle();
+  await store.loadAbout("mochi");
+
+  // Offered, it is no work yet. Started, it is listed, and the list follows it to its end.
+  events.say({ message: offered("waiting", "done"), agent: agent("mochi", { chat_changes: 1 }) });
+  await settle();
+  assert.deepEqual(store.useAbout("mochi")?.work, []);
+  events.say({ message: offered("allowed", "running"), agent: agent("mochi", { chat_changes: 2 }) });
+  await settle();
+  assert.deepEqual(store.useAbout("mochi")?.work.map((work) => work.status), ["running"]);
+  events.say({ message: offered("allowed", "done"), agent: agent("mochi", { chat_changes: 3 }) });
+  await settle();
+  assert.deepEqual(store.useAbout("mochi")?.work.map((work) => work.status), ["done"]);
+  store.stopSync();
 });

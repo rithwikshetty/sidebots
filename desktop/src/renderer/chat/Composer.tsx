@@ -1,15 +1,18 @@
 import { useRef, type ClipboardEvent, type KeyboardEvent, type RefObject } from "react";
-import { ArrowUp, Plus, Reply, Square, X } from "lucide-react";
+import { ArrowUp, ChevronRight, Plus, Reply, Square, X } from "lucide-react";
 import type { AgentWithLatest, Message } from "@server/contract.ts";
 import { MAX_FILES, fileKind, fileMeta, isImage } from "@client/files.ts";
 import { preview } from "@client/messages.ts";
+import type { Beside } from "@client/suggestions.ts";
 import { cn } from "../lib/cn.ts";
 import type { AgentChanges } from "../lib/store.ts";
+import { openPanel } from "../lib/view.ts";
 import { IconButton } from "../ui/Button.tsx";
 import { Tooltip } from "../ui/Tooltip.tsx";
 import { FileTile } from "./Attachments.tsx";
 import { FILE_ICONS, usePreviews } from "./files.ts";
 import { ModelPicker } from "./ModelPicker.tsx";
+import { FlowDots } from "./WorkingLine.tsx";
 
 /**
  * The message field at the foot of the chat: a round card with + at its
@@ -25,7 +28,9 @@ import { ModelPicker } from "./ModelPicker.tsx";
  * with only files. While the agent works and there is nothing to send, Send
  * is Stop. While Sidebots is out of reach nothing can be sent, and a line
  * above the card says so. A reply shows what it answers above the card,
- * which Cancel or Esc lets go of.
+ * which Cancel or Esc lets go of. Work the person started from the agent's
+ * suggestions shows above the card too, while it has any, and opens the
+ * agent's page, which lists it.
  */
 export function Composer({
   field,
@@ -38,6 +43,7 @@ export function Composer({
   onRemove,
   replyTo,
   onCancelReply,
+  work,
   onSend,
   onStop,
   online,
@@ -53,6 +59,8 @@ export function Composer({
   onRemove: (file: File) => void;
   replyTo: Message | null;
   onCancelReply: () => void;
+  /** The work the agent does beside the chat, as the strip above the card says it. */
+  work: Beside | undefined;
   onSend: () => void;
   /** Stops the agent's work. Given while the agent works. */
   onStop?: () => void;
@@ -86,6 +94,26 @@ export function Composer({
           Can't reach Sidebots on this computer.
         </p>
       )}
+      {work ? (
+        <button
+          type="button"
+          onClick={() => openPanel({ kind: "agent", agentId: agent.id, tab: "work" })}
+          className="mb-2 flex w-full animate-rise-in items-center gap-2.5 rounded-xl bg-field py-1.5 pr-1.5 pl-3 text-left transition-colors hover:bg-[color-mix(in_srgb,var(--field),var(--ink)_4%)]"
+          data-testid="work-strip"
+        >
+          <FlowDots count={3} size={4} running={work.running} className="shrink-0 gap-1 text-ink2" />
+          <div className="min-w-0 flex-1">
+            <p className="truncate text-sm font-semibold">{work.title}</p>
+            <p key={work.state} className="truncate animate-fade-in text-sm text-ink2">
+              {work.state}
+              {work.more > 0 ? ` · ${work.more} more` : ""}
+            </p>
+          </div>
+          <span className="grid size-8 shrink-0 place-items-center text-ink3">
+            <ChevronRight aria-hidden className="size-4" strokeWidth={2} />
+          </span>
+        </button>
+      ) : null}
       {replyTo ? (
         <div className="mb-2 flex animate-rise-in items-center gap-2.5 rounded-xl bg-field py-1.5 pr-1.5 pl-3" data-testid="replying">
           <Reply aria-hidden className="size-4 shrink-0 text-ink2" strokeWidth={2} />

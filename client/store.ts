@@ -3,7 +3,7 @@
 // instantly and can be read offline. Each app makes one store, and gives it
 // the few things a phone and a desktop do differently.
 
-import { KEEPALIVE_MS, PAGE } from "../server/src/contract.ts";
+import { KEEPALIVE_MS, PAGE, WORK_LISTED, isSuggestion } from "../server/src/contract.ts";
 import type { About, Agent, AgentWithLatest, Avatar, Connected, Connection, Effort, Found, Message, Model, Plan, Provider, SignIn, StreamEvent, Usage } from "../server/src/contract.ts";
 import { ApiError, behind, type Behind } from "./api.ts";
 
@@ -72,7 +72,7 @@ export type Platform<Picked> = {
 };
 
 // The number changes when the shape of what is saved does.
-const CACHE_KEY = "cache-7";
+const CACHE_KEY = "cache-8";
 const SAVE_DELAY_MS = 300;
 // The computer says something on the stream within every keepalive, and a slow connection may bring it late. A stream quiet for longer than this has dropped.
 const QUIET_MS = KEEPALIVE_MS + 10_000;
@@ -249,6 +249,13 @@ export function createStore<Picked>(platform: Platform<Picked>) {
     return [...list.slice(0, after), message, ...list.slice(after)];
   }
 
+  /** An agent's page with a suggestion the person started among the work it lists: in the place of the copy it holds, or first when it is new. */
+  function withWork(about: About, message: Message): About {
+    if (!isSuggestion(message) || message.ask !== "allowed") return about;
+    const listed = about.work.some((work) => work.id === message.id);
+    return { ...about, work: listed ? about.work.map((work) => (work.id === message.id ? message : work)) : [message, ...about.work].slice(0, WORK_LISTED) };
+  }
+
   /**
    * Takes in what the event stream says: a message and its agent, an agent
    * that was added or changed, an agent that was deleted, or how the person
@@ -284,10 +291,12 @@ export function createStore<Picked>(platform: Platform<Picked>) {
       const chat = known && message && (at === undefined || agent.chat_changes > at) ? upsert(known, message, state.holes[agent.id]) : known;
       const inStep = chat !== known && at === agent.chat_changes - 1;
       const stays = !message && state.agents.some((item) => item.id === agent.id);
+      const about = message && state.about[message.agent_id];
       set({
         agents: stays ? state.agents.map((item) => (item.id === agent.id ? withPending(agent) : item)) : [withPending(agent), ...state.agents.filter((item) => item.id !== agent.id)],
         messages: chat && chat !== known ? { ...state.messages, [agent.id]: chat } : state.messages,
         caughtUp: inStep ? { ...state.caughtUp, [agent.id]: agent.chat_changes } : state.caughtUp,
+        about: about ? { ...state.about, [message.agent_id]: withWork(about, message) } : state.about,
       });
     } else return;
     told.forEach((listener) => listener(state.agents));
@@ -567,7 +576,7 @@ export function createStore<Picked>(platform: Platform<Picked>) {
     const agent = await request<Agent>("/agents", { method: "POST", body: { name, avatarId, provider } });
     // The event stream may have brought the agent already.
     const others = state.agents.filter((each) => each.id !== agent.id);
-    set({ agents: [{ ...agent, latest: null, working: false, unread: 0, waiting_on: null }, ...others], messages: { ...state.messages, [agent.id]: [] } });
+    set({ agents: [{ ...agent, latest: null, working: false, work: [], unread: 0, waiting_on: null }, ...others], messages: { ...state.messages, [agent.id]: [] } });
     return agent;
   }
 

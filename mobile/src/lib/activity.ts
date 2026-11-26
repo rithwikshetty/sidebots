@@ -11,7 +11,7 @@ import { useEffect } from "react";
 import { AppState } from "react-native";
 import { Image } from "expo-image";
 import * as Linking from "expo-linking";
-import { AVATAR_SHEET, AVATAR_STATES, avatarFrame, type AgentWithLatest, type AvatarState } from "@server/contract";
+import { AVATAR_SHEET, AVATAR_STATES, avatarFrame, avatarStateOf, type AgentWithLatest, type AvatarState } from "@server/contract";
 import { workingLine } from "@client/lines";
 import { AgentActivity } from "../../modules/agent-activity/src";
 import { avatarSheet, isPaired, onPairing, request } from "./api";
@@ -54,7 +54,7 @@ async function start(agent: AgentWithLatest): Promise<void> {
  */
 function show(agents: AgentWithLatest[]): void {
   if (AppState.currentState !== "active" || !AgentActivity.isAvailable()) return;
-  const working = agents.filter((agent) => agent.working && !agent.muted);
+  const working = agents.filter((agent) => avatarStateOf(agent) === "working" && !agent.muted);
   const shown = AgentActivity.shown();
   for (const { agentId } of shown) {
     if (!working.some((agent) => agent.id === agentId)) void AgentActivity.end(agentId);

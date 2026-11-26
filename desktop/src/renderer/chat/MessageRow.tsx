@@ -3,6 +3,7 @@ import { Copy, Reply } from "lucide-react";
 import type { Message } from "@server/contract.ts";
 import { fileKind, fileMeta, isImage, isPage } from "@client/files.ts";
 import { preview } from "@client/messages.ts";
+import type { Stacked } from "@client/suggestions.ts";
 import { listTime } from "@client/time.ts";
 import { problem } from "../lib/alerts.ts";
 import { cn } from "../lib/cn.ts";
@@ -34,7 +35,9 @@ export function drawnAs(message: Message): "switch" | "notice" | "nothing" | "me
  * and files above its bubble, at the end of the column for the person's and
  * at the start for the agent's. The bubble quotes the message it answers at its top, with
  * "An earlier message" when the window doesn't have it. An ask shows its card
- * in place of the words, with Allow and Don't allow while it waits. Under the
+ * in place of the words, with Allow and Don't allow while it waits. A
+ * suggestion at the top of a stack says its place in it, and the edges of
+ * those waiting under it show beneath its bubble. Under the
  * person's own is "Send again" when it failed, and the chat's receipt when it
  * is their newest. A Reply button shows beside the message while the pointer
  * or focus is on it, and a right-click, or the menu key or Shift+F10 while it
@@ -44,6 +47,7 @@ export const MessageRow = memo(function MessageRow({
   message,
   quoted,
   from,
+  place,
   receipt,
   arrival,
   flashing,
@@ -55,6 +59,8 @@ export const MessageRow = memo(function MessageRow({
   quoted: Message | undefined;
   /** The agent that sent it, when that isn't the chat's own. */
   from?: string;
+  /** Its place in its stack, for a suggestion at the top of one. */
+  place?: Stacked;
   /** Whether the message carries the chat's receipt, as the person's newest does. */
   receipt: boolean;
   arrival: Arrival;
@@ -132,8 +138,9 @@ export const MessageRow = memo(function MessageRow({
           files={files.map((path) => (
             <FileCard key={path} agentId={message.agent_id} path={path} />
           ))}
-          ask={message.question ? <AskCard question={message.question} from={from} /> : undefined}
+          ask={message.question ? <AskCard question={message.question} from={from} place={place} /> : undefined}
           foot={message.ask ? <AskAnswer message={message} ask={message.ask} /> : undefined}
+          under={place?.under}
           aside={
             near ? <IconButton icon={Reply} label="Reply" size="sm" onClick={reply} tooltipSide="top" className="animate-fade-in" data-testid="reply-button" /> : null
           }
@@ -211,7 +218,9 @@ export function OutgoingRow({ outgoing }: { outgoing: Outgoing }) {
  * its pages between them, and the message it answers quoted at the bubble's
  * top. The agent's words are markdown; the person's are as they typed them.
  * An ask shows its card in place of the words. `foot` sits under either,
- * inside the bubble, and `aside` beside the last of what was sent.
+ * inside the bubble, and `aside` beside the last of what was sent. `under`
+ * is how many suggestions wait under it, of which up to two show their edge
+ * beneath the bubble.
  */
 function Said({
   mine,
@@ -222,6 +231,7 @@ function Said({
   files,
   ask,
   foot,
+  under = 0,
   aside,
 }: {
   mine: boolean;
@@ -232,6 +242,7 @@ function Said({
   files: ReactNode[];
   ask?: ReactNode;
   foot?: ReactNode;
+  under?: number;
   aside?: ReactNode;
 }) {
   const parts: { key: string; node: ReactNode; width: string }[] = [];
@@ -243,15 +254,20 @@ function Said({
       key: "bubble",
       width: "max-w-[85%]",
       node: (
-        <Bubble side={mine ? "end" : "start"} className="max-w-full" data-testid="bubble">
-          {quote ? (
-            <div aria-label={`In reply to: ${quote}`} className={cn("mt-0.5 mb-1.5 border-l-2 pl-2 text-sm opacity-80", mine ? "border-on-tint" : "border-ink2 text-ink2")} data-testid="quote">
-              <p className="line-clamp-3 break-words">{quote}</p>
-            </div>
-          ) : null}
-          {ask ?? (body && mine ? <p data-selectable className="whitespace-pre-wrap">{body}</p> : body ? <Markdown text={body} /> : null)}
-          {foot}
-        </Bubble>
+        <>
+          <Bubble side={mine ? "end" : "start"} className="max-w-full" data-testid="bubble">
+            {quote ? (
+              <div aria-label={`In reply to: ${quote}`} className={cn("mt-0.5 mb-1.5 border-l-2 pl-2 text-sm opacity-80", mine ? "border-on-tint" : "border-ink2 text-ink2")} data-testid="quote">
+                <p className="line-clamp-3 break-words">{quote}</p>
+              </div>
+            ) : null}
+            {ask ?? (body && mine ? <p data-selectable className="whitespace-pre-wrap">{body}</p> : body ? <Markdown text={body} /> : null)}
+            {foot}
+          </Bubble>
+          {Array.from({ length: Math.min(under, 2) }, (_, index) => (
+            <div key={index} aria-hidden className={cn("mx-auto h-1 animate-fade-in rounded-b-md bg-bubble", index === 0 ? "w-[92%] opacity-70" : "w-[84%] opacity-40")} data-testid="stack-edge" />
+          ))}
+        </>
       ),
     });
   }
