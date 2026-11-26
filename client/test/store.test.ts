@@ -1461,3 +1461,18 @@ test("an agent's page lists a suggestion the person starts as its work, and foll
   assert.deepEqual(store.useAbout("mochi")?.work.map((work) => work.status), ["done"]);
   store.stopSync();
 });
+
+test("an agent's page takes the answer to what it asked for last, so an older one that comes late is dropped", async (t) => {
+  const { store, answers } = app(t);
+  const page = (status: Message["status"]) => ({ instructions: "", memories: [], jobs: [], work: [row("Write a haiku", { ask: "allowed", status })] });
+  // The page is asked for as the work starts and again as it ends, and the first answer comes last.
+  let first!: (about: unknown) => void;
+  answers["GET /agents/mochi/about"] = () => new Promise((resolve) => (first = resolve));
+  const started = store.loadAbout("mochi");
+  await settle();
+  answers["GET /agents/mochi/about"] = () => page("done");
+  await store.loadAbout("mochi");
+  first(page("running"));
+  await started;
+  assert.deepEqual(store.useAbout("mochi")?.work.map((work) => work.status), ["done"]);
+});

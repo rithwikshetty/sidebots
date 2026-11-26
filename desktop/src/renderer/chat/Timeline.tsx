@@ -51,6 +51,8 @@ type Around = {
   standings: Map<string, Standing>;
   /** Each suggestion at the top of its stack, by its id, with its place in it. */
   tops: Map<string, Stacked>;
+  /** The suggestions that came up from under another while the chat was open. */
+  surfaced: Set<string>;
   byId: Map<string, Message>;
   /** The person's newest message, which carries the chat's receipt. */
   newestMine: string | undefined;
@@ -80,7 +82,7 @@ function rowKind(row: Row): string {
 
 /** A row as it is drawn: a day, a message, the exchange a message was last asked in, the person's message on its way, or the hole after a stretch from further back. */
 function drawRow({ item: row, extraData }: LegendListRenderItemProps<Row>) {
-  const { agentId, standings, tops, byId, newestMine, flashing, today, openedAt, onReply, onPageShown, fills } = extraData as Around;
+  const { agentId, standings, tops, surfaced, byId, newestMine, flashing, today, openedAt, onReply, onPageShown, fills } = extraData as Around;
   if (isHole(row)) return <HoleRow agentId={agentId} after={row.after} fills={fills} />;
   if (isDay(row)) {
     return (
@@ -98,7 +100,8 @@ function drawRow({ item: row, extraData }: LegendListRenderItemProps<Row>) {
   }
   const message = row;
   const standing = standings.get(message.id);
-  const arrival: Arrival = message.created_at < openedAt || arrived.has(message.id) ? "none" : message.sender === "person" ? "settle" : "rise";
+  // A suggestion that came up from under another rises in as a message that comes in does.
+  const arrival: Arrival = arrived.has(message.id) || (message.created_at < openedAt && !surfaced.has(message.id)) ? "none" : message.sender === "person" ? "settle" : "rise";
   return (
     <div className="px-4">
       {standing ? (
@@ -232,6 +235,12 @@ export const Timeline = memo(function Timeline({
   // Suggestions offered together show as a stack, and those that went unstarted are gone.
   const stacks = useMemo(() => stacksIn(messages), [messages]);
   const shown = useMemo(() => messages.filter((message) => (!betweenAgents(message) || standings.has(message.id)) && !stacks.hidden.has(message.id)), [messages, standings, stacks]);
+  // The suggestions at the top of their stacks as the chat last drew them. One that isn't among them came up from under another.
+  const drawnTops = useRef<Set<string> | null>(null);
+  const surfaced = useMemo(() => new Set([...stacks.top.keys()].filter((id) => drawnTops.current !== null && !drawnTops.current.has(id))), [stacks]);
+  useEffect(() => {
+    drawnTops.current = new Set(stacks.top.keys());
+  }, [stacks]);
   // The person's newest message, which carries the chat's receipt.
   const newestMine = chat.findLast((message) => message.sender === "person")?.id;
   // The faded copy goes once the server's copy is in the chat, which may come over the event stream first.
@@ -259,8 +268,8 @@ export const Timeline = memo(function Timeline({
   // While the agent waits on the person's answer to an ask of its own, the ask is the last thing in the chat.
   const working = agent.working && online && !asksPerson(agent.id, chat) && hole === undefined;
   const around = useMemo<Around>(
-    () => ({ agentId: agent.id, standings, tops: stacks.top, byId, newestMine, flashing, today, openedAt, onReply, onPageShown: keep, fills: !landing }),
-    [agent.id, standings, stacks, byId, newestMine, flashing, today, openedAt, onReply, keep, landing],
+    () => ({ agentId: agent.id, standings, tops: stacks.top, surfaced, byId, newestMine, flashing, today, openedAt, onReply, onPageShown: keep, fills: !landing }),
+    [agent.id, standings, stacks, surfaced, byId, newestMine, flashing, today, openedAt, onReply, keep, landing],
   );
 
   // Counts the chat's own scrolls and the person's, so a glide to the end that the person takes over, or that a later scroll follows, is left where it is.
@@ -378,10 +387,10 @@ export const Timeline = memo(function Timeline({
   // A message that has come in is drawn with its motion once. The list draws its row after this has run, so it counts as arrived from the frame after.
   useEffect(() => {
     const frame = requestAnimationFrame(() => {
-      for (const message of shown) if (message.created_at >= openedAt) arrived.add(message.id);
+      for (const message of shown) if (message.created_at >= openedAt || surfaced.has(message.id)) arrived.add(message.id);
     });
     return () => cancelAnimationFrame(frame);
-  }, [shown, openedAt]);
+  }, [shown, surfaced, openedAt]);
   const empty = !agent.latest && messages.length === 0 && !sending;
   // The way to the newest message shows once something comes while the person reads further up, and all the while the chat draws a stretch from further back.
   const offered = behind || hole !== undefined;

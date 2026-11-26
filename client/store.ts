@@ -640,10 +640,15 @@ export function createStore<Picked>(platform: Platform<Picked>) {
     forget(agentId);
   }
 
-  /** Fetches what an agent's page shows: its instructions, what it remembers and its jobs. */
+  // How many times each agent's page has been asked for. A page takes only the answer to what it asked for last, so an older one that comes late is dropped.
+  const abouts = new Map<string, number>();
+
+  /** Fetches what an agent's page shows: its instructions, what it remembers, its jobs and the work the person started. */
   async function loadAbout(agentId: string): Promise<void> {
+    const asked = (abouts.get(agentId) ?? 0) + 1;
+    abouts.set(agentId, asked);
     const about = await request<About>(`/agents/${agentId}/about`);
-    set({ about: { ...state.about, [agentId]: about } });
+    if (abouts.get(agentId) === asked) set({ about: { ...state.about, [agentId]: about } });
   }
 
   // For each fetch of usage on its way, the plans the stream brought meanwhile, which are newer than what the fetch answers with.
