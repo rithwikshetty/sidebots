@@ -32,7 +32,7 @@ import { haptics } from "@/lib/haptics";
 import { useAppActive, useReadingMargin, useSideMenu, useSplit, useToday } from "@/lib/layout";
 import { useWorkingLine } from "@/lib/lines";
 import { HIDE, MOVE, SHOW, arrive } from "@/lib/motion";
-import { askForPush, showChatOnScreen, useOpenChat } from "@/lib/push";
+import { askForPush, showChatOnScreen, unreadOf, useOpenChat } from "@/lib/push";
 import { answerAsk, backToNewest, connect, freshStart, loadMessages, loadOlder, markRead, newestPage, resend, send, stop, useAgent, useAgents, useChatColor, useHole, useMessages, useOnline } from "@/lib/state";
 import { ChatColor, type Theme, useTheme } from "@/lib/theme";
 import { ScrollWaitsForMenuSwipe } from "../../../modules/side-menu-swipe/src";
@@ -64,8 +64,8 @@ function ChatWith({ agent }: { agent: AgentWithLatest }) {
   // Beside the agents' column the chat has no menu to open, and its messages keep to the reading column in a wide one.
   const split = useSplit();
   const menu = useSideMenu();
-  // What the person's other agents sent that they haven't read, which the menu's button counts as the app's icon does.
-  const elsewhere = useAgents().reduce((total, each) => total + (each.id === agent.id || each.muted ? 0 : each.unread), 0);
+  // What the person's other agents sent that they haven't read, which the menu's button counts.
+  const elsewhere = unreadOf(useAgents(), agent.id);
   const margin = useReadingMargin();
   const avatarState = avatarStateOf(agent);
   const today = useToday();
@@ -382,11 +382,11 @@ function ChatWith({ agent }: { agent: AgentWithLatest }) {
         <View style={{ paddingBottom: insets.bottom, paddingHorizontal: margin, backgroundColor: theme.bg }} onLayout={(event) => setComposerHeight(Math.round(event.nativeEvent.layout.height))}>
           {replyTo ? (
             <Animated.View entering={SHOW} exiting={HIDE} layout={MOVE} style={styles.above}>
-              <Glass style={styles.replying}>
+              <Glass style={styles.banner}>
                 <Reply size={16} strokeWidth={2} color={theme.ink2} />
-                <View style={styles.replyingText}>
-                  <Text style={[styles.replyingTitle, { color: theme.ink }]}>Replying to {replyTo.sender === "person" ? "yourself" : agent.name}</Text>
-                  <Text numberOfLines={1} style={[styles.replyingQuote, { color: theme.ink2 }]}>
+                <View style={styles.bannerText}>
+                  <Text style={[styles.bannerTitle, { color: theme.ink }]}>Replying to {replyTo.sender === "person" ? "yourself" : agent.name}</Text>
+                  <Text numberOfLines={1} style={[styles.bannerNote, { color: theme.ink2 }]}>
                     {preview(replyTo)}
                   </Text>
                 </View>
@@ -401,17 +401,17 @@ function ChatWith({ agent }: { agent: AgentWithLatest }) {
                 accessibilityRole="button"
                 accessibilityLabel={`${beside.title}, ${beside.state}`}
                 accessibilityHint="Opens what the agent is working on">
-                <Glass interactive style={styles.replying}>
+                <Glass interactive style={styles.banner}>
                   <View style={styles.flow}>
                     {[0, 1, 2].map((dot) => (
                       <FlowDot key={dot} index={dot} running={beside.running} size={4} color={theme.ink2} />
                     ))}
                   </View>
-                  <View style={styles.replyingText}>
-                    <Text numberOfLines={1} style={[styles.replyingTitle, { color: theme.ink }]}>
+                  <View style={styles.bannerText}>
+                    <Text numberOfLines={1} style={[styles.bannerTitle, { color: theme.ink }]}>
                       {beside.title}
                     </Text>
-                    <FadingText numberOfLines={1} style={[styles.replyingQuote, { color: theme.ink2 }]}>
+                    <FadingText numberOfLines={1} style={[styles.bannerNote, { color: theme.ink2 }]}>
                       {beside.more ? `${beside.state} · ${beside.more} more` : beside.state}
                     </FadingText>
                   </View>
@@ -672,7 +672,8 @@ const styles = StyleSheet.create({
   text: { fontSize: 17, lineHeight: 22 },
   quote: { borderLeftWidth: 2, paddingLeft: 8, marginTop: 2, marginBottom: 6, opacity: 0.8 },
   quoteText: { fontSize: 14, lineHeight: 18 },
-  replying: {
+  // What sits over the message field: the message a reply answers, and the work the agent does beside the chat.
+  banner: {
     flexDirection: "row",
     alignItems: "center",
     gap: 10,
@@ -683,9 +684,9 @@ const styles = StyleSheet.create({
     borderCurve: "continuous",
     overflow: "hidden",
   },
-  replyingText: { flex: 1 },
-  replyingTitle: { fontSize: 13, fontWeight: "600" },
-  replyingQuote: { fontSize: 13, lineHeight: 18 },
+  bannerText: { flex: 1 },
+  bannerTitle: { fontSize: 13, fontWeight: "600" },
+  bannerNote: { fontSize: 13, lineHeight: 18 },
   flow: { flexDirection: "row", gap: 4 },
   opens: { width: 28, height: 28, alignItems: "center", justifyContent: "center" },
   // The edges of the suggestions under the one that shows, and the room they take below its bubble.

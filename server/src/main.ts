@@ -17,7 +17,7 @@ import { parseArgs } from "node:util";
 import { serve } from "@hono/node-server";
 import qrcode from "qrcode-terminal";
 import { openStore, type Person } from "./store.ts";
-import { CONTRACT_HEADER, PROVIDERS, type Provider } from "./contract.ts";
+import { CONTRACT_HEADER, PROVIDERS, avatarStateOf, type Provider } from "./contract.ts";
 import { createConnections } from "./connections.ts";
 import { addFirstAgent, createQueue } from "./runner.ts";
 import { claude } from "./claude.ts";
@@ -240,7 +240,7 @@ if (process.argv[2] === "status") {
     running: await answers(`http://127.0.0.1:${port}`),
     address,
     // Whether any agent has a turn queued or running, in its chat or beside it, which an update waits for before it restarts the server.
-    working: store.people().some((person) => store.agentsFor(person.id).some((agent) => agent.working || agent.work.length > 0)),
+    working: store.people().some((person) => store.agentsFor(person.id).some((agent) => avatarStateOf(agent) === "working")),
     // Whether the server tells the relay how much it is used.
     counting: store.counting(),
     // How each person's agents sign in to each provider: with the login in their config folder for it, or an API key.

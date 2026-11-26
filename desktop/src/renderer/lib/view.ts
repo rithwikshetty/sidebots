@@ -9,6 +9,9 @@ import { useSyncExternalStore } from "react";
 import { confirming, onConfirm } from "../ui/Confirm.tsx";
 import { onFocusChange, onResize, onVisibility } from "./window.ts";
 
+/** The tabs of an agent's page: its settings, and what it works on and from. */
+export type AgentTab = "settings" | "work";
+
 /**
  * What the panel at the right shows, always about one agent: a page it sent,
  * its pictures from one message starting at `index`, what it and another
@@ -20,7 +23,7 @@ export type PanelView =
   | { kind: "page"; agentId: string; path: string; title: string }
   | { kind: "images"; agentId: string; paths: string[]; index: number }
   | { kind: "exchange"; agentId: string; messageId: string }
-  | { kind: "agent"; agentId: string; tab?: "work" }
+  | { kind: "agent"; agentId: string; tab?: AgentTab }
   | { kind: "note"; agentId: string; note: { kind: "instructions" } | { kind: "memory"; name: string } };
 
 export type SettingsSection = "usage" | "connections" | "phones" | "about";

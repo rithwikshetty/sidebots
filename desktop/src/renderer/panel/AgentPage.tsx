@@ -7,7 +7,7 @@ import { COST_NOTE, KINDS, dollars, usedBy } from "@client/usage.ts";
 import { changeOrSay, confirmDelete, problem } from "../lib/alerts.ts";
 import { cn } from "../lib/cn.ts";
 import { answerAsk, loadAbout, loadUsage, removeJob, useAbout, useAgent, useChatColor, useUsage, type AgentChanges } from "../lib/store.ts";
-import { openChat, openPanel } from "../lib/view.ts";
+import { openChat, openPanel, type AgentTab } from "../lib/view.ts";
 import { AvatarPicker } from "../ui/AvatarPicker.tsx";
 import { Avatar } from "../ui/Avatar.tsx";
 import { Button, IconButton } from "../ui/Button.tsx";
@@ -17,11 +17,10 @@ import { Switch } from "../ui/Switch.tsx";
 import { ColorPicker } from "./ColorPicker.tsx";
 import { LoadingRow, Row, RowButton, RowText, Section, SectionTitle } from "./Section.tsx";
 
-const TABS = { settings: "Settings", work: "Jobs & memory" } as const;
-type Tab = keyof typeof TABS;
+const TABS: Record<AgentTab, string> = { settings: "Settings", work: "Jobs & memory" };
 
 // The tab each agent's page was last on, and how far down it was, while the app runs, so going to a note and back keeps them.
-const tabs = new Map<string, Tab>();
+const tabs = new Map<string, AgentTab>();
 const scrolls = new Map<string, number>();
 
 // Whether the agent's name at the top of its page has scrolled under the panel's top bar, which then shows it.
@@ -115,20 +114,20 @@ function useLoading(load: () => Promise<void>, key: string): Loading {
  * page opens on the tab it was last on, or on `tab` when it is opened for
  * one.
  */
-export function AgentPage({ agentId, tab }: { agentId: string; tab?: Tab }) {
+export function AgentPage({ agentId, tab }: { agentId: string; tab?: AgentTab }) {
   const agent = useAgent(agentId);
   return agent ? <AgentAbout key={`${agent.id} ${tab}`} agent={agent} opensOn={tab} /> : null;
 }
 
-function AgentAbout({ agent, opensOn }: { agent: AgentWithLatest; opensOn?: Tab }) {
-  const [tab, setTab] = useState<Tab>(() => opensOn ?? tabs.get(agent.id) ?? "settings");
+function AgentAbout({ agent, opensOn }: { agent: AgentWithLatest; opensOn?: AgentTab }) {
+  const [tab, setTab] = useState<AgentTab>(() => opensOn ?? tabs.get(agent.id) ?? "settings");
   const [editing, setEditing] = useState(false);
-  // A turn is what changes what the agent used, its work, its jobs and what it remembers, so a page left open fetches them again as one starts or ends, as the agent's latest message changes and as its work moves on.
-  const turn = `${agent.id} ${agent.latest?.id} ${agent.working} ${agent.work.map((work) => `${work.id}:${work.status}`).join(",")}`;
+  // A turn is what changes what the agent used, its jobs and what it remembers, so a page left open fetches them again as one starts or ends and as the agent's latest message changes.
+  const turn = `${agent.id} ${agent.latest?.id} ${agent.working}`;
   const usage = useLoading(loadUsage, turn);
   const about = useLoading(() => loadAbout(agent.id), turn);
   const change = (changes: AgentChanges) => changeOrSay(agent.id, changes);
-  const pick = (next: Tab) => {
+  const pick = (next: AgentTab) => {
     tabs.set(agent.id, next);
     setTab(next);
   };
@@ -155,8 +154,8 @@ function Shown({
   about,
 }: {
   agent: AgentWithLatest;
-  tab: Tab;
-  pick: (tab: Tab) => void;
+  tab: AgentTab;
+  pick: (tab: AgentTab) => void;
   edit: () => void;
   edited: boolean;
   change: (changes: AgentChanges) => void;

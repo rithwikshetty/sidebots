@@ -26,13 +26,14 @@ export const unstable_settings = { anchor: "index" };
  * uncover it. A window that splits keeps the agents in a column at its left,
  * with the stack beside it, and has no menu. Either way a chat takes the
  * place of the one before it without moving, and Back has nowhere to go. On
- * the home screen or a chat, a swipe right opens the menu, diagonals
- * included, and a sheet over them keeps its swipes to itself. The chat's
+ * a chat, a swipe right opens the menu, diagonals included, and a sheet over
+ * it keeps its swipes to itself. The home screen, which shows while there is
+ * no chat to open, is the agents themselves, and has no menu. The chat's
  * scroll waits for the menu to judge each drag (`ScrollWaitsForMenuSwipe` in
  * the list): more right than up or down is the menu's, anything else is the
  * list's or a message's. The menu gives a light tap as it opens and lowers
- * the keyboard, and shuts when a chat opens, as from a notification, and
- * when the phone disconnects. The strip under the status bar where every
+ * the keyboard, and shuts when a chat opens, as from a notification, when
+ * the last chat closes, and when the phone disconnects. The strip under the status bar where every
  * screen's top buttons sit measures the room the window's controls take
  * there.
  */
@@ -47,8 +48,8 @@ export default function Layout() {
   const split = layout.split && paired;
   const [menuOpen, setMenuOpen] = useState(false);
   const menu = useMemo(() => ({ open: () => setMenuOpen(true) }), []);
-  // The screens the menu is behind: the home screen and a chat.
-  const overMenu = pathname === "/" || pathname.startsWith("/chat/");
+  // The menu is behind a chat.
+  const overMenu = pathname.startsWith("/chat/");
   // The drawer builds its swipe with gesture-handler's legacy builder. Both
   // ends of the offset are set, since the builder keeps the drawer's own end
   // for any it isn't given; a screen's width either way is further than a
@@ -66,9 +67,10 @@ export default function Layout() {
     haptics.menu();
     Keyboard.dismiss();
   }, [menuOpen]);
+  // The menu shuts when there is nothing for it to be over: the phone has disconnected, the window has split, or the last chat has closed onto the home screen.
   useEffect(() => {
-    if (!paired || split) setMenuOpen(false);
-  }, [paired, split]);
+    if (!paired || split || pathname === "/") setMenuOpen(false);
+  }, [paired, split, pathname]);
   useEffect(() => onOpenChat(() => setMenuOpen(false)), []);
 
   const base = theme.dark ? DarkTheme : DefaultTheme;
@@ -97,7 +99,7 @@ export default function Layout() {
                 style={{ backgroundColor: theme.field }}
                 drawerStyle={{ width: Math.min(width * 0.8, 340), backgroundColor: theme.field }}
                 overlayStyle={styles.overlay}
-                renderDrawerContent={() => (split ? null : <Menu />)}>
+                renderDrawerContent={() => (split || !(menuOpen || overMenu) ? null : <Menu />)}>
                 <Shell>
                   <View style={styles.columns}>
                     {split ? (

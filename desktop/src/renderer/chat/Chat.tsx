@@ -161,7 +161,7 @@ function ChatWith({ agent }: { agent: AgentWithLatest }) {
           onRemove={(file) => update({ files: session.files.filter((each) => each !== file) })}
           replyTo={session.replyTo}
           onCancelReply={() => update({ replyTo: null })}
-          work={workBeside(agent, messages)}
+          beside={workBeside(agent, messages)}
           onSend={() => void onSend()}
           onStop={agent.working || waitingOn ? onStop : undefined}
           online={online}

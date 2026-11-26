@@ -31,7 +31,7 @@ const FIXED_MAX_SCALE = 1.3;
 const SEARCH_DELAY_MS = 200;
 
 /** What the app says in place of the agents when the computer or the app is behind. */
-export const BEHIND_NOTE: Record<Behind, string> = {
+const BEHIND_NOTE: Record<Behind, string> = {
   computer: "It's older than this app. Your agents show here again once it's updated.",
   app: "Sidebots on your computer is newer than this app. Your agents show here again once it's updated.",
 };
@@ -41,8 +41,8 @@ type Row = { agent: AgentWithLatest; found?: Found };
 
 /**
  * The person's agents: the side menu a window of one column keeps them in,
- * or in a split window the column beside the chat. The agent whose chat is
- * open is marked. At the top are the app's name and glass buttons for search
+ * which is also its home screen while no chat is open, or in a split window
+ * the column beside the chat. The agent whose chat is open is marked. At the top are the app's name and glass buttons for search
  * and a new agent. Search puts a glass field in their place, with the
  * keyboard up and a button to close it. A long press on an agent opens what
  * can be done to it: mute, hide and delete. Hidden agents wait under a line
@@ -200,7 +200,7 @@ export function AgentList() {
 }
 
 /** A round glass button of the bar that floats at the top. */
-export function BarButton({ icon: Icon, label, onPress }: { icon: ComponentType<{ size?: number; color?: string; strokeWidth?: number }>; label: string; onPress: () => void }) {
+function BarButton({ icon: Icon, label, onPress }: { icon: ComponentType<{ size?: number; color?: string; strokeWidth?: number }>; label: string; onPress: () => void }) {
   const theme = useTheme();
   return (
     <Pressable onPress={onPress} accessibilityRole="button" accessibilityLabel={label}>
@@ -211,8 +211,8 @@ export function BarButton({ icon: Icon, label, onPress }: { icon: ComponentType<
   );
 }
 
-/** A few words in the middle of the screen where the agents, or a chat, would be. */
-export function Notice({ title, note }: { title: string; note: string }) {
+/** A few words in the middle of the screen where the agents would be. */
+function Notice({ title, note }: { title: string; note: string }) {
   const theme = useTheme();
   return (
     <Animated.View entering={SHOW} exiting={HIDE} style={styles.notice}>

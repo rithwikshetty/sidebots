@@ -420,7 +420,7 @@ test("a person with an API key has every turn, job and fresh start run on it, an
 
   const messages = (await call(HER, "GET", `/agents/${hers.id}/messages`)).json;
   assert.equal(messages.at(-1).body, "Sidebots couldn't finish this. Anthropic refused your API key.");
-  // The same notice goes to the list of agents and to the phone as a notification.
+  // The same notice goes to the chat list and to the phone as a notification.
   await pushed();
   const sent = [messages, (await call(HER, "GET", "/agents")).json, notices];
   assert.equal(JSON.stringify(sent).includes(KEY), false);
@@ -2068,6 +2068,25 @@ test("work the person starts from a suggestion runs beside the chat, in a sessio
   await say(ME, agent.id, "thanks");
   await queue.kick(agent.id);
   assert.equal(turns.at(-1)![0], "thanks");
+});
+
+test("work started as the agent's own lane finds nothing to do still runs", async () => {
+  const { queue, call, say } = setup(async (turn) => {
+    if (turn.prompt.text !== "plan the week") return reply("Chased.", "work-session");
+    turn.suggest({ title: "Chase the invoice", why: "", what: "Chase it." });
+    return reply("One thing.");
+  });
+  const agent = (await call(ME, "POST", "/agents", { name: "Ruby", avatarId: "cog" })).json;
+  await say(ME, agent.id, "plan the week");
+  await queue.kick(agent.id);
+  const card = (await call(ME, "GET", `/agents/${agent.id}/messages`)).json[2];
+
+  // A kick finds the lane with nothing to do, and the start comes before the lane has let go.
+  const idle = queue.kick(agent.id);
+  assert.equal(queue.answer(agent.id, card.id, true), true);
+  await idle;
+  const after = (await call(ME, "GET", `/agents/${agent.id}/messages`)).json;
+  assert.deepEqual([after[2].status, after.at(-1).body, after.at(-1).reply_to], ["done", "Chased.", card.id]);
 });
 
 test("work that fails says so, an ask it raises answers its suggestion and outlasts the chat's turns, and a no to work that was started stops it", async () => {

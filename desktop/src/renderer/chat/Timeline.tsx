@@ -50,7 +50,7 @@ type Around = {
   /** Where each exchange stands, by the message it was last asked at. */
   standings: Map<string, Standing>;
   /** Each suggestion at the top of its stack, by its id, with its place in it. */
-  stacks: Map<string, Stacked>;
+  tops: Map<string, Stacked>;
   byId: Map<string, Message>;
   /** The person's newest message, which carries the chat's receipt. */
   newestMine: string | undefined;
@@ -80,7 +80,7 @@ function rowKind(row: Row): string {
 
 /** A row as it is drawn: a day, a message, the exchange a message was last asked in, the person's message on its way, or the hole after a stretch from further back. */
 function drawRow({ item: row, extraData }: LegendListRenderItemProps<Row>) {
-  const { agentId, standings, stacks, byId, newestMine, flashing, today, openedAt, onReply, onPageShown, fills } = extraData as Around;
+  const { agentId, standings, tops, byId, newestMine, flashing, today, openedAt, onReply, onPageShown, fills } = extraData as Around;
   if (isHole(row)) return <HoleRow agentId={agentId} after={row.after} fills={fills} />;
   if (isDay(row)) {
     return (
@@ -109,7 +109,7 @@ function drawRow({ item: row, extraData }: LegendListRenderItemProps<Row>) {
           quoted={message.reply_to ? byId.get(message.reply_to) : undefined}
           // An ask another agent raised while working for this one says whose it is.
           from={message.agent_id === agentId ? undefined : message.agent_id}
-          place={stacks.get(message.id)}
+          place={tops.get(message.id)}
           receipt={message.id === newestMine}
           arrival={arrival}
           flashing={flashing === message.id}
@@ -259,7 +259,7 @@ export const Timeline = memo(function Timeline({
   // While the agent waits on the person's answer to an ask of its own, the ask is the last thing in the chat.
   const working = agent.working && online && !asksPerson(agent.id, chat) && hole === undefined;
   const around = useMemo<Around>(
-    () => ({ agentId: agent.id, standings, stacks: stacks.top, byId, newestMine, flashing, today, openedAt, onReply, onPageShown: keep, fills: !landing }),
+    () => ({ agentId: agent.id, standings, tops: stacks.top, byId, newestMine, flashing, today, openedAt, onReply, onPageShown: keep, fills: !landing }),
     [agent.id, standings, stacks, byId, newestMine, flashing, today, openedAt, onReply, keep, landing],
   );
 

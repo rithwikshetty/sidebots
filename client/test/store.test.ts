@@ -905,6 +905,29 @@ test("an answered ask closes in both chats it shows in", async (t) => {
   assert.deepEqual([store.useMessages("mochi")[0].ask, store.useMessages("cog")[0].ask], ["allowed", "allowed"]);
 });
 
+test("the answer to starting a suggestion doesn't put back a card the stream has already brought to its end", async (t) => {
+  const offered = (status: Message["status"], ask: Message["ask"]) =>
+    row("Write a haiku", { ask, status, interim: true, question: { kind: "work", title: "Suggestion", what: "Write a haiku", facts: [], detail: "Write one." } });
+  const { store, answers, streams } = app(t, { agents: [agent("mochi")], messages: { mochi: [offered("done", "waiting")] } });
+  const events = stream();
+  streams.push(() => events.response);
+  answers["GET /agents"] = () => [agent("mochi")];
+  answers["GET /agents/mochi/messages?"] = () => [offered("done", "waiting")];
+  store.startSync();
+  await settle();
+  // The work is quick: the stream says it is done before the answer to Start, which says it is running, has come.
+  let answer!: (message: Message) => void;
+  answers["POST /agents/mochi/asks/Write a haiku"] = () => new Promise<Message>((resolve) => (answer = resolve));
+  const starting = store.answerAsk(offered("done", "waiting"), true);
+  await settle();
+  events.say({ message: offered("done", "allowed"), agent: agent("mochi", { chat_changes: 1 }) });
+  await settle();
+  answer(offered("running", "allowed"));
+  await starting;
+  assert.deepEqual([store.useMessages("mochi")[0].ask, store.useMessages("mochi")[0].status], ["allowed", "done"]);
+  store.stopSync();
+});
+
 test("a sign-in that ends on an address makes the connection, and one the person closes makes none", async (t) => {
   const { store, calls, answers, heard, asked } = app(t, { connections: [gmail] });
   answers["POST /connections/gmail/sign-in"] = () => ({ url: "https://accounts.example/sign-in", redirect: "sidebots://connected" });

@@ -546,9 +546,11 @@ export function createStore<Picked>(platform: Platform<Picked>) {
   /** Answers an agent's ask: whether it may do what it asked about. It fails when the agent has stopped waiting. */
   async function answerAsk(ask: Message, allow: boolean): Promise<void> {
     const answered = await request<Message>(`/agents/${ask.agent_id}/asks/${ask.id}`, { method: "POST", body: { allow } });
+    // The answer is the ask as it stood when the computer answered. A copy the event stream has since brought to its end, as when the work a suggestion started is already done, is newer and stays.
+    const ended = (held: Message) => held.id === answered.id && held.ask !== "waiting" && (held.status === "done" || held.status === "failed");
     // An ask raised while working for another agent is in that agent's chat too.
     const messages = { ...state.messages };
-    for (const agentId of [ask.agent_id, ask.peer_id]) if (agentId && messages[agentId]) messages[agentId] = upsert(messages[agentId], answered, state.holes[agentId]);
+    for (const agentId of [ask.agent_id, ask.peer_id]) if (agentId && messages[agentId] && !messages[agentId].some(ended)) messages[agentId] = upsert(messages[agentId], answered, state.holes[agentId]);
     set({ messages });
   }
 

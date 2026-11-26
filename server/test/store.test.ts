@@ -18,7 +18,7 @@ function withAgents() {
   return { home, store, person, maya: store.createAgent(person, "Maya", "mochi", "claude"), theo: store.createAgent(person, "Theo", "mochi", "claude") };
 }
 
-test("what runs with every message, and with every look at the list of agents or a chat, finds its messages by an index, so none of it reads every message there is", (t) => {
+test("what runs with every message, and with every look at the chat list or a chat, finds its messages by an index, so none of it reads every message there is", (t) => {
   // Every statement the store compiles, from the first it compiles as it opens.
   const compiled = t.mock.method(DatabaseSync.prototype, "prepare");
   const { home, store, person, maya, theo } = withAgents();
@@ -33,7 +33,7 @@ test("what runs with every message, and with every look at the list of agents or
   store.messages(maya.id, { before: first.id, through: first.id });
   store.message(theo.id, first.id);
   store.messagesBefore(maya.id, first.id, 10);
-  store.sentByRunsBefore(maya.id, first.id, 10);
+  store.sentByRuns(maya.id, 10);
   store.toldOfRuns(maya.id, first.id);
   store.nextQueued(theo.id);
   store.nextWork(maya.id);
@@ -47,7 +47,7 @@ test("what runs with every message, and with every look at the list of agents or
 
   const db = new DatabaseSync(join(home, "sidebots.sqlite"));
   const plan = (sql: string) => (db.prepare(`explain query plan ${sql}`).all() as { detail: string }[]).map((step) => step.detail).join(", ");
-  // The five the list of agents asks of each agent, a chat's four pages, and what the runner asks before and after a turn.
+  // The five the chat list asks of each agent, a chat's four pages, and what the runner asks before and after a turn.
   assert.ok(statements.length >= 21, `${statements.length} statements`);
   for (const sql of statements) assert.doesNotMatch(plan(sql), /SCAN messages/, sql);
   // Each index serves what it is there for: an agent's latest message, what is unread, whether it works, what it waits on, and a page of its chat. Without its index, each of these reads the agent's whole chat, which is no scan of every message.
@@ -196,16 +196,18 @@ test("what an agent's own runs sent that its chat's session hasn't been told of 
   // A reply that came after, from a turn that was under way, is no sign its session saw the post.
   store.addMessage(maya.id, "agent", "The reply.", "done");
   const posts = [before, ...Array.from({ length: 30 }, (_, index) => store.addMessage(maya.id, "agent", `post ${index}`, "done", { jobId: "job" }).body)];
-  const next = store.addMessage(maya.id, "person", "Any news?", "queued");
+  store.addMessage(maya.id, "person", "Any news?", "queued");
   const after = store.addMessage(maya.id, "agent", "post after the message", "done", { jobId: "job" });
 
-  assert.deepEqual(bodies(store.sentByRunsBefore(maya.id, next.id, 5)), posts.slice(26));
-  assert.deepEqual(bodies(store.sentByRunsBefore(maya.id, next.id, 40)), posts);
-  // Once the session has read the message, it has been told of all that came before it, and of nothing after.
-  store.toldOfRuns(maya.id, next.id);
-  assert.deepEqual(store.sentByRunsBefore(maya.id, next.id, 40), []);
+  // A post that came after the message waits with the rest, since its turn hasn't begun.
+  assert.deepEqual(bodies(store.sentByRuns(maya.id, 5)), [...posts.slice(27), after.body]);
+  const shown = store.sentByRuns(maya.id, 40);
+  assert.deepEqual(bodies(shown), [...posts, after.body]);
+  // Once the session has read them, it has been told of all up to the newest it was shown, and of nothing that came after.
+  const later = store.addMessage(maya.id, "agent", "post while the turn ran", "done", { jobId: "job" });
+  store.toldOfRuns(maya.id, shown.at(-1)!.id);
   assert.equal(typeof store.messages(maya.id)[0].seen_at, "number");
-  assert.deepEqual(bodies(store.sentByRunsBefore(maya.id, store.addMessage(maya.id, "person", "And now?", "queued").id, 5)), [after.body]);
+  assert.deepEqual(bodies(store.sentByRuns(maya.id, 40)), [later.body]);
 });
 
 test("a suggestion waits quietly until the person answers, and one they start is the agent's work until its run ends", () => {
@@ -444,5 +446,32 @@ test("a Codex session from before the connections' tools, or before those tools 
   const later = new DatabaseSync(join(home, "sidebots.sqlite"));
   later.exec(`update messages set status = 'done'; ${BEFORE_FAST} pragma user_version = 12`);
   later.close();
-  assert.equal(openStore(home).messages(maya.id).length, 2);
+  const changed = openStore(home);
+  assert.equal(changed.messages(maya.id).length, 2);
+  changed.close();
+
+  // The database as it was before agents had \`suggest\`, with that fresh start done: the session gets one more, for the tool.
+  const latest = new DatabaseSync(join(home, "sidebots.sqlite"));
+  latest.exec("update messages set status = 'done'; pragma user_version = 20");
+  latest.close();
+  assert.deepEqual(openStore(home).messages(maya.id).map((message) => [message.body, message.status]), [["Fresh start", "done"], ["Fresh start", "done"], ["Fresh start", "queued"]]);
+});
+
+test("a first agent's brief from before agents could offer work is told to offer it, and one the agent has rewritten stays as it is", () => {
+  const home = mkdtempSync(join(tmpdir(), "sidebots-store-test-"));
+  const fresh = openStore(home);
+  const person = fresh.addPerson({ name: "Alex", provider: "claude", configDir: "/tmp/claude" });
+  const ruby = fresh.createAgent(person, "Ruby", "cog", "claude");
+  const starter =
+    'Brief Alex on their day. Read today\'s calendar, the mail that has come since your last brief and needs an answer from them, and what is due in Notion, from whichever of those you have tools for. Lead with the one or two things that most need them today, then the rest in a few short lines. When you have tools for none of them, tell Alex once that saying "connect my calendar" or "connect my Gmail" gives you their day to brief them on, note in your memory that you told them, and stay silent on later runs until you have one.';
+  const own = "Brief Alex on their day. Read today's calendar, the mail that has come since your last brief, and keep it to three lines.";
+  fresh.addJob(ruby.id, starter, { type: "daily", time: "08:00" }, 0);
+  fresh.addJob(ruby.id, own, { type: "daily", time: "18:00" }, 1);
+  fresh.close();
+  const old = new DatabaseSync(join(home, "sidebots.sqlite"));
+  old.exec("pragma user_version = 19");
+  old.close();
+
+  const store = openStore(home);
+  assert.deepEqual(store.jobs(ruby.id).map((job) => job.what), [starter.replace("short lines. When you have", "short lines. When something in it is work you could do for them, offer it with `suggest`. When you have"), own]);
 });

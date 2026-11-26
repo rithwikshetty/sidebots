@@ -43,7 +43,7 @@ export function Composer({
   onRemove,
   replyTo,
   onCancelReply,
-  work,
+  beside,
   onSend,
   onStop,
   online,
@@ -60,7 +60,7 @@ export function Composer({
   replyTo: Message | null;
   onCancelReply: () => void;
   /** The work the agent does beside the chat, as the strip above the card says it. */
-  work: Beside | undefined;
+  beside: Beside | undefined;
   onSend: () => void;
   /** Stops the agent's work. Given while the agent works. */
   onStop?: () => void;
@@ -94,19 +94,19 @@ export function Composer({
           Can't reach Sidebots on this computer.
         </p>
       )}
-      {work ? (
+      {beside ? (
         <button
           type="button"
           onClick={() => openPanel({ kind: "agent", agentId: agent.id, tab: "work" })}
           className="mb-2 flex w-full animate-rise-in items-center gap-2.5 rounded-xl bg-field py-1.5 pr-1.5 pl-3 text-left transition-colors hover:bg-[color-mix(in_srgb,var(--field),var(--ink)_4%)]"
           data-testid="work-strip"
         >
-          <FlowDots count={3} size={4} running={work.running} className="shrink-0 gap-1 text-ink2" />
+          <FlowDots count={3} size={4} running={beside.running} className="shrink-0 gap-1 text-ink2" />
           <div className="min-w-0 flex-1">
-            <p className="truncate text-sm font-semibold">{work.title}</p>
-            <p key={work.state} className="truncate animate-fade-in text-sm text-ink2">
-              {work.state}
-              {work.more > 0 ? ` · ${work.more} more` : ""}
+            <p className="truncate text-sm font-semibold">{beside.title}</p>
+            <p key={beside.state} className="truncate animate-fade-in text-sm text-ink2">
+              {beside.state}
+              {beside.more > 0 ? ` · ${beside.more} more` : ""}
             </p>
           </div>
           <span className="grid size-8 shrink-0 place-items-center text-ink3">

@@ -205,8 +205,8 @@ export type SignIn = { url: string; redirect: string };
 /**
  * `fast` has the agent answer in its provider's fast mode, on a model that
  * has one. `read_at` is the time up to which the person has read the chat. A
- * `muted` agent sends no notifications. A `hidden` one is kept off the list
- * of agents until it next has something to say. `color` fills the person's
+ * `muted` agent sends no notifications. A `hidden` one is kept off the chat
+ * list until it next has something to say. `color` fills the person's
  * messages in the agent's chat, as `#RRGGBB`; null takes the colour of its
  * avatar. `ran_on` is what the agent's last turn ran on, which its session
  * is on, and null before its first turn. `chat_changes` counts each time a
@@ -278,10 +278,10 @@ export function selectionWords(selection: Selection, other?: Selection): string[
 }
 
 /**
- * An agent as the list of agents shows it. `working` is true while it has a turn
+ * An agent as the chat list shows it. `working` is true while it has a turn
  * queued or running in its chat. `work` is what it does beside the chat: the
  * suggestions the person started that haven't ended, the one its run is on
- * first. `unread` counts the replies, the asks still waiting and
+ * first. `unread` counts the replies, the asks still waiting but for suggestions, and
  * the failure notices the person hasn't read. `latest` and `unread` leave out what agents say to
  * each other. `waiting_on` is the agent it asked something and hasn't heard
  * back from, when there is one.
@@ -291,8 +291,8 @@ export type AgentWithLatest = Agent & { latest: Message | null; working: boolean
 /** Whether a message is a suggestion: work the agent offers to do, which the person starts. */
 export const isSuggestion = (message: Pick<Message, "question">): boolean => message.question?.kind === "work";
 
-/** Whether an agent waits on the person's answer to an ask in a chat's messages, with a turn held open for it. A suggestion holds none. */
-export const asksPerson = (agentId: string, messages: Message[]): boolean => messages.some((message) => message.ask === "waiting" && message.agent_id === agentId && !isSuggestion(message));
+/** Whether an agent waits on the person's answer to an ask in a chat's messages, with a turn of the chat's held open for it. A suggestion holds no turn, and an ask one of the agent's own runs raised holds that run. */
+export const asksPerson = (agentId: string, messages: Message[]): boolean => messages.some((message) => message.ask === "waiting" && message.agent_id === agentId && message.job_id === null && !isSuggestion(message));
 
 /** Whether a message is one agent's to another, which the person can read and nobody is notified of. */
 export const betweenAgents = (message: Pick<Message, "peer_id" | "ask">): boolean => message.peer_id !== null && message.ask === null;
@@ -301,11 +301,12 @@ export const betweenAgents = (message: Pick<Message, "peer_id" | "ask">): boolea
  * Whether the person is told of a message as it comes: an agent's reply or
  * an ask still waiting, or a notice that a turn failed. An update while the
  * agent works, a suggestion, an ask's answer and what one agent says to
- * another tell nobody.
+ * another tell nobody. Neither does a message one of the agent's own runs
+ * sent as it changes once more, when the chat's session is told of it.
  */
-export function notifies(message: Pick<Message, "sender" | "interim" | "ask" | "peer_id" | "status">): boolean {
+export function notifies(message: Pick<Message, "sender" | "interim" | "ask" | "peer_id" | "status" | "seen_at">): boolean {
   const answered = message.ask !== null && message.ask !== "waiting";
-  return (message.sender === "agent" && !message.interim && !answered && !betweenAgents(message)) || (message.sender === "sidebots" && message.status === "failed");
+  return (message.sender === "agent" && !message.interim && !answered && !betweenAgents(message) && message.seen_at === null) || (message.sender === "sidebots" && message.status === "failed");
 }
 
 /**
@@ -445,7 +446,7 @@ export function oneLine(message: Pick<Message, "body" | "question">): string {
 
 /**
  * What the event stream sends. A message that was added, changed status or
- * had its ask closed comes with its agent as the list of agents shows it. An
+ * had its ask closed comes with its agent as the chat list shows it. An
  * agent that was added or changed comes the same way, with no message. A
  * deleted agent comes as its id, and each agent it had talked with comes
  * after it, since that agent's chat lost what the two said to each other. How

@@ -3,7 +3,7 @@
 // the extension in targets/notifications opens it as it arrives. The app says
 // whether they may come, which phone takes them, and what a tap on one opens.
 // They are for when the person is away: while the app is open none shows or
-// sounds, and the agents' list carries the unread counts. One stays on the phone
+// sounds, and the chat list carries the unread counts. One stays on the phone
 // while its chat has something unread, and goes when the person reads the
 // chat, here or on another device. A tap on one opens its chat through
 // openChat, the one way into a chat, which knows the chat open on the stack.
@@ -135,9 +135,20 @@ function setChatOnScreen(agentId: string | null): void {
   listeners.forEach((listener) => listener());
 }
 
-/** The agent whose chat was open last on this phone, if it has opened one. */
-export function lastChat(): string | null {
-  return Storage.getItemSync(LAST_CHAT);
+/**
+ * Opens the chat the person was last in on this phone, or their first
+ * agent's, when they have agents and no chat is on its way to the screen
+ * already, as one a notification's tap opens is.
+ */
+export function openLastChat(agents: AgentWithLatest[]): void {
+  if (agents.length === 0 || agents.some((agent) => agent.id === opened?.agentId)) return;
+  const last = Storage.getItemSync(LAST_CHAT);
+  openChat(agents.some((agent) => agent.id === last) ? last! : agents[0].id);
+}
+
+/** How many of the person's messages from agents are unread, as the app's icon counts them: none of a muted agent's, and none of `but`, the agent whose chat is open. */
+export function unreadOf(agents: AgentWithLatest[], but?: string): number {
+  return agents.reduce((total, agent) => total + (agent.muted || agent.id === but ? 0 : agent.unread), 0);
 }
 
 function onChatOnScreen(listener: () => void): () => void {
@@ -145,7 +156,7 @@ function onChatOnScreen(listener: () => void): () => void {
   return () => listeners.delete(listener);
 }
 
-/** The agent whose chat is open on the stack, as the agents' list marks it. */
+/** The agent whose chat is open on the stack, as the chat list marks it. */
 export function useChatOnScreen(): string | null {
   return useSyncExternalStore(onChatOnScreen, () => chatOnScreen);
 }
@@ -173,7 +184,7 @@ export function showChatOnScreen(agentId: string): () => void {
  * chat.
  */
 export function usePush(): void {
-  const unread = useAgents().reduce((total, agent) => total + (agent.muted ? 0 : agent.unread), 0);
+  const unread = unreadOf(useAgents());
   useEffect(() => {
     void Notifications.setBadgeCountAsync(unread).catch(() => undefined);
   }, [unread]);

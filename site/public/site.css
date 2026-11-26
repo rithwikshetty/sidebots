@@ -165,7 +165,7 @@ h2 { font-size: clamp(30px, 3.6vw, 42px); line-height: 1.08; letter-spacing: -0.
 .playing .avatar, .playing .busy { transition: opacity 160ms linear 2600ms; }
 @keyframes land { from { opacity: 0; transform: translateX(40px); } }
 
-/* The phone, running off the foot of its picture, with the app's home screen on it: one chat per agent. */
+/* The phone, running off the foot of its picture, with the app's chat list on it: one chat per agent. */
 .handset { min-height: 0; height: 540px; padding: 48px 20px 0; align-items: flex-start; overflow: hidden; }
 .phone {
   position: relative;

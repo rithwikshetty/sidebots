@@ -12,7 +12,7 @@ import { POP_IN, POP_OUT } from "@/lib/motion";
 import { useTheme } from "@/lib/theme";
 import { MessageMenuView, type MessageMenuAction } from "../../modules/message-menu/src";
 
-/** The height of the bar the back button and the avatar sit in, under the status bar. */
+/** The height of the bar the menu button and the avatar sit in, under the status bar. */
 export const BAR_HEIGHT = 44;
 /** How far the avatar's name reaches below the bar, which the chat clears. */
 export const HEADER_OVERHANG = 14;

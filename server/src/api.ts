@@ -378,7 +378,7 @@ export function createApi(store: Store, queue: Queue, connections: Connections, 
 
   /**
    * New messages and status changes for the person's agents, each with its
-   * agent as the list of agents shows it, the agents the person adds, changes
+   * agent as the chat list shows it, the agents the person adds, changes
    * and deletes, and what a provider says of how they sign in to it, so every
    * device of theirs keeps up.
    */
