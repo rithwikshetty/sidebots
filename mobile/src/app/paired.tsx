@@ -26,11 +26,17 @@ export default function Paired() {
   const [step, setStep] = useState<"agents" | "notifications">("agents");
   // The agent whose chat opens once the steps are over, when the person picked one.
   const [picked, setPicked] = useState<string>();
-  // However the screen is left, as by a tap on a notification, the phone has shown what it paired with.
-  useEffect(() => greeted, []);
-
   // The steps are left once, though the phone may still be asking Apple for its token when the person taps on.
   const left = useRef(false);
+  // However the screen is left, as by a tap on a notification, the phone has shown what it paired with, and the steps open nothing more.
+  useEffect(
+    () => () => {
+      left.current = true;
+      greeted();
+    },
+    [],
+  );
+
   function finish(agentId = picked) {
     if (left.current) return;
     left.current = true;
