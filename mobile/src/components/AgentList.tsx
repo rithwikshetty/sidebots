@@ -272,7 +272,7 @@ function Turning({ open }: { open: boolean }) {
 }
 
 /** An agent as a row of the list. With `found`, the row shows that message from its chat in place of the latest one. The row of the chat that is open is filled with `marked`, as a row is while a finger is on it. */
-function AgentRow({ agent, found, search, online, marked, onPress }: { agent: AgentWithLatest; found?: Found; search: string; online: boolean; marked?: string; onPress: () => void }) {
+export function AgentRow({ agent, found, search, online, marked, onPress }: { agent: AgentWithLatest; found?: Found; search: string; online: boolean; marked?: string; onPress: () => void }) {
   const theme = useTheme();
   const avatarState = found ? "resting" : avatarStateOf(agent);
   const working = online && avatarState === "working";

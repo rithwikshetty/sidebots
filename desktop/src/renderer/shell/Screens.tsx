@@ -14,13 +14,14 @@ export function Mascot({ state, className }: { state: AvatarState; className?: s
 /**
  * What the window shows before the agents: Moss acting out where the app
  * stands, with a few words under it and what the person can do about it.
+ * `art` takes Moss's place, as an agent's own avatar does.
  */
-function Screen({ state, title, note, children, className }: { state: AvatarState; title: string; note?: string; children?: ReactNode; className?: string }) {
+export function Screen({ state = "resting", art, title, note, children, className }: { state?: AvatarState; art?: ReactNode; title: string; note?: string; children?: ReactNode; className?: string }) {
   return (
     <div className="flex h-full flex-col">
       <TopBar />
       <main className={cn("flex flex-1 flex-col items-center justify-center gap-1.5 px-8 pb-13 text-center", className)}>
-        <Mascot state={state} className="mb-4" />
+        {art ?? <Mascot state={state} className="mb-4" />}
         <h1 className="text-lg font-semibold">{title}</h1>
         {note ? <p className="max-w-[340px] text-sm text-pretty text-ink2">{note}</p> : null}
         {children ? <div className="mt-4">{children}</div> : null}

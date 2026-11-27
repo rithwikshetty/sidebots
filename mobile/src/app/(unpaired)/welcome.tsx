@@ -1,14 +1,12 @@
 import type { ReactNode } from "react";
-import { Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
+import { StyleSheet, Text, View } from "react-native";
 import { Image } from "expo-image";
 import { useRouter } from "expo-router";
-import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { SetupButton, SetupPage } from "@/components/SetupPage";
 import { wasRemoved } from "@/lib/api";
 import { useTheme } from "@/lib/theme";
 
 const ICON = 96;
-// The page keeps to a large phone's width, centred in a wider window.
-const COLUMN = 480;
 const STEP = 26;
 // A step's number fits its round mark up to this text size.
 const NUMBER_MAX_SCALE = 1.3;
@@ -22,33 +20,23 @@ const NUMBER_MAX_SCALE = 1.3;
 export default function Welcome() {
   const theme = useTheme();
   const router = useRouter();
-  const insets = useSafeAreaInsets();
   return (
-    <View style={[styles.screen, { backgroundColor: theme.bg, paddingTop: insets.top, paddingBottom: insets.bottom + 12 }]}>
-      <View style={styles.column}>
-        <ScrollView contentContainerStyle={styles.page}>
-          <Image source={require("../../../assets/icon.png")} style={styles.icon} accessibilityIgnoresInvertColors />
-          <Text style={[styles.title, { color: theme.ink }]}>Sidebots</Text>
-          <Text style={[styles.lead, { color: theme.ink2 }]}>Your own agents, on your own computer. Give one a job, and it tells you when it's done.</Text>
-          <View style={[styles.card, { backgroundColor: theme.field }]}>
-            <Step number={1}>
-              Get Sidebots for your computer from <Text style={[styles.strong, { color: theme.ink }]}>sidebots.app</Text>, and open it.
-            </Step>
-            <View style={[styles.rule, { backgroundColor: theme.line }]} />
-            <Step number={2}>
-              Choose <Text style={[styles.strong, { color: theme.ink }]}>Pair a phone</Text> in its Settings, and scan the code.
-            </Step>
-          </View>
-          {wasRemoved() ? <Text style={[styles.removed, { color: theme.danger }]}>Your computer removed this phone. Scan a new code to pair again.</Text> : null}
-        </ScrollView>
-        <Pressable
-          onPress={() => router.push("/pair")}
-          accessibilityRole="button"
-          style={({ pressed }) => [styles.button, { backgroundColor: theme.tint, opacity: pressed ? 0.75 : 1 }]}>
-          <Text style={[styles.buttonText, { color: theme.onTint }]}>Scan the code</Text>
-        </Pressable>
+    <SetupPage
+      art={<Image source={require("../../../assets/icon.png")} style={styles.icon} accessibilityIgnoresInvertColors />}
+      title="Sidebots"
+      lead="Your own agents, on your own computer. Give one a job, and it tells you when it's done."
+      actions={<SetupButton onPress={() => router.push("/pair")}>Scan the code</SetupButton>}>
+      <View style={[styles.card, { backgroundColor: theme.field }]}>
+        <Step number={1}>
+          Get Sidebots for your computer from <Text style={[styles.strong, { color: theme.ink }]}>sidebots.app</Text>, and open it.
+        </Step>
+        <View style={[styles.rule, { backgroundColor: theme.line }]} />
+        <Step number={2}>
+          Choose <Text style={[styles.strong, { color: theme.ink }]}>Pair a phone</Text> in its Settings, and scan the code.
+        </Step>
       </View>
-    </View>
+      {wasRemoved() ? <Text style={[styles.removed, { color: theme.danger }]}>Your computer removed this phone. Scan a new code to pair again.</Text> : null}
+    </SetupPage>
   );
 }
 
@@ -66,12 +54,7 @@ function Step({ number, children }: { number: number; children: ReactNode }) {
 }
 
 const styles = StyleSheet.create({
-  screen: { flex: 1, alignItems: "center" },
-  column: { flex: 1, width: "100%", maxWidth: COLUMN },
-  page: { flexGrow: 1, justifyContent: "center", paddingHorizontal: 24, paddingVertical: 24 },
-  icon: { width: ICON, height: ICON, borderRadius: ICON * 0.225, borderCurve: "continuous", alignSelf: "center" },
-  title: { fontSize: 28, fontWeight: "700", textAlign: "center", marginTop: 20 },
-  lead: { fontSize: 17, lineHeight: 23, textAlign: "center", marginTop: 8 },
+  icon: { width: ICON, height: ICON, borderRadius: ICON * 0.225, borderCurve: "continuous" },
   card: { borderRadius: 16, borderCurve: "continuous", marginTop: 32 },
   step: { flexDirection: "row", alignItems: "center", gap: 14, paddingHorizontal: 16, paddingVertical: 14 },
   number: { width: STEP, height: STEP, borderRadius: STEP / 2, alignItems: "center", justifyContent: "center" },
@@ -80,6 +63,4 @@ const styles = StyleSheet.create({
   strong: { fontWeight: "600" },
   rule: { height: StyleSheet.hairlineWidth, marginLeft: 16 + STEP + 14 },
   removed: { fontSize: 15, lineHeight: 20, textAlign: "center", marginTop: 20 },
-  button: { minHeight: 50, borderRadius: 14, borderCurve: "continuous", alignItems: "center", justifyContent: "center", marginHorizontal: 24, paddingVertical: 12 },
-  buttonText: { fontSize: 17, fontWeight: "600" },
 });

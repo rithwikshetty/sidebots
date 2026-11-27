@@ -86,9 +86,50 @@ test.describe("with nobody set up", () => {
   }
 });
 
+test.describe("opened as setup ends for someone new", () => {
+  test.use({ world: "nobody", ready: false, welcome: true });
+
+  test("the window shows the apps to connect and the code for a phone, and then the first agent's chat", async ({ page, server, mainCalls, finishSignIn }) => {
+    await expect(page.getByRole("heading", { name: "Set up Sidebots" })).toBeVisible();
+    // The menu bar app adds the person, with the brief at the time they chose.
+    await server.cli("add-person", "Sam", "claude", join(server.home, "claude"), "--brief", "07:00");
+
+    const apps = page.getByTestId("welcome-apps");
+    await expect(page.getByRole("heading", { name: "Show Ruby your day" })).toBeVisible({ timeout: 15_000 });
+    await expect(apps.getByTestId("connection-calendar")).toBeVisible();
+    await expect(apps.getByTestId("connection-gmail")).toBeVisible();
+    await expect(apps.getByTestId("connection-notion")).toHaveCount(0);
+    await expect(page.getByTestId("sidebar")).toHaveCount(0);
+    await expect(page.getByTestId("welcome-next")).toHaveText("Not now");
+
+    await apps.getByRole("button", { name: "Connect Google Calendar" }).click();
+    await expect.poll(async () => (await mainCalls()).opened).toEqual([expect.stringMatching(/^https:\/\/accounts\.google\.com\//)]);
+    await finishSignIn();
+    await expect(apps.getByTestId("connection-calendar")).toContainText("Connected as tester@example.com");
+    await expect(page.getByTestId("welcome-next")).toHaveText("Continue");
+    await page.getByTestId("welcome-next").click();
+
+    await expect(page.getByRole("heading", { name: "Take Ruby with you" })).toBeVisible();
+    await expect(page.getByTestId("welcome-phone").getByTestId("pairing")).toBeVisible();
+    await page.getByTestId("welcome-phone").getByRole("button", { name: "Not now" }).click();
+
+    await expect(page.getByTestId("chat-name")).toHaveText("Ruby");
+    await expect(page.getByTestId("timeline")).toContainText("Every morning at 7 I'll send you a short brief");
+    await expect(page.getByTestId("sidebar")).toBeVisible();
+  });
+});
+
 test.describe("a ready start", () => {
   test.describe("against the seeded world", () => {
     test.use({ world: "seeded" });
+
+    test("the window opens on the chat it last showed", async ({ page, server, restartApp }) => {
+      const atlas = await agentNamed(server, "Atlas");
+      await rowOf(page, atlas.id).click();
+      await expect(page.getByTestId("chat-name")).toHaveText("Atlas");
+      const again = await restartApp();
+      await expect(again.page.getByTestId("chat-name")).toHaveText("Atlas");
+    });
 
     test("the agents are listed, and the foot names the computer and says it is connected", async ({ page, server }) => {
       for (const agent of (await agentsOf(server)).filter((each) => !each.hidden)) await expect(rowOf(page, agent.id)).toBeVisible();
@@ -259,7 +300,7 @@ test.describe("restarting the app", () => {
     const ledger = await agentNamed(server, "Ledger");
     await expect(rowOf(page, ledger.id)).toBeVisible();
     // The window saves its copy a moment after it changes, which a person who quits takes far longer than.
-    await expect.poll(() => page.evaluate((id) => localStorage.getItem("cache-7")?.includes(id) ?? false, ledger.id)).toBe(true);
+    await expect.poll(() => page.evaluate((id) => localStorage.getItem("cache-8")?.includes(id) ?? false, ledger.id)).toBe(true);
     // The window hears nothing more, a phone renames Ledger, and the server stops answering before the app opens again.
     await server.control("drop-events", { ms: 600_000 });
     await expect(page.getByTestId("reach")).toHaveText("Out of reach");

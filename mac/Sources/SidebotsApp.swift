@@ -108,7 +108,7 @@ import SwiftUI
     return false
   }
 
-  /// Opens the window that sets the person up on a provider, or changes how their agents sign in to it. On first run the person picks the provider there, and once they are set up Sidebots opens at login and the window opens.
+  /// Opens the window that sets the person up on a provider, or changes how their agents sign in to it. On first run the person picks the provider there, and once they are set up Sidebots opens at login and the window opens on what comes after setup.
   func showSetup(_ provider: Provider? = nil) {
     let firstRun = server.person == nil
     show("setup", title: "Sidebots") {
@@ -117,7 +117,7 @@ import SwiftUI
         self.close("setup")
         if firstRun {
           self.setOpenAtLogin(true)
-          DesktopApp.open()
+          DesktopApp.open(welcome: true)
         }
       }
     }
@@ -189,7 +189,7 @@ struct MenuContent: View {
       if server.person != nil {
         Divider().padding(.vertical, 6)
         if DesktopApp.bundled {
-          PanelRow(symbol: "macwindow", title: "Open Sidebots", action: DesktopApp.open)
+          PanelRow(symbol: "macwindow", title: "Open Sidebots", action: { DesktopApp.open() })
           Divider().padding(.vertical, 6)
         }
         heading("Phones")

@@ -51,6 +51,7 @@ beforeEach(() => {
     key: () => "the-key",
     fetch: async (url) => new Response(`bytes of ${url.split("/").pop()}`),
     userData,
+    welcome: false,
   });
 });
 

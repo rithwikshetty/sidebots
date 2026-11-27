@@ -112,6 +112,8 @@ export default function Layout() {
                         {/* A phone that hasn't paired with a computer has the welcome and pairing screens and nothing else, and opens on welcome. Once paired, it has everything but those. */}
                         <Stack.Protected guard={paired} redirectTo="/welcome">
                           <Stack.Screen name="index" />
+                          {/* What a phone that has just paired shows first, which only its own buttons leave. */}
+                          <Stack.Screen name="paired" options={{ animation: "fade", gestureEnabled: false }} />
                           <Stack.Screen name="chat/[id]" options={CHAT_IN_PLACE} />
                           <Stack.Screen name="new-agent" options={{ presentation: "formSheet", sheetAllowedDetents: [0.62], sheetGrabberVisible: true }} />
                           {/* The drawer where what an agent answers with is chosen, which comes up over its chat and pulls up to show all of a long list. */}

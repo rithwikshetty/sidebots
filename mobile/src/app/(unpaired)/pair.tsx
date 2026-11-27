@@ -13,8 +13,6 @@ import { useWindowControls } from "@/lib/layout";
 import { useTheme } from "@/lib/theme";
 
 const NOT_A_CODE = "That isn't a Sidebots pairing code.";
-// How long the computer's name stays up before the agents take the screen.
-const PAIRED_MS = 1200;
 // How long before a code the camera still sees is tried again.
 const RETRY_MS = 3000;
 
@@ -26,7 +24,7 @@ const RETRY_MS = 3000;
  * for the code as its link instead, in the system's own prompt. When the
  * camera is refused, a button in its place opens Settings. A pairing link
  * opened anywhere on the phone lands here and pairs the same way. Once
- * paired, the line names the computer, and the agents take the screen.
+ * paired, the screen that names the computer takes its place.
  */
 export default function Pair() {
   const theme = useTheme();
@@ -36,23 +34,21 @@ export default function Pair() {
   const [permission, askForCamera] = useCameraPermissions();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [machine, setMachine] = useState<string | null>(null);
   // The camera reports the code it sees many times a second, and each code is tried once in a while.
   const tried = useRef<string | null>(null);
 
   async function pair(target: { host: string; code: string } | null) {
-    if (busy || machine) return;
+    if (busy) return;
     if (!target) return setError(NOT_A_CODE);
     setBusy(true);
     setError(null);
     try {
       const pairing = await requestPairing(target);
       haptics.paired();
-      setMachine(pairing.machine);
-      setTimeout(() => keepPairing(pairing), PAIRED_MS);
+      // The screen stays busy until the paired screens take its place.
+      keepPairing(pairing);
     } catch (failure) {
       setError(failure instanceof Error ? failure.message : "Something went wrong.");
-    } finally {
       setBusy(false);
     }
   }
@@ -93,13 +89,13 @@ export default function Pair() {
   const prompt = noCamera
     ? "Allow Sidebots to use the camera in Settings to scan the code on your computer, or enter its link."
     : "Scan the code Sidebots shows on your computer.";
-  const line = machine ? `Paired with ${machine}` : (error ?? prompt);
+  const line = error ?? prompt;
 
   return (
     <View style={[styles.screen, { backgroundColor: theme.viewer, paddingBottom: insets.bottom + 12 }]}>
       <View style={[styles.bar, { paddingTop: insets.top + 8, marginLeft: controls }]}>
-        <IconButton icon={ChevronLeft} label="Back" variant="overlay" size={40} iconSize={22} disabled={busy || machine !== null} onPress={() => router.back()} />
-        <IconButton icon={Link} label="Enter a link instead" variant="overlay" size={40} iconSize={19} disabled={busy || machine !== null} onPress={enterLink} />
+        <IconButton icon={ChevronLeft} label="Back" variant="overlay" size={40} iconSize={22} disabled={busy} onPress={() => router.back()} />
+        <IconButton icon={Link} label="Enter a link instead" variant="overlay" size={40} iconSize={19} disabled={busy} onPress={enterLink} />
       </View>
       <View style={styles.stage}>
         {permission?.granted ? (

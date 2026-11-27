@@ -34,6 +34,7 @@ function hear<T>(channel: string, listener: (value: T) => void): () => void {
 const desktop: Desktop = {
   platform: process.platform,
   version: startup.version,
+  welcome: startup.welcome,
   fullScreen: () => fullScreen,
   onFullScreen: (listener) => hear<boolean>(CHANNELS.changeFullScreen, listener),
   present: () => present,

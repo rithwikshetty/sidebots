@@ -10,6 +10,7 @@ import {
   closeChat,
   closePanel,
   columns,
+  openLastChat,
   openNewAgent,
   openSettings,
   setPanelWidth,
@@ -37,7 +38,8 @@ const clamp = (value: number, least: number, most: number) => Math.min(Math.max(
 
 /**
  * The window once the app is ready: the sidebar at the left, the open chat in
- * the middle, and the panel beside the chat while it shows something. Each
+ * the middle, and the panel beside the chat while it shows something. It opens on
+ * the chat it last showed. Each
  * column's top bar keeps clear of the system's own buttons: a Mac's traffic
  * lights over the leftmost column, unless the window fills the screen, and
  * Windows' buttons over the rightmost. The sidebar can be dragged wider or
@@ -53,7 +55,12 @@ export function Frame() {
   const keptPanelWidth = usePanelWidth();
   const chat = useOpenChat();
   const fullScreen = useFullScreen();
+  const agents = useAgents();
   useClosesGoneChat(chat?.agentId);
+  // The window opens on the chat it last showed.
+  useEffect(() => {
+    if (!chat) openLastChat(agents.map((agent) => agent.id));
+  }, [chat, agents]);
 
   const lights = mac && !fullScreen ? SYSTEM_BUTTONS.mac : PAD;
   const buttons = mac ? PAD : SYSTEM_BUTTONS.windows;

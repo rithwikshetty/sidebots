@@ -93,9 +93,10 @@ function pairedWhen(time: number): string {
  * The code a phone scans to pair, with its link to copy for a phone that
  * enters it instead. It makes a new code when the last one runs out, and
  * says when a phone has paired, with a way to pair another. `onPhones` hears
- * the phones each time it looks, so the list above keeps up.
+ * the phones each time it looks, so the list above keeps up. `leave` is what
+ * the button that gives up on pairing says.
  */
-function Pairing({ onPhones, onDone }: { onPhones: (phones: Phone[]) => void; onDone: () => void }) {
+export function Pairing({ onPhones, onDone, leave = "Cancel" }: { onPhones?: (phones: Phone[]) => void; onDone: () => void; leave?: string }) {
   const [code, setCode] = useState<PhonePairing | null>(null);
   const [trouble, setTrouble] = useState<string | null>(null);
   const [paired, setPaired] = useState<Phone | null>(null);
@@ -110,7 +111,7 @@ function Pairing({ onPhones, onDone }: { onPhones: (phones: Phone[]) => void; on
       const phones = await window.desktop.phones().catch(() => null);
       if (stopped) return;
       if (phones) {
-        onPhones(phones);
+        onPhones?.(phones);
         before ??= new Set(phones.map((phone) => phone.id));
         const fresh = phones.find((phone) => !before!.has(phone.id));
         if (fresh) return setPaired(fresh);
@@ -180,7 +181,7 @@ function Pairing({ onPhones, onDone }: { onPhones: (phones: Phone[]) => void; on
           </button>
         </p>
         <Button size="sm" className="mt-3 self-start" onClick={onDone}>
-          Cancel
+          {leave}
         </Button>
       </div>
     </div>

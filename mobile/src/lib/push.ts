@@ -94,13 +94,19 @@ async function register(): Promise<void> {
   await request("/push-token", { method: "PUT", body: await pushTokenOf(token) });
 }
 
+/** Whether the phone has yet to ask the person if Sidebots may notify them. */
+export async function canAskForPush(): Promise<boolean> {
+  const { status, canAskAgain } = await Notifications.getPermissionsAsync();
+  return status !== "granted" && canAskAgain;
+}
+
 /**
- * Asks the phone once whether Sidebots may notify the person. The chat calls it
- * when they have just sent a message and may leave while the agent works.
+ * Asks the phone once whether Sidebots may notify the person. The step after
+ * pairing calls it, and so does the chat when they have just sent a message
+ * and may leave while the agent works.
  */
 export async function askForPush(): Promise<void> {
-  const { status, canAskAgain } = await Notifications.getPermissionsAsync();
-  if (status === "granted" || !canAskAgain) return;
+  if (!(await canAskForPush())) return;
   const answer = await Notifications.requestPermissionsAsync({ ios: { allowAlert: true, allowSound: true, allowBadge: true } });
   if (answer.status === "granted") await register();
 }

@@ -39,15 +39,17 @@ export function tell(window: BrowserWindow, channel: string, value: boolean | Co
 /**
  * Answers the window. `key` is the app's key to the server, `fetch` reaches
  * the server, and `userData` is the app's own folder, where a file the person
- * opens is put first.
+ * opens is put first. `welcome` says the app was opened as setup ended for
+ * someone new.
  */
-export function answerWindow({ window, host, watch, key, fetch, userData }: {
+export function answerWindow({ window, host, watch, key, fetch, userData, welcome }: {
   window: BrowserWindow;
   host: Host;
   watch: Watch;
   key: () => string | undefined;
   fetch: (url: string, init: RequestInit) => Promise<Response>;
   userData: string;
+  welcome: boolean;
 }): void {
   const fromWindow = (event: IpcMainEvent | IpcMainInvokeEvent) => !window.isDestroyed() && event.senderFrame === window.webContents.mainFrame;
   /** Answers a request on a channel, which fails for anything but the window's own top frame. */
@@ -60,7 +62,7 @@ export function answerWindow({ window, host, watch, key, fetch, userData }: {
   const hear = (channel: string, heard: (value: unknown) => void) => ipcMain.on(channel, (event, value) => void (fromWindow(event) && heard(value)));
 
   ipcMain.on(CHANNELS.readStartup, (event) => {
-    event.returnValue = fromWindow(event) ? ({ version: app.getVersion(), fullScreen: window.isFullScreen() } satisfies Startup) : null;
+    event.returnValue = fromWindow(event) ? ({ version: app.getVersion(), fullScreen: window.isFullScreen(), welcome } satisfies Startup) : null;
   });
   window.on("enter-full-screen", () => tell(window, CHANNELS.changeFullScreen, true));
   window.on("leave-full-screen", () => tell(window, CHANNELS.changeFullScreen, false));

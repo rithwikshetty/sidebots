@@ -23,13 +23,13 @@ export type MainCalls = { opened: string[]; files: string[]; shown: string[]; sa
  * and not shown. The person reads as at the computer, whether or not anyone
  * is using the one the tests run on.
  */
-export async function launchApp({ home, port }: { home: string; port: number }): Promise<ElectronApplication> {
+export async function launchApp({ home, port, welcome = false }: { home: string; port: number; welcome?: boolean }): Promise<ElectronApplication> {
   if (!existsSync(PROGRAM)) throw new Error(`There is no packaged app at ${PROGRAM}. Build it with \`E2E=1 pnpm package\` in desktop/.`);
   const saveTo = join(home, "saved");
   mkdirSync(saveTo, { recursive: true });
   const app = await electron.launch({
     executablePath: PROGRAM,
-    env: childEnv({ SIDEBOTS_HOME: home, PORT: String(port), SIDEBOTS_RELAY: "off", SIDEBOTS_NODE: process.execPath, SIDEBOTS_SERVER: SERVER }) as Record<string, string>,
+    env: childEnv({ SIDEBOTS_HOME: home, PORT: String(port), SIDEBOTS_RELAY: "off", SIDEBOTS_NODE: process.execPath, SIDEBOTS_SERVER: SERVER, ...(welcome ? { SIDEBOTS_WELCOME: "1" } : {}) }) as Record<string, string>,
   });
   await app.evaluate(({ app: electronApp, dialog, shell, powerMonitor, Notification }, saveTo) => {
     const calls: MainCalls = { opened: [], files: [], shown: [], saved: [], notices: [], cleared: [], badge: [] };

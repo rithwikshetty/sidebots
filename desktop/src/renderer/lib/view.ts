@@ -2,8 +2,8 @@
 // shows, Settings, the new agent dialog, search, and the sidebar. It lives
 // outside React, so a shortcut, a menu item or a row anywhere can change it.
 // The sizes the person gives the sidebar and the panel, and whether the
-// sidebar is collapsed, are kept on this computer. It also says whether the
-// person is looking at a chat.
+// sidebar is collapsed, are kept on this computer, with the chat that was
+// open. It also says whether the person is looking at a chat.
 
 import { useSyncExternalStore } from "react";
 import { confirming, onConfirm } from "../ui/Confirm.tsx";
@@ -51,7 +51,7 @@ type View = {
 };
 
 const KEPT_KEY = "view-1";
-type Kept = { sidebarCollapsed: boolean; sidebarWidth: number; panelWidth: number };
+type Kept = { sidebarCollapsed: boolean; sidebarWidth: number; panelWidth: number; chat: string | null };
 
 function kept(): Partial<Kept> {
   try {
@@ -87,10 +87,10 @@ function useView<T>(pick: (view: View) => T): T {
   return useSyncExternalStore(subscribe, () => pick(view));
 }
 
-/** Keeps the sizes and the sidebar's state for the next time the window opens. */
+/** Keeps the sizes, the sidebar's state and the open chat for the next time the window opens. */
 function keep(): void {
-  const sizes: Kept = { sidebarCollapsed: view.sidebar.collapsed, sidebarWidth: view.sidebar.width, panelWidth: view.panelWidth };
-  localStorage.setItem(KEPT_KEY, JSON.stringify(sizes));
+  const kept: Kept = { sidebarCollapsed: view.sidebar.collapsed, sidebarWidth: view.sidebar.width, panelWidth: view.panelWidth, chat: view.chat?.agentId ?? null };
+  localStorage.setItem(KEPT_KEY, JSON.stringify(kept));
 }
 
 /**
@@ -101,11 +101,19 @@ function keep(): void {
 export function openChat(agentId: string, messageId?: string): void {
   const panel = view.panel?.agentId === agentId ? view.panel : null;
   set({ chat: { agentId, messageId }, panel });
+  keep();
 }
 
 /** Closes the open chat, and the panel with it, as when its agent is deleted. */
 export function closeChat(): void {
   set({ chat: null, panel: null });
+  keep();
+}
+
+/** Opens the chat that was open when the window last closed, when its agent is among `agentIds`. */
+export function openLastChat(agentIds: string[]): void {
+  const last = kept().chat;
+  if (last && agentIds.includes(last)) openChat(last);
 }
 
 export function useOpenChat(): OpenChat | null {

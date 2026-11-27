@@ -67,6 +67,7 @@ async function ask<T>(path: string, body?: unknown): Promise<T> {
 const desktop: Desktop = {
   platform: query.get("platform") ?? "darwin",
   version,
+  welcome: false,
   fullScreen: () => fullScreen,
   onFullScreen: (listener) => listen(listeners.fullScreen, listener),
   present: () => true,

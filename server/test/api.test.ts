@@ -1347,7 +1347,7 @@ test("a person starts with an agent that knows it briefs them every morning, has
     runs.push(turn.prompt.text);
     return reply("Standup at 10, and Sam wants an answer on the quote.", "job-session");
   }, () => time);
-  const ruby = addFirstAgent(store, store.personByName(ME)!, time);
+  const ruby = addFirstAgent(store, store.personByName(ME)!, "08:00", time);
 
   // It is in the person's list with its first message unread, and its instructions say what it is for.
   const [listed] = (await call(ME, "GET", "/agents")).json;
@@ -1375,6 +1375,26 @@ test("a person starts with an agent that knows it briefs them every morning, has
   const bodies = (await call(ME, "GET", `/agents/${ruby.id}/messages`)).json.map((m: { body: string }) => m.body);
   assert.equal(bodies.at(-1), "Standup at 10, and Sam wants an answer on the quote.");
   assert.equal(bodies.length, 4);
+});
+
+test("the first agent briefs at the time the person chose, or has no brief when they chose none", async () => {
+  const now = new Date(2026, 10, 16, 21, 0).getTime();
+  const { store, call } = setup(async () => reply("unused", "session"));
+  const early = addFirstAgent(store, store.personByName(ME)!, "07:30", now);
+  const about = (await call(ME, "GET", `/agents/${early.id}/about`)).json;
+  assert.deepEqual([about.jobs[0].schedule, about.jobs[0].next_at], [{ type: "daily", time: "07:30" }, new Date(2026, 10, 17, 7, 30).getTime()]);
+  const hello = (await call(ME, "GET", `/agents/${early.id}/messages`)).json[0];
+  assert.match(hello.body, /^Hi, I'm Ruby\. Every morning at 7:30 I'll send you a short brief/);
+
+  const plain = addFirstAgent(store, store.personByName("Robin")!, null, now);
+  const without = (await call("Robin", "GET", `/agents/${plain.id}/about`)).json;
+  assert.deepEqual(without.jobs, []);
+  assert.match(without.instructions, /\nYou help Robin with whatever they ask\./);
+  const messages = (await call("Robin", "GET", `/agents/${plain.id}/messages`)).json;
+  assert.match(messages[0].body, /^Hi, I'm Ruby\. Ask me for anything\./);
+  assert.doesNotMatch(messages[0].body, /brief/);
+  // The two apps are offered either way.
+  assert.deepEqual(messages.slice(1).map((m: Message) => m.question?.connection), ["calendar", "gmail"]);
 });
 
 test("connecting an app from the first agent's suggestion starts the agent on what it now sees there", async () => {
