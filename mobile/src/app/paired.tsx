@@ -7,7 +7,7 @@ import { AgentRow } from "@/components/AgentList";
 import { Section } from "@/components/Section";
 import { SetupButton, SetupPage } from "@/components/SetupPage";
 import { greeted, useMachine } from "@/lib/api";
-import { askForPush, canAskForPush, openChat } from "@/lib/push";
+import { askForPush, canAskForPush, onOpenChat, openChat } from "@/lib/push";
 import { useAgents } from "@/lib/state";
 import { useTheme } from "@/lib/theme";
 
@@ -28,7 +28,8 @@ export default function Paired() {
   const [picked, setPicked] = useState<string>();
   // The steps are left once, though the phone may still be asking Apple for its token when the person taps on.
   const left = useRef(false);
-  // However the screen is left, as by a tap on a notification, the phone has shown what it paired with, and the steps open nothing more.
+  // However the screen is left, the phone has shown what it paired with, and the steps open nothing more. A chat opened from outside them, as by a tap on a notification, says so before the screen goes.
+  useEffect(() => onOpenChat(() => void (left.current = true)), []);
   useEffect(
     () => () => {
       left.current = true;
