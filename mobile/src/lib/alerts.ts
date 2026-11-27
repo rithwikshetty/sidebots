@@ -1,8 +1,8 @@
 import { Alert } from "react-native";
-import type { Agent, Connected } from "@server/contract";
-import { deleteConfirmation, removeConnectionConfirmation } from "@client/confirmations";
+import type { Agent, Connected, Job } from "@server/contract";
+import { deleteConfirmation, deleteJobConfirmation, removeConnectionConfirmation } from "@client/confirmations";
 import { disconnect } from "./api";
-import { deleteAgent, removeConnection } from "./state";
+import { deleteAgent, removeConnection, removeJob } from "./state";
 
 /** Tells the person something didn't work, with the reason when there is one. */
 export function problem(title: string, failure: unknown): void {
@@ -18,6 +18,19 @@ export function confirmDelete(agent: Agent): void {
       text: action,
       style: "destructive",
       onPress: () => void deleteAgent(agent.id).catch((failure) => problem(failed, failure)),
+    },
+  ]);
+}
+
+/** Asks before deleting a job, since it stops running and can't be brought back. `onDeleted` is called once it is gone. */
+export function confirmDeleteJob(job: Job, onDeleted: () => void): void {
+  const { title, message, action, failed } = deleteJobConfirmation(job);
+  Alert.alert(title, message, [
+    { text: "Cancel", style: "cancel" },
+    {
+      text: action,
+      style: "destructive",
+      onPress: () => void removeJob(job.agent_id, job.id).then(onDeleted, (failure) => problem(failed, failure)),
     },
   ]);
 }

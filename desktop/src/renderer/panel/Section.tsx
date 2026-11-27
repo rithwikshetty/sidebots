@@ -4,13 +4,21 @@ import { Spinner } from "../ui/Spinner.tsx";
 
 /**
  * A group of rows on a card, under its title, with a line of help below. A
- * group with no rows shows only its title and help.
+ * group with no rows shows only its title and help. An `action`, as a button
+ * that adds a row, sits at the title's end.
  */
-export function Section({ title, note, children, testId }: { title?: string; note?: string; children?: ReactNode; testId?: string }) {
+export function Section({ title, note, action, children, testId }: { title?: string; note?: string; action?: ReactNode; children?: ReactNode; testId?: string }) {
   const rows = Children.toArray(children).length > 0;
   return (
     <section aria-label={title} data-testid={testId} className="flex flex-col gap-2">
-      {title ? <SectionTitle>{title}</SectionTitle> : null}
+      {title && action ? (
+        <div className="-my-1 flex items-center justify-between gap-2">
+          <SectionTitle>{title}</SectionTitle>
+          {action}
+        </div>
+      ) : title ? (
+        <SectionTitle>{title}</SectionTitle>
+      ) : null}
       {rows ? <div className="flex flex-col divide-y divide-line overflow-hidden rounded-lg bg-raised shadow-control">{children}</div> : null}
       {note ? <p className="px-1 text-xs text-pretty text-ink2">{note}</p> : null}
     </section>

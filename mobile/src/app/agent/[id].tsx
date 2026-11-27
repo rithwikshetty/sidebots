@@ -1,15 +1,17 @@
 import { useEffect, useState } from "react";
-import { Alert, Keyboard, Pressable, ScrollView, StyleSheet, Switch, Text, TextInput, View } from "react-native";
+import { Keyboard, Pressable, ScrollView, StyleSheet, Switch, Text, TextInput, View } from "react-native";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import Animated, { LayoutAnimationConfig } from "react-native-reanimated";
-import { ChevronRight, Square, Trash2 } from "lucide-react-native";
-import { PROVIDERS, USAGE_DAYS, scheduleWords, type AgentWithLatest, type Job, type Message, type Offered } from "@server/contract";
+import { ChevronRight, Square } from "lucide-react-native";
+import { JOB_RUN, PROVIDERS, USAGE_DAYS, plainText, scheduleWords, type AgentWithLatest, type Job, type JobRun, type Message, type Offered } from "@server/contract";
+import { nextWords } from "@client/jobs";
 import { WORK } from "@client/suggestions";
 import { listTime, nextTime } from "@client/time";
 import { COST_NOTE, KINDS, dollars, usedBy } from "@client/usage";
 import { AvatarPicker } from "@/components/AvatarPicker";
 import { AvatarView } from "@/components/AvatarView";
+import { BarButton } from "@/components/BarButton";
 import { Choices } from "@/components/Choices";
 import { ColorPicker } from "@/components/ColorPicker";
 import { FadingText } from "@/components/FadingText";
@@ -19,10 +21,12 @@ import { confirmDelete, problem } from "@/lib/alerts";
 import { useToday } from "@/lib/layout";
 import { HIDE, MOVE, POP_IN, SHOW } from "@/lib/motion";
 import { openChat } from "@/lib/push";
-import { answerAsk, changeAgent, loadAbout, loadUsage, removeJob, useAbout, useAgent, useChatColor, useUsage, type AgentChanges } from "@/lib/state";
+import { answerAsk, changeAgent, loadAbout, loadUsage, saveJob, useAbout, useAgent, useChatColor, useUsage, type AgentChanges } from "@/lib/state";
 import { useTheme } from "@/lib/theme";
 
 const TABS = { settings: "Settings", work: "Jobs & memory" } as const;
+// How often an agent's page asks again while one of its jobs runs, so the run's end shows.
+const RUNNING_POLL_MS = 3_000;
 type Tab = keyof typeof TABS;
 
 export default function AgentPage() {
@@ -39,7 +43,7 @@ export default function AgentPage() {
  * holds what the agent used in the last days, Mute and Hide, and Delete.
  * Jobs & memory holds what the agent works from: the work the person started
  * from its suggestions, each of which opens where it is in the chat and can
- * be stopped while it goes, its jobs, which can be removed here, the
+ * be stopped while it goes, its jobs, which can be made, edited, paused, run now and deleted here, the
  * instructions it follows and what it remembers. The agent writes the last
  * three itself, as it is told things in its chat. What loads after the page
  * opens fades in, and the sections below slide down to make room for it. The
@@ -209,11 +213,14 @@ function WorkTab({ agent }: { agent: AgentWithLatest }) {
   const about = useAbout(agent.id);
   const today = useToday();
   const stopWork = (work: Message) => void answerAsk(work, false).catch((failure) => problem("Couldn't stop it", failure));
-  const forget = (job: Job) =>
-    Alert.alert("Remove this job?", scheduleWords(job.schedule), [
-      { text: "Cancel", style: "cancel" },
-      { text: "Remove", style: "destructive", onPress: () => void removeJob(agent.id, job.id).catch((failure) => problem("Couldn't remove it", failure)) },
-    ]);
+  const openJob = (job?: Job) => router.push({ pathname: "/job", params: job ? { agent: agent.id, job: job.id } : { agent: agent.id } });
+  // While a job runs, the page asks again every few seconds, so the run's end shows.
+  const running = about?.jobs.some((job) => job.last_run_status === "running") ?? false;
+  useEffect(() => {
+    if (!running) return;
+    const timer = setInterval(() => void loadAbout(agent.id).catch(() => {}), RUNNING_POLL_MS);
+    return () => clearInterval(timer);
+  }, [agent.id, running]);
   return (
     <>
       <Section title="Work" note={about?.work.length ? undefined : "None. What you start from its suggestions shows here."}>
@@ -237,20 +244,19 @@ function WorkTab({ agent }: { agent: AgentWithLatest }) {
         ))}
       </Section>
 
-      <Section title="Jobs" note={about?.jobs.length ? undefined : "None. Ask it to remind you of something, or to keep an eye on something."}>
+      <Section
+        title="Jobs"
+        action={
+          <Pressable onPress={() => openJob()} accessibilityRole="button" hitSlop={10} style={({ pressed }) => ({ opacity: pressed ? 0.6 : 1 })}>
+            <Text style={[styles.action, { color: theme.tintInk }]}>New job</Text>
+          </Pressable>
+        }
+        note={about?.jobs.length ? undefined : "None. Make one here, or ask the agent to remind you of something or keep an eye on something."}
+      >
         {about?.jobs.map((job, index) => (
           <Animated.View key={job.id} entering={SHOW} exiting={HIDE} layout={MOVE}>
             {index > 0 ? <Rule /> : null}
-            <View style={styles.row}>
-              <View style={styles.rowText}>
-                <Text style={[styles.rowTitle, { color: theme.ink }]}>{scheduleWords(job.schedule)}</Text>
-                <Text style={[styles.rowNote, { color: theme.ink2 }]}>Next {nextTime(job.next_at)}</Text>
-                <Text numberOfLines={3} style={[styles.rowNote, { color: theme.ink2 }]}>
-                  {job.what}
-                </Text>
-              </View>
-              <IconButton icon={Trash2} label="Remove job" iconSize={18} color={theme.danger} onPress={() => forget(job)} />
-            </View>
+            <JobRow job={job} onPress={() => openJob(job)} />
           </Animated.View>
         ))}
       </Section>
@@ -281,12 +287,39 @@ function WorkTab({ agent }: { agent: AgentWithLatest }) {
   );
 }
 
-/** A word at the sheet's top, as Edit or Done. `strong` is the one that finishes. */
-function BarButton({ label, strong = false, disabled = false, onPress }: { label: string; strong?: boolean; disabled?: boolean; onPress: () => void }) {
+// The colour each way a job's last run went is labelled in.
+const RUN_TONE: Record<Exclude<JobRun, "never">, "tintInk" | "ok" | "danger"> = { running: "tintInk", succeeded: "ok", failed: "danger" };
+
+/**
+ * One of the agent's jobs: its title, the start of what it does, its
+ * schedule, when it next runs and how its last run went. Its switch pauses it
+ * and runs it again, and a tap opens it to edit, run now or delete.
+ */
+function JobRow({ job, onPress }: { job: Job; onPress: () => void }) {
   const theme = useTheme();
+  const { enabled } = job;
+  const toggle = (next: boolean) => void saveJob(job.agent_id, { enabled: next }, job.id).catch((failure) => problem(next ? "Couldn't turn it on" : "Couldn't pause it", failure));
+  const status = job.last_run_status;
   return (
-    <Pressable onPress={onPress} disabled={disabled} accessibilityRole="button" accessibilityState={{ disabled }} hitSlop={10} style={({ pressed }) => ({ opacity: disabled ? 0.35 : pressed ? 0.6 : 1 })}>
-      <FadingText style={[styles.barText, strong && styles.barStrong, { color: theme.tintInk }]}>{label}</FadingText>
+    <Pressable onPress={onPress} accessibilityRole="button" accessibilityHint="Opens it to edit, run now or delete" style={({ pressed }) => [styles.row, styles.jobRow, pressed && { backgroundColor: theme.line }]}>
+      <View style={[styles.rowText, !enabled && styles.paused]}>
+        <Text numberOfLines={1} style={[styles.rowTitle, styles.jobTitle, { color: theme.ink }]}>
+          {job.title}
+        </Text>
+        <Text numberOfLines={2} style={[styles.rowNote, { color: theme.ink2 }]}>
+          {plainText(job.what)}
+        </Text>
+        <View style={styles.jobWhen}>
+          <Text style={[styles.jobWhenText, { color: theme.ink2 }]}>{`${scheduleWords(job.schedule)} · ${nextWords(job)}`}</Text>
+          {status !== "never" ? <Text style={[styles.badge, { color: theme[RUN_TONE[status]], backgroundColor: `${theme[RUN_TONE[status]]}22` }]}>{JOB_RUN[status]}</Text> : null}
+        </View>
+        {status === "failed" && job.last_run_error ? (
+          <Text numberOfLines={2} style={[styles.jobWhenText, { color: theme.danger }]}>
+            {job.last_run_error}
+          </Text>
+        ) : null}
+      </View>
+      <Switch value={enabled} onValueChange={toggle} trackColor={{ true: theme.tint }} accessibilityLabel={`Run ${job.title}`} />
     </Pressable>
   );
 }
@@ -310,8 +343,6 @@ const styles = StyleSheet.create({
   sheet: { flex: 1 },
   // Edit and Done stay at the sheet's top while the page scrolls under them.
   bar: { flexDirection: "row", justifyContent: "space-between", paddingHorizontal: 20, paddingTop: 16, paddingBottom: 8 },
-  barText: { fontSize: 17 },
-  barStrong: { fontWeight: "600" },
   page: { paddingHorizontal: 20 },
   hero: { alignItems: "center", gap: 14, marginTop: 4 },
   halo: { width: HALO, height: HALO, borderRadius: HALO / 2, alignItems: "center", justifyContent: "center" },
@@ -328,4 +359,11 @@ const styles = StyleSheet.create({
   rowText: { flex: 1, gap: 2 },
   rowTitle: { fontSize: 16, lineHeight: 21 },
   rowNote: { fontSize: 14, lineHeight: 19 },
+  action: { fontSize: 15, fontWeight: "600" },
+  jobRow: { alignItems: "flex-start" },
+  jobTitle: { fontWeight: "600" },
+  paused: { opacity: 0.6 },
+  jobWhen: { flexDirection: "row", flexWrap: "wrap", alignItems: "center", gap: 8, marginTop: 4 },
+  jobWhenText: { fontSize: 13, lineHeight: 18 },
+  badge: { fontSize: 12, fontWeight: "600", lineHeight: 18, paddingHorizontal: 7, borderRadius: 9, overflow: "hidden" },
 });

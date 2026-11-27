@@ -1,8 +1,8 @@
-import type { Agent, Connected } from "@server/contract.ts";
-import { deleteConfirmation, removeConnectionConfirmation } from "@client/confirmations.ts";
+import type { Agent, Connected, Job } from "@server/contract.ts";
+import { deleteConfirmation, deleteJobConfirmation, removeConnectionConfirmation } from "@client/confirmations.ts";
 import { confirm } from "../ui/Confirm.tsx";
 import { showToast } from "../ui/Toast.tsx";
-import { changeAgent, deleteAgent, removeConnection, type AgentChanges } from "./store.ts";
+import { changeAgent, deleteAgent, removeConnection, removeJob, type AgentChanges } from "./store.ts";
 
 /** Tells the person something didn't work, with the reason when there is one, in a toast. */
 export function problem(title: string, failure: unknown): void {
@@ -18,6 +18,12 @@ export function changeOrSay(agentId: string, changes: AgentChanges): void {
 export async function confirmDelete(agent: Agent): Promise<void> {
   const { title, message, action, failed } = deleteConfirmation(agent);
   if (await confirm({ title, message, action, destructive: true })) await deleteAgent(agent.id).catch((failure) => problem(failed, failure));
+}
+
+/** Asks before deleting a job, since it stops running and can't be brought back. */
+export async function confirmDeleteJob(job: Job): Promise<void> {
+  const { title, message, action, failed } = deleteJobConfirmation(job);
+  if (await confirm({ title, message, action, destructive: true })) await removeJob(job.agent_id, job.id).catch((failure) => problem(failed, failure));
 }
 
 /** Asks before removing a connection, since every agent loses it until the person signs in to it again. */

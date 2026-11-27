@@ -5,13 +5,17 @@
 
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
-import { CONNECTIONS, MESSAGE_BYTES, PROVIDERS, fenced, isSuggestion, runsFast, sameSelection, scheduleWords, selectionOf, selectionWords } from "./contract.ts";
-import type { Agent, Ask, Connection, Effort, Found, Job, Limit, Message, Model, Provider, Question, Schedule, Selection, Switched, TurnKind } from "./contract.ts";
+import { CONNECTIONS, JOB_RUN, MESSAGE_BYTES, PROVIDERS, fenced, isSuggestion, nextRun, runsFast, sameSelection, scheduleProblem, scheduleWords, selectionOf, selectionWords } from "./contract.ts";
+import type { Agent, Ask, Connection, Effort, Found, Job, JobFields, Limit, Message, Model, Provider, Question, Schedule, Selection, Switched, TurnKind } from "./contract.ts";
 import { CONNECTION_TOOLS, type Connections, type Servers } from "./connections.ts";
 import type { Person, Store, Upload } from "./store.ts";
 
-/** A job as an agent asks for one: what to do on each run, and one of three ways to say when. */
-export type JobRequest = { what: string; every_minutes?: number; daily_at?: string; weekdays?: number[]; once_at?: string };
+/**
+ * A job as an agent saves one: its title, what to do on each run, one of three
+ * ways to say when, and whether it runs. With `id` it changes that job, and
+ * what it leaves out stays as it was.
+ */
+export type JobRequest = { id?: string; title?: string; what?: string; every_minutes?: number; daily_at?: string; weekdays?: number[]; once_at?: string; enabled?: boolean };
 
 /** Work an agent offers to do: what the card names it, why it is worth doing now, and what the agent will do once the person starts it. */
 export type Offer = { title: string; why: string; what: string };
@@ -59,6 +63,7 @@ export type Turn = {
   scheduleJob: (request: JobRequest) => string;
   listJobs: () => string;
   cancelJob: (id: string) => string;
+  runJobNow: (id: string) => string;
   /** Offers the person a piece of work as a suggestion, which goes to them once the agent's reply has. Answers in words the agent reads. */
   suggest: (offer: Offer) => string;
   /** Adds files, by their paths, to the next message the agent sends: its reply, or an update that comes first. Answers in words the agent reads. */
@@ -184,22 +189,31 @@ export function toolsFor(turn: Turn): Tool[] {
     define({
       name: "schedule_job",
       description:
-        "Save a job that Sidebots runs for you later with nobody asking: once at a time, at a time of day, or every so many minutes. Use it for a reminder, a regular check, or anything the person wants done or watched without asking again. Each run is a session of its own that is given `what` and remembers nothing else, and what you reply then is sent to the person, so write `what` as full instructions to yourself, including when a run should stay silent. Give exactly one of every_minutes, daily_at and once_at. Times are this machine's local time, and the answer tells you the time now.",
+        "Save a job that Sidebots runs for you later with nobody asking: once at a time, at a time of day, or every so many minutes. Use it for a reminder, a regular check, or anything the person wants done or watched without asking again. Each run is a session of its own that is given `what` and remembers nothing else, and what you reply then is sent to the person, so write `what` as full instructions to yourself, including when a run should stay silent. A new job needs a short `title` the person knows it by, `what`, and exactly one of every_minutes, daily_at and once_at. With `id`, it changes that job instead: give only what changes, and `enabled: false` pauses it until `enabled: true`. Times are this machine's local time, and the answer tells you the time now.",
       input: {
-        what: z.string().describe("What to do on each run, written to yourself"),
+        id: z.string().optional().describe("The job to change, as list_jobs gives it. Leave out for a new job."),
+        title: z.string().optional().describe("A few words the person knows the job by, such as Morning brief"),
+        what: z.string().optional().describe("What to do on each run, written to yourself"),
         every_minutes: z.number().optional().describe("Run every this many minutes"),
         daily_at: z.string().optional().describe("Run at this time of day, as HH:MM on a 24-hour clock"),
         weekdays: z.array(z.number()).optional().describe("With daily_at, the days it runs on, where 0 is Sunday. Leave out for every day."),
         once_at: z.string().optional().describe("Run once at this time, as YYYY-MM-DDTHH:MM"),
+        enabled: z.boolean().optional().describe("False pauses the job, and true runs it again. A new job runs unless this is false."),
       },
       run: (request) => turn.scheduleJob(request),
     }),
-    define({ name: "list_jobs", description: "List the jobs you have saved, with when each next runs and the time now.", input: {}, run: () => turn.listJobs() }),
+    define({ name: "list_jobs", description: "List the jobs you have saved, with when each next runs, how its last run went, and the time now.", input: {}, run: () => turn.listJobs() }),
     define({
       name: "cancel_job",
       description: "Remove one of your jobs.",
       input: { id: z.string().describe("The job's id, as list_jobs gives it") },
       run: ({ id }) => turn.cancelJob(id),
+    }),
+    define({
+      name: "run_job_now",
+      description: "Run one of your jobs now, in a session of its own as on its schedule, which it keeps.",
+      input: { id: z.string().describe("The job's id, as list_jobs gives it") },
+      run: ({ id }) => turn.runJobNow(id),
     }),
     define({
       name: "suggest",
@@ -313,35 +327,25 @@ function clock(time: number): string {
   return `${at.getFullYear()}-${two(at.getMonth() + 1)}-${two(at.getDate())}T${two(at.getHours())}:${two(at.getMinutes())}`;
 }
 
-/** The schedule an agent asked for, or what is wrong with the request. */
-function toSchedule(request: JobRequest, now: number): Schedule | string {
+/**
+ * The schedule an agent asked for, or what is wrong with the request. A
+ * request that gives none of the ways to say when, as a change to a job's
+ * title alone does, leaves the schedule undefined.
+ */
+function toSchedule(request: JobRequest): Schedule | string | undefined {
+  if (request.weekdays !== undefined && request.daily_at === undefined) return "Give weekdays with daily_at.";
   const ways = [request.every_minutes, request.daily_at, request.once_at].filter((way) => way !== undefined);
+  if (ways.length === 0 && request.id !== undefined) return undefined;
   if (ways.length !== 1) return "Give exactly one of every_minutes, daily_at and once_at.";
-  if (request.every_minutes !== undefined) {
-    return Number.isInteger(request.every_minutes) && request.every_minutes >= 1 ? { type: "every", minutes: request.every_minutes } : "every_minutes must be a whole number, 1 or more.";
-  }
+  if (request.every_minutes !== undefined) return { type: "every", minutes: request.every_minutes };
   if (request.daily_at !== undefined) {
-    if (!/^([01]\d|2[0-3]):[0-5]\d$/.test(request.daily_at)) return "daily_at must be HH:MM on a 24-hour clock.";
-    const weekdays = [...new Set(request.weekdays ?? [])];
-    if (weekdays.some((day) => !Number.isInteger(day) || day < 0 || day > 6)) return "weekdays must be numbers from 0, for Sunday, to 6.";
+    // Days are kept in their order by number, as the apps save them, so a schedule saved again unchanged reads the same.
+    const weekdays = [...new Set(request.weekdays ?? [])].sort((a, b) => a - b);
     return weekdays.length ? { type: "daily", time: request.daily_at, weekdays } : { type: "daily", time: request.daily_at };
   }
   // A time with no zone is read as this machine's own.
   const at = new Date(request.once_at!).getTime();
-  if (Number.isNaN(at)) return "once_at must be a time such as 2026-11-16T17:00.";
-  return at > now ? { type: "once", at } : `That time has passed. It is now ${clock(now)}.`;
-}
-
-/** When a job next runs after `after`. A job that runs once has no run after its time. */
-export function nextRun(schedule: Schedule, after: number): number | null {
-  if (schedule.type === "every") return after + schedule.minutes * 60_000;
-  if (schedule.type === "once") return schedule.at > after ? schedule.at : null;
-  const [hours, minutes] = schedule.time.split(":").map(Number);
-  const next = new Date(after);
-  next.setHours(hours, minutes, 0, 0);
-  // Today if the time is still to come and today is one of its days, or the first of its days after.
-  while (next.getTime() <= after || (schedule.weekdays && !schedule.weekdays.includes(next.getDay()))) next.setDate(next.getDate() + 1);
-  return next.getTime();
+  return Number.isNaN(at) ? "once_at must be a time such as 2026-11-16T17:00." : { type: "once", at };
 }
 
 /**
@@ -361,12 +365,8 @@ export function addFirstAgent(store: Store, person: Person, brief: string | null
   if (brief) {
     const schedule: Schedule = { type: "daily", time: brief };
     agent = store.createAgent(person, "Ruby", "cog", provider, `You brief ${person.name} every morning on what their day holds and what needs them, by a job you start with, and you help with whatever else they ask. ${learns}`);
-    store.addJob(
-      agent.id,
-      `Brief ${person.name} on their day. Read today's calendar, the mail that has come since your last brief and needs an answer from them, and what is due in Notion, from whichever of those you have tools for. Lead with the one or two things that most need them today, then the rest in a few short lines. When something in it is work you could do for them, offer it with \`suggest\`. When you have tools for none of them, tell ${person.name} once that saying "connect my calendar" or "connect my Gmail" gives you their day to brief them on, note in your memory that you told them, and stay silent on later runs until you have one.`,
-      schedule,
-      nextRun(schedule, now)!,
-    );
+    const what = `Brief ${person.name} on their day. Read today's calendar, the mail that has come since your last brief and needs an answer from them, and what is due in Notion, from whichever of those you have tools for. Lead with the one or two things that most need them today, then the rest in a few short lines. When something in it is work you could do for them, offer it with \`suggest\`. When you have tools for none of them, tell ${person.name} once that saying "connect my calendar" or "connect my Gmail" gives you their day to brief them on, note in your memory that you told them, and stay silent on later runs until you have one.`;
+    store.addJob(agent.id, { title: "Morning brief", what, schedule, enabled: true }, nextRun(schedule, now));
     store.addMessage(
       agent.id,
       "agent",
@@ -390,9 +390,19 @@ export function timeWords(time: string): string {
   return time.replace(/^0/, "").replace(/:00$/, "");
 }
 
-/** What the agent is asked on a run of one of its jobs. */
-function jobPrompt(job: Job, person: Person): string {
-  return `This is a run of one of your jobs (${scheduleWords(job.schedule)}), started by Sidebots' clock. ${person.name} hasn't sent anything. What you saved for it:
+/** A job's schedule, when it next runs and how its last run went, as the agent reads them. */
+function jobWords(job: Job): string {
+  const next = !job.enabled ? "paused" : job.next_at === null ? "not scheduled" : `next at ${clock(job.next_at)}`;
+  const last =
+    job.last_run_status === "never" || job.last_run_at === null
+      ? JOB_RUN.never.toLowerCase()
+      : `last run at ${clock(job.last_run_at)}, ${JOB_RUN[job.last_run_status].toLowerCase()}${job.last_run_error ? `: ${job.last_run_error}` : ""}`;
+  return `${scheduleWords(job.schedule)}, ${next}, ${last}`;
+}
+
+/** What the agent is asked on a run of one of its jobs: one its schedule started, or one run now, beside its schedule. */
+function jobPrompt(job: Job, person: Person, now: boolean): string {
+  return `This is a run of one of your jobs, "${job.title}" (${scheduleWords(job.schedule)}), started ${now ? "now, beside its schedule" : "by Sidebots' clock"}. ${person.name} hasn't sent anything. What you saved for it:
 
 ${job.what}
 
@@ -495,6 +505,54 @@ export function createQueue(store: Store, drivers: Drivers, connections: Connect
   const kicked = new Set<string>();
   // What each agent's own lane is on: the job, or the work the person started, by its id.
   const own = new Map<string, string>();
+  // The jobs to run now, beside their schedules, by agent, in the order they were asked for.
+  const runsNow = new Map<string, string[]>();
+  /** The next of the agent's jobs to run now that it still has. */
+  const nextRunNow = (agentId: string): Job | undefined => {
+    const ids = runsNow.get(agentId) ?? [];
+    for (let id = ids.shift(); id !== undefined; id = ids.shift()) {
+      const job = store.job(agentId, id);
+      if (job) return job;
+    }
+    runsNow.delete(agentId);
+    return undefined;
+  };
+
+  /**
+   * Saves one of the agent's jobs: a new one, or, with `jobId`, that job with
+   * what `changes` changes. A new job, one whose schedule changed and one
+   * turned back on run next at the schedule's next time from now, and one
+   * turned back on whose one time has passed can't be. Answers with the job,
+   * or with what is wrong, in words.
+   */
+  function saveJob(agentId: string, changes: Partial<JobFields>, jobId?: string): Job | string {
+    const before = jobId === undefined ? undefined : store.job(agentId, jobId);
+    if (jobId !== undefined && !before) return "No such job.";
+    const schedule = changes.schedule ?? before?.schedule;
+    const fields = { title: (changes.title ?? before?.title ?? "").trim(), what: (changes.what ?? before?.what ?? "").trim(), enabled: changes.enabled ?? before?.enabled ?? true };
+    if (!fields.title) return "Give the job a name.";
+    if (!fields.what) return "Say what the agent does on each run.";
+    if (!schedule) return "Give the job a schedule.";
+    const time = now();
+    const rescheduled = !before || JSON.stringify(schedule) !== JSON.stringify(before.schedule);
+    const problem = rescheduled ? scheduleProblem(schedule, time) : null;
+    if (problem) return problem;
+    const resumed = fields.enabled && before?.enabled === false;
+    const nextAt = !before || rescheduled || resumed ? nextRun(schedule, time) : before.next_at;
+    if (resumed && nextAt === null) return "That time has passed. Pick a time still to come.";
+    const saved = before ? store.updateJob(agentId, before.id, { ...fields, schedule }, nextAt) : store.addJob(agentId, { ...fields, schedule }, nextAt);
+    return saved ?? "No such job.";
+  }
+
+  /** Runs one of the agent's jobs now, beside its schedule. Answers with what is wrong, in words, or null once the run is on its way. */
+  function runJobNow(agentId: string, jobId: string): string | null {
+    if (!store.job(agentId, jobId)) return "No such job.";
+    const waiting = runsNow.get(agentId) ?? [];
+    if (own.get(agentId) === jobId || waiting.includes(jobId)) return "It is running already.";
+    runsNow.set(agentId, [...waiting, jobId]);
+    void kick(agentId);
+    return null;
+  }
   // The agents being deleted, whose queues end with the turn they are running.
   const removed = new Set<string>();
   // For an agent running a turn the person can talk to, what to call when they send another message.
@@ -534,7 +592,9 @@ export function createQueue(store: Store, drivers: Drivers, connections: Connect
       const ranOn = agent.ran_on ?? selectionOf(agent);
       const message = lane === "chat" ? store.nextQueued(agentId) : undefined;
       const work = lane === "own" ? store.nextWork(agentId) : undefined;
-      const job = lane === "own" && !work ? store.dueJob(agentId, now()) : undefined;
+      // A job asked to run now goes before one whose time has come.
+      const jobNow = lane === "own" && !work ? nextRunNow(agentId) : undefined;
+      const job = jobNow ?? (lane === "own" && !work ? store.dueJob(agentId, now()) : undefined);
       // What the agent runs by itself, as its messages name it.
       const jobId = (work ?? job)?.id;
       if (jobId) own.set(agentId, jobId);
@@ -599,17 +659,17 @@ export function createQueue(store: Store, drivers: Drivers, connections: Connect
           stop,
           searchHistory: (search) => found(store.searchMessages(person.id, search)),
           scheduleJob: (request) => {
-            const schedule = toSchedule(request, now());
-            if (typeof schedule === "string") return schedule;
-            if (!request.what.trim()) return "Say what the job is to do.";
-            const saved = store.addJob(agent.id, request.what.trim(), schedule, nextRun(schedule, now())!);
-            return `Saved job ${saved.id}: ${scheduleWords(schedule)}. It first runs at ${clock(saved.next_at)}. It is now ${clock(now())}.`;
+            const schedule = toSchedule(request);
+            const saved = typeof schedule === "string" ? schedule : saveJob(agent.id, { title: request.title, what: request.what, schedule, enabled: request.enabled }, request.id);
+            if (typeof saved === "string") return `${saved} It is now ${clock(now())}.`;
+            return `Saved job ${saved.id}, "${saved.title}": ${jobWords(saved)}. It is now ${clock(now())}.`;
           },
           listJobs: () => {
-            const jobs = store.jobs(agent.id).map((each) => `${each.id}: ${scheduleWords(each.schedule)}, next at ${clock(each.next_at)}. ${each.what}`);
+            const jobs = store.jobs(agent.id).map((each) => `${each.id}, "${each.title}": ${jobWords(each)}. ${each.what}`);
             return `${jobs.join("\n\n") || "You have no jobs."}\n\nIt is now ${clock(now())}.`;
           },
           cancelJob: (id) => (store.removeJob(agent.id, id) ? "Removed." : "You have no job with that id."),
+          runJobNow: (id) => runJobNow(agent.id, id) ?? "It runs now, in a session of its own, and what it replies goes to the person.",
           suggest: ({ title, why, what }) => {
             if (!title.trim() || !what.trim()) return "A suggestion needs a title and what you will do.";
             if (offers.length >= SUGGESTIONS) return `${SUGGESTIONS} is the most to suggest at once. Keep the ones that matter most.`;
@@ -682,9 +742,12 @@ export function createQueue(store: Store, drivers: Drivers, connections: Connect
 
       if (work || job) {
         if (work) store.setStatus(work.id, "running");
+        if (job) store.jobStarted(job.id, now());
+        // Why the job's run failed, when it did.
+        let failed: string | null = null;
         try {
           const replies: string[] = [];
-          await turn(work ? workPrompt(work, person) : jobPrompt(job!, person), { kind: "job", seen: () => undefined, replied: (reply) => replies.push(reply) });
+          await turn(work ? workPrompt(work, person) : jobPrompt(job!, person, jobNow !== undefined), { kind: "job", seen: () => undefined, replied: (reply) => replies.push(reply) });
           const reply = replies.at(-1) ?? "";
           // A run stopped as its reply landed sends nothing, and work the person stopped is over already.
           if (!stop.signal.aborted) {
@@ -692,8 +755,10 @@ export function createQueue(store: Store, drivers: Drivers, connections: Connect
             suggestAll();
             if (work) store.setStatus(work.id, "done");
           }
+          if (stop.signal.aborted) failed = "Stopped.";
         } catch (error) {
           if (removed.has(agentId)) return;
+          failed = stop.signal.aborted ? "Stopped." : reason(error);
           // A job that keeps failing says so once, not on every run.
           const latest = store.agentWithLatest(agent.id)?.latest;
           if (!stop.signal.aborted && (work || latest?.sender !== "sidebots" || latest.status !== "failed")) {
@@ -701,12 +766,9 @@ export function createQueue(store: Store, drivers: Drivers, connections: Connect
             if (work) store.setStatus(work.id, "failed");
           }
         }
-        if (job) {
-          // The next run counts from the end of this one. A job that ran its one time is done.
-          const next = nextRun(job.schedule, now());
-          if (next === null) store.removeJob(agent.id, job.id);
-          else store.setJobNext(job.id, next);
-        }
+        // The next run counts from the end of this one, and a job that ran its one time has none. A run beside the schedule leaves the next run as it was, as does a change to the job made while it ran, which worked out its next run itself.
+        const current = job && store.job(agent.id, job.id);
+        if (current) store.jobEnded(current.id, failed, jobNow || current.next_at !== job!.next_at ? current.next_at : nextRun(current.schedule, now()));
         continue;
       }
       if (!message) return;
@@ -865,6 +927,8 @@ export function createQueue(store: Store, drivers: Drivers, connections: Connect
 
   return {
     kick,
+    saveJob,
+    runJobNow,
 
     /**
      * Replaces the agent's session once the turns ahead of it are done. The

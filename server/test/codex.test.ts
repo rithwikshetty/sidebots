@@ -97,6 +97,7 @@ function setup({ signedIn = true, keyLogin = false } = {}) {
     scheduleJob: () => "",
     listJobs: () => "",
     cancelJob: () => "",
+    runJobNow: () => "",
     suggest: () => "",
     sendFiles: () => "",
     listAgents: () => "",
@@ -154,7 +155,7 @@ test("a turn starts a thread with the agent's tools, on the newest model of its 
   // Every tool is there from the start, `send_update` too, since a thread keeps the tools it started with.
   const tools = (started.dynamicTools as { name: string; inputSchema: { properties: object } }[]).map((tool) => tool.name);
   assert.deepEqual(tools, [
-    ...["search_history", "schedule_job", "list_jobs", "cancel_job", "suggest", "list_agents", "ask_agent", "send_files", "connect"],
+    ...["search_history", "schedule_job", "list_jobs", "cancel_job", "run_job_now", "suggest", "list_agents", "ask_agent", "send_files", "connect"],
     ...["gmail_search", "gmail_read", "gmail_send", "calendar_events", "calendar_event", "calendar_list", "calendar_add_event", "calendar_change_event", "calendar_remove_event", "send_update"],
   ]);
   assert.match(started.developerInstructions, /memory\/MEMORY\.md/);

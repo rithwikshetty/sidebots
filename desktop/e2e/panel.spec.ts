@@ -273,7 +273,7 @@ test.describe("an agent's page", () => {
 test.describe("an agent's jobs and memory", () => {
   test.use({ world: "seeded" });
 
-  test("lists each job with its schedule in words, when it next runs, and what it does", async ({ page, server }) => {
+  test("lists each job with its title, what it does, its schedule in words and when it next runs", async ({ page, server }) => {
     const planner = await agentNamed(server, "Planner");
     await openAgentPage(page, planner.id);
     await page.getByRole("radio", { name: "Jobs & memory" }).click();
@@ -282,29 +282,74 @@ test.describe("an agent's jobs and memory", () => {
     const rows = page.getByTestId("job");
     await expect(rows).toHaveCount(3);
     for (const [index, job] of jobs.entries()) {
-      await expect(rows.nth(index)).toContainText(scheduleWords(job.schedule));
-      await expect(rows.nth(index)).toContainText(`Next ${await nextTimeInWindow(page, job.next_at)}`);
+      await expect(rows.nth(index).getByTestId("job-title")).toHaveText(job.title);
       await expect(rows.nth(index)).toContainText(job.what);
+      await expect(rows.nth(index).getByTestId("job-when")).toContainText(`${scheduleWords(job.schedule)} · Next ${await nextTimeInWindow(page, job.next_at!)}`);
     }
   });
 
-  test("Remove job asks first, then the job is gone from the page and the server", async ({ page, server }) => {
+  test("Delete in a job's menu asks first, then the job is gone from the page and the server", async ({ page, server }) => {
     const planner = await agentNamed(server, "Planner");
     await openAgentPage(page, planner.id);
     await page.getByRole("radio", { name: "Jobs & memory" }).click();
     const [first] = (await about(server, planner.id)).jobs;
     const row = page.getByTestId("job").filter({ hasText: first.what });
-    await row.getByRole("button", { name: "Remove job" }).click();
+    const remove = async () => {
+      await row.getByRole("button", { name: `Actions for ${first.title}` }).click();
+      await page.getByRole("menuitem", { name: "Delete" }).click();
+    };
+    await remove();
     const confirm = page.getByTestId("confirm");
-    await expect(confirm).toContainText("Remove this job?");
-    await expect(confirm).toContainText(scheduleWords(first.schedule));
+    await expect(confirm).toContainText(`Delete "${first.title}"?`);
     await confirm.getByRole("button", { name: "Cancel" }).click();
     await expect(page.getByTestId("job")).toHaveCount(3);
-    await row.getByRole("button", { name: "Remove job" }).click();
-    await confirm.getByRole("button", { name: "Remove" }).click();
+    await remove();
+    await confirm.getByRole("button", { name: "Delete" }).click();
     await expect(page.getByTestId("job")).toHaveCount(2);
     await expect(row).toHaveCount(0);
     await until(() => about(server, planner.id), (now) => now.jobs.length === 2 && !now.jobs.some((job) => job.id === first.id));
+  });
+
+  test("New job makes a job, Edit changes it, its switch pauses it, and Run now runs it", async ({ page, server }) => {
+    const planner = await agentNamed(server, "Planner");
+    await openAgentPage(page, planner.id);
+    await page.getByRole("radio", { name: "Jobs & memory" }).click();
+    await page.getByTestId("new-job").click();
+    const editor = page.getByTestId("job-editor");
+    await expect(editor.getByTestId("job-title-field")).toBeFocused();
+    // A job needs a name and what it does.
+    await editor.getByTestId("save-job").click();
+    await expect(editor.getByTestId("job-error")).toHaveText("Give the job a name.");
+    await editor.getByTestId("job-title-field").fill("Plants");
+    await editor.getByTestId("job-what-field").fill("Remind Tester to water the plants.");
+    await editor.getByRole("radio", { name: "Every interval" }).click();
+    await editor.getByTestId("job-minutes-field").fill("30");
+    await editor.getByTestId("save-job").click();
+    await expect(editor).toHaveCount(0);
+    const row = page.getByTestId("job").filter({ hasText: "Remind Tester to water the plants." });
+    await expect(row.getByTestId("job-title")).toHaveText("Plants");
+    await expect(row.getByTestId("job-when")).toContainText("Every 30 min · Next ");
+    const made = (await until(() => about(server, planner.id), (now) => now.jobs.some((job) => job.title === "Plants"))).jobs.find((job) => job.title === "Plants")!;
+    expect([made.schedule, made.enabled]).toEqual([{ type: "every", minutes: 30 }, true]);
+
+    // Edit opens the job as it is, and saves what changed.
+    await row.getByRole("button", { name: "Actions for Plants" }).click();
+    await page.getByRole("menuitem", { name: "Edit" }).click();
+    await expect(editor.getByTestId("job-minutes-field")).toHaveValue("30");
+    await editor.getByTestId("job-title-field").fill("Water the plants");
+    await editor.getByTestId("save-job").click();
+    await expect(row.getByTestId("job-title")).toHaveText("Water the plants");
+    await until(() => about(server, planner.id), (now) => now.jobs.some((job) => job.id === made.id && job.title === "Water the plants" && job.next_at === made.next_at));
+
+    // Its switch pauses it, and it says so.
+    await row.getByRole("switch", { name: "Run Water the plants" }).click();
+    await expect(row.getByTestId("job-when")).toContainText("Every 30 min · Paused");
+    await until(() => about(server, planner.id), (now) => now.jobs.some((job) => job.id === made.id && !job.enabled));
+
+    // Run now runs it all the same.
+    await row.getByRole("button", { name: "Actions for Water the plants" }).click();
+    await page.getByRole("menuitem", { name: "Run now" }).click();
+    await until(() => about(server, planner.id), (now) => now.jobs.some((job) => job.id === made.id && job.run_count === 1));
   });
 
   test("the instructions open as a note in rich text, and back returns to the page on the same tab", async ({ page, server }) => {
@@ -345,7 +390,7 @@ test.describe("an agent's jobs and memory", () => {
     rmSync(join(server.home, "agents", pip.id, PROVIDERS.codex.instructions), { force: true });
     await openAgentPage(page, pip.id);
     await page.getByRole("radio", { name: "Jobs & memory" }).click();
-    await expect(page.getByTestId("agent-jobs")).toContainText("None. Ask it to remind you of something, or to keep an eye on something.");
+    await expect(page.getByTestId("agent-jobs")).toContainText("None. Make one here, or ask the agent to remind you of something or keep an eye on something.");
     await expect(page.getByTestId("agent-memory")).toContainText("Nothing yet. It saves what it learns as you talk.");
     await expect(page.getByTestId("open-instructions")).toHaveText("Nothing yet.");
     await page.getByTestId("open-instructions").click();
@@ -356,11 +401,11 @@ test.describe("an agent's jobs and memory", () => {
     const pip = await agentNamed(server, "Pip");
     await openAgentPage(page, pip.id);
     await page.getByRole("radio", { name: "Jobs & memory" }).click();
-    await expect(page.getByTestId("agent-jobs")).toContainText("None. Ask it to remind you of something, or to keep an eye on something.");
+    await expect(page.getByTestId("agent-jobs")).toContainText("None. Make one here, or ask the agent to remind you of something or keep an eye on something.");
     await server.say(pip.id, "/job");
     // The page stays open, and shows the job once the turn that saved it has ended.
     await expect(page.getByTestId("job")).toHaveCount(1);
-    await expect(page.getByTestId("job")).toContainText("Every day at 07:30");
+    await expect(page.getByTestId("job")).toContainText("Daily at 07:30");
     await expect(page.getByTestId("agent-jobs")).not.toContainText("None.");
     expect((await about(server, pip.id)).jobs).toHaveLength(1);
   });

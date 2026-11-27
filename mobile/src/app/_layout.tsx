@@ -120,9 +120,10 @@ export default function Layout() {
                           <Stack.Screen name="new-agent" options={{ presentation: "formSheet", sheetAllowedDetents: [0.62], sheetGrabberVisible: true }} />
                           {/* The drawer where what an agent answers with is chosen, which comes up over its chat and pulls up to show all of a long list. */}
                           <Stack.Screen name="model/[id]" options={{ presentation: "formSheet", sheetAllowedDetents: [0.75, 1], sheetGrabberVisible: true }} />
-                          {/* An agent's page, a note opened from it, an exchange between two agents, settings, usage and connections, each a sheet over what is behind. */}
+                          {/* An agent's page, a note or a job opened from it, an exchange between two agents, settings, usage and connections, each a sheet over what is behind. */}
                           <Stack.Screen name="agent/[id]" options={{ presentation: "modal" }} />
                           <Stack.Screen name="note" options={{ presentation: "modal" }} />
+                          <Stack.Screen name="job" options={{ presentation: "modal" }} />
                           <Stack.Screen name="exchange" options={{ presentation: "modal" }} />
                           <Stack.Screen name="settings" options={{ presentation: "modal" }} />
                           <Stack.Screen name="usage" options={{ presentation: "modal" }} />

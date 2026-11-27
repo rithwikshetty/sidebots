@@ -7,7 +7,7 @@ import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
 
 import { COLOR, PAGE, PROVIDERS, RUN, USAGE_DAYS, WORK_LISTED, betweenAgents, readableColor, selectionOf } from "./contract.ts";
-import type { About, Agent, AgentWithLatest, Ask, Avatar, Connection, Day, Found, Job, Limit, Memory, Message, Plan, Provider, PushToken, Question, Schedule, Selection, Sender, Status, Switched, TurnKind, Usage, Used } from "./contract.ts";
+import type { About, Agent, AgentWithLatest, Ask, Avatar, Connection, Day, Found, Job, JobFields, Limit, Memory, Message, Plan, Provider, PushToken, Question, Schedule, Selection, Sender, Status, Switched, TurnKind, Usage, Used } from "./contract.ts";
 
 export type Person = { id: string; name: string };
 /** How a person's agents sign in to a provider: the provider's config folder of the person's own, which holds their login, rules, skills and sessions. */
@@ -51,6 +51,21 @@ type Counts = { agents: number; phones: number; turns: { day: string; provider: 
 // The app's blue, for an avatar with no colour of its own and no design to take one from.
 const DEFAULT_COLOR = "#1F5FD6";
 
+// What a job is, which the table of jobs is made with, from the start or as it changed.
+const JOB_COLUMNS = `
+  id          text primary key,
+  agent_id    text not null references agents(id),
+  title       text not null,
+  what        text not null,
+  schedule    text not null,
+  enabled     integer not null default 1,
+  next_at     integer,
+  last_run_at integer,
+  last_run_status text not null default 'never' check (last_run_status in ('never', 'running', 'succeeded', 'failed')),
+  last_run_error text,
+  run_count   integer not null default 0,
+  created_at  integer not null`;
+
 /**
  * The changes made to the tables since the first published version, in order.
  * A database records how many it has had in \`user_version\`. One made from
@@ -61,6 +76,7 @@ const DEFAULT_COLOR = "#1F5FD6";
  * newer count when this one opens it, so the newer one doesn't make its
  * changes a second time.
  */
+
 const TABLE_CHANGES: (string | { table: string; change: string })[] = [
   "alter table devices add column app text",
   "alter table agents add column color text",
@@ -90,6 +106,15 @@ const TABLE_CHANGES: (string | { table: string; change: string })[] = [
   // A Codex session from before \`suggest\` gets a fresh start too, unless one waits for it already. A session on its way to another provider is replaced as it hands over.
   "insert into messages (id, agent_id, sender, body, status, created_at) select lower(hex(randomblob(16))), id, 'sidebots', 'Fresh start', 'queued', cast(unixepoch('subsec') * 1000 as integer) from agents where provider = 'codex' and coalesce(json_extract(ran_on, '$.provider'), provider) = 'codex' and session_id is not null and not exists (select 1 from messages where agent_id = agents.id and sender = 'sidebots' and status in ('queued', 'running'))",
   { table: "usage", change: "alter table usage add column session_held integer" },
+  // A job has a title, can be paused, keeps how its last run went, and stays once it has run its one time, with no next run. Each job is named for what it is for: the brief a person's first agent starts with as "Morning brief", any other by the first sentence of what it does, or "Job" when it has none.
+  `create table jobs_next (${JOB_COLUMNS});
+insert into jobs_next (id, agent_id, title, what, schedule, next_at, created_at)
+  select id, agent_id, iif(what like 'Brief % on their day.%', 'Morning brief', iif(first = '', 'Job', iif(length(first) > 60, rtrim(substr(first, 1, 59)) || '…', first))), what, schedule, next_at, created_at
+  from (select *, trim(substr(replace(what, char(10), ' '), 1, instr(replace(what, char(10), ' ') || '.', '.') - 1)) as first from jobs);
+drop table jobs;
+alter table jobs_next rename to jobs;`,
+  // A Codex session from before jobs had titles, could be paused and run now gets a fresh start too, for the tools that do it, unless one waits for it already.
+  "insert into messages (id, agent_id, sender, body, status, created_at) select lower(hex(randomblob(16))), id, 'sidebots', 'Fresh start', 'queued', cast(unixepoch('subsec') * 1000 as integer) from agents where provider = 'codex' and coalesce(json_extract(ran_on, '$.provider'), provider) = 'codex' and session_id is not null and not exists (select 1 from messages where agent_id = agents.id and sender = 'sidebots' and status in ('queued', 'running'))",
 ];
 
 const SCHEMA = `
@@ -138,14 +163,7 @@ create table if not exists messages (
   switched    text,
   created_at  integer not null
 );
-create table if not exists jobs (
-  id          text primary key,
-  agent_id    text not null references agents(id),
-  what        text not null,
-  schedule    text not null,
-  next_at     integer not null,
-  created_at  integer not null
-);
+create table if not exists jobs (${JOB_COLUMNS});
 create table if not exists devices (
   id          text primary key,
   person_id   text not null references people(id),
@@ -293,8 +311,8 @@ const toAgent = (row: AgentRow): Agent => ({
   hidden: row.hidden === 1,
   ran_on: row.ran_on === null ? null : (JSON.parse(row.ran_on) as Selection),
 });
-type JobRow = Omit<Job, "schedule"> & { schedule: string };
-const toJob = (row: JobRow): Job => ({ ...row, schedule: JSON.parse(row.schedule) as Schedule });
+type JobRow = Omit<Job, "schedule" | "enabled"> & { schedule: string; enabled: number };
+const toJob = (row: JobRow): Job => ({ ...row, schedule: JSON.parse(row.schedule) as Schedule, enabled: row.enabled === 1 });
 
 /** A memory file as an agent writes one: a name and a description between `---` lines, then the memory itself. */
 function toMemory(file: string, text: string): Memory {
@@ -399,7 +417,11 @@ export function openStore(home: string) {
     return row && toAgent(row);
   };
   const clearPushToken = db.prepare("update devices set push_token = null, environment = null, app = null where push_token = ?");
-  const jobsFor = (agentId: string): Job[] => (db.prepare("select * from jobs where agent_id = ? order by next_at").all(agentId) as JobRow[]).map(toJob);
+  const jobsFor = (agentId: string): Job[] => (db.prepare("select * from jobs where agent_id = ? order by next_at is null, next_at, created_at").all(agentId) as JobRow[]).map(toJob);
+  const jobOf = (agentId: string, jobId: string): Job | undefined => {
+    const row = db.prepare("select * from jobs where id = ? and agent_id = ?").get(jobId, agentId) as JobRow | undefined;
+    return row && toJob(row);
+  };
   // The suggestions the person started that haven't ended, the one whose run began first, then the ones that wait for it.
   const work = (agentId: string): Message[] => many(`select ${MESSAGE} from messages indexed by messages_unfinished where agent_id = ? and ${SUGGESTION} and ${UNFINISHED} order by status = 'queued', rowid`, agentId);
   const withLatest = (agent: Agent): AgentWithLatest => ({
@@ -656,17 +678,30 @@ export function openStore(home: string) {
       };
     },
 
-    addJob(agentId: string, what: string, schedule: Schedule, nextAt: number): Job {
-      const job: Job = { id: randomUUID().slice(0, 8), agent_id: agentId, what, schedule, next_at: nextAt, created_at: Date.now() };
-      db.prepare("insert into jobs (id, agent_id, what, schedule, next_at, created_at) values (?, ?, ?, ?, ?, ?)").run(
-        job.id,
-        job.agent_id,
-        job.what,
-        JSON.stringify(schedule),
-        job.next_at,
-        job.created_at,
+    addJob(agentId: string, fields: JobFields, nextAt: number | null): Job {
+      const id = randomUUID().slice(0, 8);
+      db.prepare("insert into jobs (id, agent_id, title, what, schedule, enabled, next_at, created_at) values (?, ?, ?, ?, ?, ?, ?, ?)").run(
+        id,
+        agentId,
+        fields.title,
+        fields.what,
+        JSON.stringify(fields.schedule),
+        fields.enabled ? 1 : 0,
+        nextAt,
+        Date.now(),
       );
-      return job;
+      return jobOf(agentId, id)!;
+    },
+
+    /** One of the agent's jobs. */
+    job: jobOf,
+
+    /** Changes what is set of one of the agent's jobs and when it next runs. Undefined when the agent has no such job. */
+    updateJob(agentId: string, jobId: string, fields: JobFields, nextAt: number | null): Job | undefined {
+      const changed = db
+        .prepare("update jobs set title = ?, what = ?, schedule = ?, enabled = ?, next_at = ? where id = ? and agent_id = ?")
+        .run(fields.title, fields.what, JSON.stringify(fields.schedule), fields.enabled ? 1 : 0, nextAt, jobId, agentId).changes;
+      return changed ? jobOf(agentId, jobId) : undefined;
     },
 
     /** The agent's jobs, the next to run first. */
@@ -677,19 +712,25 @@ export function openStore(home: string) {
       return db.prepare("delete from jobs where id = ? and agent_id = ?").run(jobId, agentId).changes > 0;
     },
 
-    setJobNext(jobId: string, nextAt: number): void {
-      db.prepare("update jobs set next_at = ? where id = ?").run(nextAt, jobId);
+    /** Marks a job's run as started at `at`. */
+    jobStarted(jobId: string, at: number): void {
+      db.prepare("update jobs set last_run_at = ?, last_run_status = 'running', last_run_error = null where id = ?").run(at, jobId);
     },
 
-    /** The agent's job that has waited longest past its time. */
+    /** Marks a job's run as ended, failed with `error` or not, with when the job next runs. */
+    jobEnded(jobId: string, error: string | null, nextAt: number | null): void {
+      db.prepare("update jobs set last_run_status = ?, last_run_error = ?, run_count = run_count + 1, next_at = ? where id = ?").run(error === null ? "succeeded" : "failed", error, nextAt, jobId);
+    },
+
+    /** The agent's job that has waited longest past its time, of those that run. */
     dueJob(agentId: string, now: number): Job | undefined {
-      const row = db.prepare("select * from jobs where agent_id = ? and next_at <= ? order by next_at limit 1").get(agentId, now) as JobRow | undefined;
+      const row = db.prepare("select * from jobs where agent_id = ? and enabled = 1 and next_at <= ? order by next_at limit 1").get(agentId, now) as JobRow | undefined;
       return row && toJob(row);
     },
 
     /** The agents with a job whose time has come. */
     agentsWithDueJobs(now: number): string[] {
-      const rows = db.prepare("select distinct agent_id from jobs where next_at <= ?").all(now) as { agent_id: string }[];
+      const rows = db.prepare("select distinct agent_id from jobs where enabled = 1 and next_at <= ?").all(now) as { agent_id: string }[];
       return rows.map((row) => row.agent_id);
     },
 
@@ -1034,6 +1075,8 @@ export function openStore(home: string) {
       db.prepare("update messages set status = 'done' where status = 'running' and switched is not null").run();
       db.prepare("update messages set status = 'queued' where status = 'running'").run();
       db.prepare(`update messages set ask = 'unanswered' where ask = 'waiting' and not ${SUGGESTION}`).run();
+      // A job's run that a stopped server left running failed. A job whose time had come runs again, as its next run was still to be worked out.
+      db.prepare("update jobs set last_run_status = 'failed', last_run_error = 'Sidebots stopped while it ran.', run_count = run_count + 1 where last_run_status = 'running'").run();
       // A message one agent sent another waits in the other's queue. A suggestion the person started waits in its own agent's.
       const rows = db.prepare("select distinct iif(ask is null, coalesce(peer_id, agent_id), agent_id) as agent_id from messages where status = 'queued'").all() as { agent_id: string }[];
       return rows.map((row) => row.agent_id);

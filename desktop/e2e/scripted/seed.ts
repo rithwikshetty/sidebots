@@ -6,9 +6,9 @@
 
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { CONNECTIONS, PROVIDERS, fenced, type Agent, type Ask, type Effort, type Model, type Provider, type Question, type Schedule, type Selection, type Status, type TurnKind } from "../../../server/src/contract.ts";
+import { CONNECTIONS, PROVIDERS, fenced, nextRun, type Agent, type Ask, type Effort, type Model, type Provider, type Question, type Schedule, type Selection, type Status, type TurnKind } from "../../../server/src/contract.ts";
 import { question as claudeQuestion } from "../../../server/src/claude.ts";
-import { nextRun, switchedWords } from "../../../server/src/runner.ts";
+import { switchedWords } from "../../../server/src/runner.ts";
 import type { Extras, Person, Store } from "../../../server/src/store.ts";
 import { PAGES, budget, invoice, packingList, picture, tickets, type Made } from "./files.ts";
 import { askFor, planLimits, type Action } from "./script.ts";
@@ -408,7 +408,7 @@ export function seed(store: Store, person: Person, now = Date.now()): Seeded {
   plannerChat.person("Hi Planner! Every weekday morning, send me a short brief of the day", {}, 0);
   const brief = { id: "" };
   const parcel = { id: "" };
-  later(plannerChat.when() + 30_000, () => (brief.id = store.addJob(planner.id, "Send Tester the morning brief: today's calendar, the weather, and anything due. Keep it to five lines.", weekdays, nextRun(weekdays, now)!).id));
+  later(plannerChat.when() + 30_000, () => (brief.id = store.addJob(planner.id, { title: "Morning brief", what: "Send Tester the morning brief: today's calendar, the weather, and anything due. Keep it to five lines.", schedule: weekdays, enabled: true }, nextRun(weekdays, now)).id));
   plannerChat.agent("Will do. You'll get it at 7:30 on weekdays: calendar, weather and anything due.");
   for (let offset = -5; offset <= 0; offset++) {
     if (day(offset, 7, 30) > now) continue;
@@ -416,11 +416,11 @@ export function seed(store: Store, person: Person, now = Date.now()): Seeded {
   }
   plannerChat.at(day(-3, 12, 40));
   plannerChat.person("Also keep an eye on the Habitat parcel", {}, 0);
-  later(plannerChat.when() + 30_000, () => (parcel.id = store.addJob(planner.id, "Check the Habitat parcel's tracking page. Tell Tester only when it changes.", { type: "every", minutes: 120 }, now + 47 * MINUTE).id));
+  later(plannerChat.when() + 30_000, () => (parcel.id = store.addJob(planner.id, { title: "Habitat parcel", what: "Check the Habitat parcel's tracking page. Tell Tester only when it changes.", schedule: { type: "every", minutes: 120 }, enabled: true }, now + 47 * MINUTE).id));
   plannerChat.agent("I'll check its tracking every two hours and only message you when it changes.");
   later(day(-1, 11, 2), () => store.addMessage(planner.id, "agent", "Your Habitat parcel is out for delivery, due between 1 and 3pm.", "done", { jobId: parcel.id }));
   plannerChat.at(day(-1, 12, 0)).person("Remind me to submit my timesheet on Friday at 5", {}, 0);
-  later(plannerChat.when() + 30_000, () => store.addJob(planner.id, "Remind Tester to submit the timesheet before the weekend.", { type: "once", at: friday.getTime() }, friday.getTime()));
+  later(plannerChat.when() + 30_000, () => store.addJob(planner.id, { title: "Timesheet", what: "Remind Tester to submit the timesheet before the weekend.", schedule: { type: "once", at: friday.getTime() }, enabled: true }, friday.getTime()));
   plannerChat.agent("Okay, Friday at 5 I'll remind you.");
   later(ago(1), () => store.markRead(planner.id));
 
