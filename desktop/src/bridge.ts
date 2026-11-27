@@ -40,7 +40,7 @@ export type Notice = { title: string; body: string; agentId: string; messageId: 
 export type OpenChat = { agentId: string; messageId: string };
 
 /** What the app menu asks the window to do. */
-export type MenuAction = "new-agent" | "settings" | "toggle-sidebar" | "search";
+export type MenuAction = "new-agent" | "settings" | "toggle-sidebar" | "search" | "write";
 
 export type Desktop = {
   /** The system the app runs on, as Node names it: `darwin` for a Mac, `win32` for Windows. */

@@ -67,6 +67,11 @@ export function shortcut(key: string): string[] {
   return mac ? ["⌘", key] : ["Ctrl", key];
 }
 
+/** Whether a key went to somewhere the person types, as a field is, where the keys are theirs to write with. */
+export function typing(target: EventTarget | null): boolean {
+  return target instanceof HTMLElement && (target.isContentEditable || ["INPUT", "TEXTAREA", "SELECT"].includes(target.tagName));
+}
+
 /** Whether a key was pressed with the system's command key: ⌘ on a Mac, Ctrl elsewhere. */
 export function withCommand(event: KeyboardEvent | ReactKeyboardEvent): boolean {
   return mac ? event.metaKey && !event.ctrlKey : event.ctrlKey && !event.metaKey;

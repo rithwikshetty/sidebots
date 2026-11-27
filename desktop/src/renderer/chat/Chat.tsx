@@ -6,7 +6,8 @@ import { preview } from "@client/messages.ts";
 import { workBeside } from "@client/suggestions.ts";
 import { changeOrSay, problem } from "../lib/alerts.ts";
 import { markRead, send, stop, useAgent, useMessages, useOnline } from "../lib/store.ts";
-import { useLooking } from "../lib/view.ts";
+import { useLooking, useWrites } from "../lib/view.ts";
+import { typing } from "../lib/window.ts";
 import { ChatBar } from "./ChatBar.tsx";
 import { Composer } from "./Composer.tsx";
 import { withAdded } from "./files.ts";
@@ -95,12 +96,15 @@ function ChatWith({ agent }: { agent: AgentWithLatest }) {
 
   const onStop = () => void stop(agent.id).catch((failure) => problem("Couldn't stop", failure));
 
-  // The field takes focus as the chat opens, and typing anywhere in the window with nothing focused goes to it.
+  // The field takes the cursor as the chat opens, and each time the person asks to write.
+  const writes = useWrites();
+  useEffect(() => field.current?.focus(), [writes]);
+
+  // What the person types anywhere in the window goes to the field, unless it went somewhere they type, or to what floats over the window, as a dialog and a menu do. Space stays where it went, since it presses the button that has focus.
   useEffect(() => {
-    field.current?.focus();
     const typed = (event: globalThis.KeyboardEvent) => {
-      if (event.defaultPrevented || event.metaKey || event.ctrlKey || event.altKey || event.key.length !== 1) return;
-      if (document.activeElement && document.activeElement !== document.body) return;
+      if (event.defaultPrevented || event.metaKey || event.ctrlKey || event.altKey || event.key.length !== 1 || event.key === " ") return;
+      if (typing(event.target) || (event.target instanceof Element && event.target.closest("[data-floating]"))) return;
       field.current?.focus();
     };
     window.addEventListener("keydown", typed);

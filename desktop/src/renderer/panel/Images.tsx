@@ -4,6 +4,7 @@ import { fileName } from "@client/files.ts";
 import { attachmentUrl, openFile, saveFile } from "../chat/files.ts";
 import { cn } from "../lib/cn.ts";
 import { openPanel } from "../lib/view.ts";
+import { typing } from "../lib/window.ts";
 import { IconButton } from "../ui/Button.tsx";
 import { EmptyState } from "../ui/EmptyState.tsx";
 import { Spinner } from "../ui/Spinner.tsx";
@@ -80,11 +81,6 @@ export function Images({ view }: { view: ImagesView }) {
       ) : null}
     </div>
   );
-}
-
-/** Whether a key went to somewhere the person types, where the arrow keys move through their words. */
-function typing(target: EventTarget | null): boolean {
-  return target instanceof HTMLElement && (target.isContentEditable || ["INPUT", "TEXTAREA", "SELECT"].includes(target.tagName));
 }
 
 /** A round button at one side of the picture, over it. */

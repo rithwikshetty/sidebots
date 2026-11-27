@@ -1,10 +1,10 @@
 import { useEffect, useRef } from "react";
 import type { MenuAction } from "../../bridge.ts";
 import { useAgents } from "../lib/store.ts";
-import { closeNewAgent, closeSettings, openChat, openNewAgent, openSearch, openSettings, toggleSidebar } from "../lib/view.ts";
+import { closeNewAgent, closeSettings, openChat, openNewAgent, openSearch, openSettings, toggleSidebar, write } from "../lib/view.ts";
 import { withCommand } from "../lib/window.ts";
 
-/** What each item of the app menu does in the window. The menu holds their shortcuts: ⌘N, ⌘, ⌘B and ⌘K on a Mac, with Ctrl elsewhere. */
+/** What each item of the app menu does in the window. The menu holds their shortcuts: ⌘N, ⌘, ⌘B, ⌘K and ⌘/ on a Mac, with Ctrl elsewhere. */
 const MENU: Record<MenuAction, () => void> = {
   "new-agent": () => {
     closeSettings();
@@ -16,6 +16,7 @@ const MENU: Record<MenuAction, () => void> = {
   },
   "toggle-sidebar": toggleSidebar,
   search: openSearch,
+  write,
 };
 
 /**

@@ -25,6 +25,7 @@ export function setMenu(run: (action: MenuAction) => void, development: boolean)
       submenu: [
         { label: "Toggle Sidebar", accelerator: "CmdOrCtrl+B", click: () => run("toggle-sidebar") },
         { label: "Search", accelerator: "CmdOrCtrl+K", click: () => run("search") },
+        { label: "Write a Message", accelerator: "CmdOrCtrl+/", click: () => run("write") },
         { type: "separator" },
         { role: "resetZoom" },
         { role: "zoomIn" },
