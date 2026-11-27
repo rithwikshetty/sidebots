@@ -15,7 +15,8 @@
 // agents; the default) or "nobody"; `serverStarted: false` leaves the server
 // unstarted, for a test of the app with no server; `ready: false` hands over
 // `page` without waiting for `data-phase="ready"`; `pause` is how long a
-// plain reply takes, in milliseconds.
+// plain reply takes, in milliseconds; `welcome` opens the app as the menu bar
+// app does when setup ends for someone new.
 //
 // The packaged app's build folder is shared, so take the lock around a run
 // that opens the app, as playwright.config.ts says. Tests that use only
@@ -51,7 +52,7 @@ export type TestServer = {
   output(): string;
 };
 
-type Options = { world: World; serverStarted: boolean; ready: boolean; pause: number };
+type Options = { world: World; serverStarted: boolean; ready: boolean; pause: number; welcome: boolean };
 type Fixtures = {
   home: string;
   server: TestServer;
@@ -77,6 +78,7 @@ export const test = base.extend<Fixtures & Options & { current: Current }>({
   serverStarted: [true, { option: true }],
   ready: [true, { option: true }],
   pause: [150, { option: true }],
+  welcome: [false, { option: true }],
 
   home: async ({}, use) => {
     const home = mkdtempSync(join(tmpdir(), "sidebots-e2e-"));
@@ -127,8 +129,8 @@ export const test = base.extend<Fixtures & Options & { current: Current }>({
     if (current.app) await closeApp(current.app);
   },
 
-  electronApp: async ({ server, current }, use) => {
-    current.app = await launchApp({ home: server.home, port: server.port });
+  electronApp: async ({ server, current, welcome }, use) => {
+    current.app = await launchApp({ home: server.home, port: server.port, welcome });
     await use(current.app);
   },
 

@@ -51,7 +51,7 @@ export function Connections() {
  * browser, the row says so, and Cancel stops waiting for it. A sign-in the
  * person still finishes after that connects the app all the same.
  */
-function ConnectionRow({ connected }: { connected: Connected }) {
+export function ConnectionRow({ connected }: { connected: Connected }) {
   const [waiting, setWaiting] = useState(false);
   // Each Connect is a new wait, so one that was cancelled says nothing when it ends.
   const wait = useRef(0);

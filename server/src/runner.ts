@@ -336,38 +336,48 @@ export function nextRun(schedule: Schedule, after: number): number | null {
 
 /**
  * Makes the agent a person starts with, as they are added, on the provider
- * they were set up on: Ruby, who briefs them every morning at 8. It starts with that as what it is for, with the
- * job that does it, and with a first message that says so and how to change it.
- * Under that message it suggests the two apps a brief reads, each as a card
- * that connects the app, after which Ruby says what it now sees there.
+ * they were set up on: Ruby, who briefs them every morning at `brief`, a time
+ * of day as `08:00`. It starts with that as what it is for, with the job that
+ * does it, and with a first message that says so and how to change it. With
+ * no `brief`, Ruby has no job and is there for whatever the person asks.
+ * Under the first message it suggests the two apps a brief reads, each as a
+ * card that connects the app, after which Ruby says what it now sees there.
  */
-export function addFirstAgent(store: Store, person: Person, now = Date.now()): Agent {
-  const schedule: Schedule = { type: "daily", time: "08:00" };
-  const agent = store.createAgent(
-    person,
-    "Ruby",
-    "cog",
-    store.accounts(person.id)[0].provider,
-    `You brief ${person.name} every morning on what their day holds and what needs them, by a job you start with, and you help with whatever else they ask. When they tell you more of what they want from you, write it into this file.`,
-  );
-  store.addJob(
-    agent.id,
-    `Brief ${person.name} on their day. Read today's calendar, the mail that has come since your last brief and needs an answer from them, and what is due in Notion, from whichever of those you have tools for. Lead with the one or two things that most need them today, then the rest in a few short lines. When something in it is work you could do for them, offer it with \`suggest\`. When you have tools for none of them, tell ${person.name} once that saying "connect my calendar" or "connect my Gmail" gives you their day to brief them on, note in your memory that you told them, and stay silent on later runs until you have one.`,
-    schedule,
-    nextRun(schedule, now)!,
-  );
-  store.addMessage(
-    agent.id,
-    "agent",
-    `Hi, I'm Ruby. Every morning at 8 I'll send you a short brief: what's on today, and what needs you.\n\nFor that I need to see your day. Connect your calendar or your Gmail below, or say "connect my calendar" and I'll set it up.\n\nWant another time, or no brief at all? Tell me. And I can help with other things too, so ask.`,
-    "done",
-  );
+export function addFirstAgent(store: Store, person: Person, brief: string | null = "08:00", now = Date.now()): Agent {
+  const provider = store.accounts(person.id)[0].provider;
+  const learns = "When they tell you more of what they want from you, write it into this file.";
+  const connect = `Connect your calendar or your Gmail below, or say "connect my calendar" and I'll set it up.`;
+  let agent: Agent;
+  if (brief) {
+    const schedule: Schedule = { type: "daily", time: brief };
+    agent = store.createAgent(person, "Ruby", "cog", provider, `You brief ${person.name} every morning on what their day holds and what needs them, by a job you start with, and you help with whatever else they ask. ${learns}`);
+    store.addJob(
+      agent.id,
+      `Brief ${person.name} on their day. Read today's calendar, the mail that has come since your last brief and needs an answer from them, and what is due in Notion, from whichever of those you have tools for. Lead with the one or two things that most need them today, then the rest in a few short lines. When something in it is work you could do for them, offer it with \`suggest\`. When you have tools for none of them, tell ${person.name} once that saying "connect my calendar" or "connect my Gmail" gives you their day to brief them on, note in your memory that you told them, and stay silent on later runs until you have one.`,
+      schedule,
+      nextRun(schedule, now)!,
+    );
+    store.addMessage(
+      agent.id,
+      "agent",
+      `Hi, I'm Ruby. Every morning at ${timeWords(brief)} I'll send you a short brief: what's on today, and what needs you.\n\nFor that I need to see your day. ${connect}\n\nWant another time, or no brief at all? Tell me. And I can help with other things too, so ask.`,
+      "done",
+    );
+  } else {
+    agent = store.createAgent(person, "Ruby", "cog", provider, `You help ${person.name} with whatever they ask. ${learns}`);
+    store.addMessage(agent.id, "agent", `Hi, I'm Ruby. Ask me for anything. When you want something done every day or every week, tell me and I'll do it by myself.\n\nI can do more once I see your day. ${connect}`, "done");
+  }
   const sees: [Connection, string][] = [
     ["calendar", `Google Calendar is connected now. Read today's and tomorrow's events and tell ${person.name} what is on, in a few short lines.`],
     ["gmail", `Gmail is connected now. Read the mail of the last few days that needs an answer from ${person.name} and tell them what there is, in a few short lines.`],
   ];
   for (const [connection, detail] of sees) suggest(store, agent.id, suggestion(`Connect ${CONNECTIONS[connection].name}`, detail, CONNECTIONS[connection].allows, connection));
   return agent;
+}
+
+/** A time of day as it is said in a sentence: `08:00` is "8", and `07:30` is "7:30". */
+export function timeWords(time: string): string {
+  return time.replace(/^0/, "").replace(/:00$/, "");
 }
 
 /** What the agent is asked on a run of one of its jobs. */

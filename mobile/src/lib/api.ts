@@ -46,6 +46,7 @@ function kept(): { host: string; key: string; machine: string | null } | null {
 
 let pairing = kept();
 let removed = Storage.getItemSync(REMOVED_KEY) !== null;
+let fresh = false;
 const listeners = new Set<() => void>();
 
 /** Calls `listener` when the phone pairs with a computer or loses its pairing. Returns a function that stops it. */
@@ -87,7 +88,7 @@ export async function requestPairing({ host, code }: { host: string; code: strin
   return { host, ...paired };
 }
 
-/** Keeps a pairing, from which point every call goes to that computer. */
+/** Keeps a pairing, from which point every call goes to that computer. The phone is fresh until the person has seen what it paired with. */
 export function keepPairing({ host, key, notificationKey, machine }: Pairing): void {
   Storage.setItemSync(HOST_KEY, host);
   Storage.setItemSync(MACHINE_KEY, machine);
@@ -96,6 +97,18 @@ export function keepPairing({ host, key, notificationKey, machine }: Pairing): v
   Storage.removeItemSync(REMOVED_KEY);
   pairing = { host, key, machine };
   removed = false;
+  fresh = true;
+  listeners.forEach((listener) => listener());
+}
+
+/** Whether the phone has just paired, and the person hasn't yet seen what with. It lasts until they have, or until the app next starts. */
+export function useFresh(): boolean {
+  return useSyncExternalStore(onPairing, () => fresh);
+}
+
+/** The person has seen what the phone paired with. */
+export function greeted(): void {
+  fresh = false;
   listeners.forEach((listener) => listener());
 }
 

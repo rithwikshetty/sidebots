@@ -47,6 +47,8 @@ export type Desktop = {
   platform: string;
   /** The app's version. */
   version: string;
+  /** Whether the app was opened as setup ended for someone new, who is then shown what comes after it. */
+  welcome: boolean;
 
   /** Whether the window fills the screen, when the title bar leaves no room for the window's buttons. */
   fullScreen(): boolean;
@@ -129,7 +131,7 @@ export const CHANNELS = {
 export const TOP_BAR = 52;
 
 /** What the preload reads before the window's first script runs. */
-export type Startup = { version: string; fullScreen: boolean };
+export type Startup = { version: string; fullScreen: boolean; welcome: boolean };
 
 declare global {
   interface Window {

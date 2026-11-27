@@ -116,7 +116,7 @@ enum SignIn {
   /// The port the server listens on, on 127.0.0.1.
   nonisolated private static let port = environment["PORT"] ?? "4317"
 
-  /// The person the app sets up, named as the computer knows its user.
+  /// The computer's name for its user, which setup offers as what their agents call them.
   static let personName = NSFullUserName().isEmpty ? NSUserName() : NSFullUserName()
 
   /// The one person the app looks after: the first on the server.
@@ -274,12 +274,12 @@ enum SignIn {
     await findPrograms()
   }
 
-  /// Sets up the person the app looks after on a provider, or changes how their agents sign in to it.
-  func setUp(_ provider: Provider, _ signIn: SignIn, configDir: String) async throws {
+  /// Sets up the person the app looks after on a provider, or changes how their agents sign in to it. Someone new is added as `called`, with Ruby's morning brief at `brief`, a time of day or `off`.
+  func setUp(_ provider: Provider, _ signIn: SignIn, configDir: String, called: String, brief: String) async throws {
     let person = self.person
-    let name = person?.name ?? Self.personName
+    let name = person?.name ?? (called.isEmpty ? Self.personName : called)
     if person == nil {
-      try await command(["add-person", name, provider.rawValue, configDir])
+      try await command(["add-person", name, provider.rawValue, configDir, "--brief", brief])
     } else if account(provider) == nil {
       try await command(["add-account", name, provider.rawValue, configDir])
     }

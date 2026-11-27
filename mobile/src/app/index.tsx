@@ -1,8 +1,9 @@
 import { useEffect } from "react";
 import { StyleSheet, Text, View } from "react-native";
-import { usePathname } from "expo-router";
+import { usePathname, useRouter } from "expo-router";
 import { AgentList } from "@/components/AgentList";
 import { useActivities } from "@/lib/activity";
+import { useFresh } from "@/lib/api";
 import { useSplit } from "@/lib/layout";
 import { openLastChat, useChatOnScreen, usePush } from "@/lib/push";
 import { useAgents, useBehind } from "@/lib/state";
@@ -11,6 +12,7 @@ import { useTheme } from "@/lib/theme";
 /**
  * The home screen: the chat's side of the window with no chat open. It stays
  * under every chat, so it keeps the app's notifications and Live Activities.
+ * A phone that has just paired first shows what it paired with.
  * In a window of one column it opens the chat the person was last in, or
  * their first agent's, unless a chat is already on its way, as one a
  * notification's tap opens. So it shows only while there is no chat to open,
@@ -29,9 +31,13 @@ export default function Home() {
   const open = useChatOnScreen();
   // While a sheet or a chat is over it, the home screen opens nothing.
   const inFront = usePathname() === "/";
+  const router = useRouter();
+  const fresh = useFresh();
   useEffect(() => {
-    if (inFront && !split && !behind && !open) openLastChat(agents);
-  }, [inFront, split, behind, open, agents]);
+    if (!inFront) return;
+    if (fresh) router.push("/paired");
+    else if (!split && !behind && !open) openLastChat(agents);
+  }, [inFront, fresh, router, split, behind, open, agents]);
   return split ? <BesideAgents /> : <AgentList />;
 }
 

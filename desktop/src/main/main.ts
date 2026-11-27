@@ -43,7 +43,8 @@ async function start(): Promise<void> {
 
   const window = createWindow({ preload: join(app.getAppPath(), ".vite", "build", "preload.cjs"), userData, quitting: () => quitting, pageLink: (address) => handlers.pageLink(address) });
   const watch = watchConnection(host, pairing, (connection) => tell(window, CHANNELS.changeConnection, connection));
-  answerWindow({ window, host, watch, key: pairing.key, fetch, userData });
+  // The menu bar app opens this one with `SIDEBOTS_WELCOME` as it finishes setting someone new up.
+  answerWindow({ window, host, watch, key: pairing.key, fetch, userData, welcome: process.env.SIDEBOTS_WELCOME === "1" });
   refusePermissions();
   setMenu((action) => {
     show(window);

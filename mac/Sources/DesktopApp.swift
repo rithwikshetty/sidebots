@@ -26,13 +26,15 @@ import AppKit
 
   /// Opens the window: starts the app, or brings its window forward when it runs.
   /// It gets the `PORT`, `SIDEBOTS_HOME` and `SIDEBOTS_RELAY` the server gets, so it reaches the same server.
+  /// With `welcome`, as setup ends for someone new, an app it starts first shows what comes after setup.
   /// It does nothing once `quit` has been called.
-  static func open() {
+  static func open(welcome: Bool = false) {
     guard bundled, !quitting else { return }
     let configuration = NSWorkspace.OpenConfiguration()
     configuration.allowsRunningApplicationSubstitution = false
     configuration.addsToRecentItems = false
     configuration.environment = Server.environment.filter { ["PORT", "SIDEBOTS_HOME", "SIDEBOTS_RELAY"].contains($0.key) }
+    if welcome { configuration.environment["SIDEBOTS_WELCOME"] = "1" }
     launching += 1
     NSWorkspace.shared.openApplication(at: url, configuration: configuration) { @Sendable _, _ in
       Task { @MainActor in launching -= 1 }

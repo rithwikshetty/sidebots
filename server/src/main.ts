@@ -19,7 +19,7 @@ import qrcode from "qrcode-terminal";
 import { openStore, type Person } from "./store.ts";
 import { CONTRACT_HEADER, PROVIDERS, avatarStateOf, type Provider } from "./contract.ts";
 import { createConnections } from "./connections.ts";
-import { addFirstAgent, createQueue } from "./runner.ts";
+import { addFirstAgent, createQueue, timeWords } from "./runner.ts";
 import { claude } from "./claude.ts";
 import { codex } from "./codex.ts";
 import { PROGRAMS, configDir, install, installed, login, signIn } from "./programs.ts";
@@ -33,7 +33,7 @@ const port = Number(process.env.PORT ?? 4317);
 const store = openStore(home);
 const { values: options, positionals } = parseArgs({
   args: process.argv.slice(3),
-  options: { host: { type: "string" }, days: { type: "string" }, remove: { type: "boolean" }, json: { type: "boolean" } },
+  options: { host: { type: "string" }, days: { type: "string" }, brief: { type: "string" }, remove: { type: "boolean" }, json: { type: "boolean" } },
   allowPositionals: true,
 });
 
@@ -58,8 +58,10 @@ function providerNamed(id: string | undefined): Provider {
 
 if (process.argv[2] === "add-person") {
   const [name, providerId, configDir] = positionals;
-  if (!name || !configDir) {
-    console.error("usage: node src/main.ts add-person <name> <provider> <config-dir>");
+  // When Ruby sends the morning brief, as `07:30`, or `off` for a Ruby with no brief.
+  const brief = options.brief ?? "08:00";
+  if (!name || !configDir || !/^(off|([01]\d|2[0-3]):[0-5]\d)$/.test(brief)) {
+    console.error("usage: node src/main.ts add-person <name> <provider> <config-dir> [--brief <when-the-morning-brief-comes>]. `--brief` is a time of day as 07:30, or `off` for no brief. Without it, the brief comes at 08:00.");
     process.exit(1);
   }
   const provider = providerNamed(providerId);
@@ -68,8 +70,8 @@ if (process.argv[2] === "add-person") {
     process.exit(1);
   }
   const person = store.addPerson({ name, provider, configDir });
-  const first = addFirstAgent(store, person);
-  console.log(`Added ${person.name}, whose agents run on ${PROVIDERS[provider].name}. They start with ${first.name}, who briefs them every morning at 8.`);
+  const first = addFirstAgent(store, person, brief === "off" ? null : brief);
+  console.log(`Added ${person.name}, whose agents run on ${PROVIDERS[provider].name}. They start with ${first.name}${brief === "off" ? "" : `, who briefs them every morning at ${timeWords(brief)}`}.`);
   process.exit(0);
 }
 

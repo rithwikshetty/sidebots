@@ -2,15 +2,19 @@ import SwiftUI
 
 /// The window that sets the person up on a provider and asks how their agents
 /// sign in to it: on first run, when they add another provider, and again
-/// from the menu to change it. On first run they turn on Full Disk Access
-/// first, when the app hasn't it, then pick the provider. A provider whose
-/// program isn't on this Mac is installed first, by the person or by its
-/// maker's installer.
+/// from the menu to change it. On first run it opens on a welcome that asks
+/// what their agents should call them, then shows Ruby, the agent they start
+/// with, and asks when its morning brief should come. They then turn on Full
+/// Disk Access, when the app hasn't it, and pick the provider. A provider
+/// whose program isn't on this Mac is installed first, by the person or by
+/// its maker's installer.
 struct SetupView: View {
   let server: Server
   let done: () -> Void
 
   private enum Step {
+    case welcome
+    case ruby
     case picking
     case checking
     case missing
@@ -28,12 +32,21 @@ struct SetupView: View {
   @State private var key = ""
   @State private var code = ""
   @State private var problem: String?
+  /// What the person's agents call them, and when Ruby's brief comes, as `08:00`, or `off`. Both are kept until the person is set up, since macOS reopens the app to give it Full Disk Access.
+  @AppStorage(Self.nameKey) private var name = ""
+  @AppStorage(Self.briefKey) private var brief = "08:00"
+  @State private var called: String
+
+  private static let (nameKey, briefKey) = ("setup.name", "setup.brief")
 
   init(server: Server, provider: Provider?, done: @escaping () -> Void) {
     self.server = server
     self.done = done
     _provider = State(initialValue: provider)
-    _step = State(initialValue: provider != nil ? .checking : FullDiskAccess.granted ? .picking : .files)
+    let greeted = server.person != nil || UserDefaults.standard.string(forKey: Self.nameKey) != nil
+    _step = State(initialValue: provider != nil ? .checking : !greeted ? .welcome : FullDiskAccess.granted ? .picking : .files)
+    // The name the computer knows its user by, without the family name.
+    _called = State(initialValue: PersonNameComponentsFormatter().personNameComponents(from: Server.personName)?.givenName ?? Server.personName)
   }
 
   /// How the person's agents sign in to the provider now, when they have set it up.
@@ -49,6 +62,10 @@ struct SetupView: View {
     VStack(spacing: 20) {
       header
       switch step {
+      case .welcome:
+        welcome
+      case .ruby:
+        ruby
       case .picking:
         providers
       case .checking:
@@ -88,7 +105,11 @@ struct SetupView: View {
 
   private var header: some View {
     VStack(spacing: 8) {
-      Image(nsImage: NSApp.applicationIconImage).resizable().frame(width: 72, height: 72)
+      if case .ruby = step {
+        Sprite(avatar: "cog").frame(height: 72)
+      } else {
+        Image(nsImage: NSApp.applicationIconImage).resizable().frame(width: 72, height: 72)
+      }
       Text(title).font(.title2.bold())
       Text(words)
         .multilineTextAlignment(.center)
@@ -99,6 +120,8 @@ struct SetupView: View {
 
   private var title: String {
     if case .files = step { return "Let agents open your files" }
+    if case .welcome = step { return "Welcome to Sidebots" }
+    if case .ruby = step { return "Meet Ruby, your first agent" }
     if server.person == nil { return "Set up Sidebots" }
     guard let provider else { return "Sidebots" }
     return account == nil ? "Set up \(provider.name)" : "How your agents sign in"
@@ -107,6 +130,8 @@ struct SetupView: View {
   /// What the window asks, under its title.
   private var words: String {
     if case .files = step { return "The first time an agent opens Documents, Desktop, Downloads or a drive, macOS asks on this Mac, and the agent waits until someone answers here. With Full Disk Access your agents open them without asking." }
+    if case .welcome = step { return "Your own agents, on your own computer. Give one a job, and it tells you when it's done." }
+    if case .ruby = step { return "Ruby briefs you every morning on what your day holds and what needs you, and helps with anything else you ask. You can make more agents later." }
     guard let provider else { return "Your agents run on this computer, on a program of your own that you sign in to yourself. Choose the one your agents start on. You can set up the other later." }
     if case .missing = step, let program {
       guard let version = program.version else { return "\(provider.name) isn't on this Mac. Your agents run on the \(provider.name) you install, and Sidebots carries none of its own." }
@@ -117,6 +142,48 @@ struct SetupView: View {
     let key = if case .choosing(let login?) = step, account.signIn == "login" { login.apiKey } else { server.billsKey(provider) }
     let now = key ? "They use an API key now." : "They use your \(provider.account) plan now."
     return "Your agents on \(provider.name) run on this computer. \(now) Choose how they sign in to \(provider.account)."
+  }
+
+  /// The first step of first run: what the person's agents call them.
+  private var welcome: some View {
+    VStack(spacing: 12) {
+      Text("What should your agents call you?").foregroundStyle(.secondary)
+      TextField("Your name", text: $called).textFieldStyle(.roundedBorder).multilineTextAlignment(.center).frame(width: 220).onSubmit(greet)
+      Button("Get started", action: greet).keyboardShortcut(.defaultAction).controlSize(.large).disabled(typed.isEmpty)
+    }
+  }
+
+  /// The name as it is kept. It is an argument of the server's commands, where one that starts with a hyphen reads as an option.
+  private var typed: String { called.trimmingCharacters(in: .whitespaces.union(CharacterSet(charactersIn: "-"))) }
+
+  private func greet() {
+    guard !typed.isEmpty else { return }
+    step = .ruby
+  }
+
+  /// The agent the person starts with, and when its morning brief comes.
+  private var ruby: some View {
+    VStack(spacing: 12) {
+      Text("Send the morning brief at").foregroundStyle(.secondary)
+      Picker("Send the morning brief at", selection: $brief) {
+        Text("7:00").tag("07:00")
+        Text("8:00").tag("08:00")
+        Text("9:00").tag("09:00")
+        Text("No brief").tag("off")
+      }
+      .pickerStyle(.segmented).labelsHidden().frame(width: 300)
+      HStack {
+        Button("Back") { step = .welcome }
+        Spacer()
+        Button("Continue") {
+          // Both answers are kept from here, so setup that is opened again goes on past these two steps.
+          name = typed
+          step = FullDiskAccess.granted ? .picking : .files
+        }
+        .keyboardShortcut(.defaultAction)
+      }
+      .padding(.top, 8)
+    }
   }
 
   private var providers: some View {
@@ -301,11 +368,32 @@ struct SetupView: View {
     step = .saving
     Task {
       do {
-        try await server.setUp(provider, signIn, configDir: configDir(provider))
+        try await server.setUp(provider, signIn, configDir: configDir(provider), called: name, brief: brief)
+        for key in [Self.nameKey, Self.briefKey] { UserDefaults.standard.removeObject(forKey: key) }
         done()
       } catch {
         await check()
         problem = error.localizedDescription
+      }
+    }
+  }
+}
+
+/// An avatar from the app's starter avatars, playing the animation it has for a reply that has just come. The sheet is laid out as `AVATAR_SHEET` in server/src/contract.ts says.
+private struct Sprite: View {
+  private let sheet: CGImage?
+  private static let (cell, art, row, frames) = (CGSize(width: 192, height: 208), CGRect(x: 24, y: 39, width: 144, height: 153), 2, 6)
+
+  init(avatar: String) {
+    sheet = NSImage(contentsOf: Bundle.main.resourceURL!.appending(path: "avatars/\(avatar)/spritesheet.png"))?.cgImage(forProposedRect: nil, context: nil, hints: nil)
+  }
+
+  var body: some View {
+    TimelineView(.periodic(from: .now, by: 0.3)) { time in
+      let frame = Int(time.date.timeIntervalSinceReferenceDate / 0.3) % Self.frames
+      let shown = Self.art.offsetBy(dx: CGFloat(frame) * Self.cell.width, dy: CGFloat(Self.row) * Self.cell.height)
+      if let drawn = sheet?.cropping(to: shown) {
+        Image(decorative: drawn, scale: 1).interpolation(.none).resizable().aspectRatio(contentMode: .fit)
       }
     }
   }
