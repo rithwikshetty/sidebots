@@ -251,7 +251,7 @@ const said = (words: string, success = true) => ({ contentItems: [{ type: "input
  * stopped. The thread stays whole, so the next turn resumes it.
  */
 const runTurn = (start: () => Promise<Start>): RunTurn => async (turn) => {
-  const { prompt, followUps, seen, replied, ask, limits, cwd, sessionId, spent, configDir, apiKey, model, effort, fast, keepSession, stop } = turn;
+  const { prompt, followUps, seen, replied, ask, limits, compacted, cwd, sessionId, spent, configDir, apiKey, model, effort, fast, keepSession, stop } = turn;
   const codex = connect(await start(), configDir, apiKey !== undefined);
   // The thread the turn runs in, and whether Codex has anything of it to come back to: a new one is kept from its first turn.
   let threadId: string | null = null;
@@ -354,6 +354,7 @@ const runTurn = (start: () => Promise<Start>): RunTurn => async (turn) => {
       }
       // What the agent says as it works is not its answer.
       if (item.type === "agentMessage" && item.phase !== "commentary") answer = item.text ?? "";
+      if (item.type === "contextCompaction") compacted();
     });
     codex.on<{ turn: Ended }>("turn/completed", ({ turn: ended }) => finish(ended));
 

@@ -746,20 +746,54 @@ test("another model, effort or speed on the same provider keeps the session, and
   assert.deepEqual([turns[2].model, turns[2].fast], ["sonnet", false]);
 });
 
-test("a session that has grown large gets a fresh start by itself after its reply", async () => {
-  const sessions: (string | null)[] = [];
+test("a session its provider compacts is marked in the chat before the reply, and a job's own session is not", async () => {
+  let time = new Date(2026, 10, 16, 9, 0).getTime();
   const { queue, call, say } = setup(async (turn) => {
-    sessions.push(turn.sessionId);
-    return reply("ok", "big", 150_000);
-  });
+    if (turn.prompt.text === "watch the price") turn.scheduleJob({ what: "Check the price.", every_minutes: 5 });
+    turn.compacted();
+    return reply("ok");
+  }, () => time);
   const agent = (await call(ME, "POST", "/agents", { name: "Money", avatarId: "cog" })).json;
-  await say(ME, agent.id, "budget");
+  await say(ME, agent.id, "watch the price");
+  await queue.kick(agent.id);
+  time += 5 * 60_000;
   await queue.kick(agent.id);
 
-  assert.deepEqual(sessions, [null, "big"]);
-  assert.equal((await call(ME, "GET", "/agents")).json[0].session_id, null);
   const messages = (await call(ME, "GET", `/agents/${agent.id}/messages`)).json;
-  assert.deepEqual(messages.map((m: { body: string }) => m.body), ["budget", "ok", "Fresh start"]);
+  assert.deepEqual(messages.map((m: Message) => [m.sender, m.body, m.status]), [
+    ["person", "watch the price", "done"],
+    ["sidebots", "Compacted", "done"],
+    ["agent", "ok", "done"],
+    ["agent", "ok", "done"],
+  ]);
+});
+
+test("a large Claude Code session that has sat an hour is compacted before the next message's turn, and a smaller or fresher one is read as it is", async (t) => {
+  t.mock.timers.enable({ apis: ["Date"], now: new Date(2026, 10, 16, 9, 0) });
+  const prompts: string[] = [];
+  let held = 250_000;
+  const { queue, call, say } = setup(async (turn) => {
+    prompts.push(turn.prompt.text);
+    if (turn.prompt.text === "/compact") {
+      held = 30_000;
+      turn.compacted();
+    }
+    return reply("ok", "chat", held);
+  });
+  const agent = (await call(ME, "POST", "/agents", { name: "Money", avatarId: "cog" })).json;
+  const sayAfter = async (minutes: number, text: string) => {
+    t.mock.timers.tick(minutes * 60_000);
+    await say(ME, agent.id, text);
+    await queue.kick(agent.id);
+  };
+  await sayAfter(0, "budget");
+  await sayAfter(59, "and rent");
+  await sayAfter(60, "and savings");
+  await sayAfter(60, "and the deposit");
+
+  assert.deepEqual(prompts, ["budget", "and rent", "/compact", "and savings", "and the deposit"]);
+  const messages = (await call(ME, "GET", `/agents/${agent.id}/messages`)).json;
+  assert.deepEqual(messages.map((m: Message) => m.body), ["budget", "ok", "and rent", "ok", "and savings", "Compacted", "ok", "and the deposit", "ok"]);
 });
 
 test("a search, by an agent or from the app, reaches all of the person's chats and nobody else's", async () => {

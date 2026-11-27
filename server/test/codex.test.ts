@@ -106,6 +106,7 @@ function setup({ signedIn = true, keyLogin = false } = {}) {
     servers: async () => ({}),
     ask: async (question) => (asks.push(question), { allowed: true }),
     limits: (said) => limits.push(said),
+    compacted: () => undefined,
     ...rest,
   });
   /** What the driver asked of Codex, in order: each request's method and what it sent with it. */
@@ -161,6 +162,14 @@ test("a turn starts a thread with the agent's tools, on the newest model of its 
   assert.match(started.developerInstructions, /better seen than read/);
   const first = requests().find((each) => each.method === "turn/start")!.params;
   assert.deepEqual([first.effort, first.serviceTier], ["medium", "default"]);
+});
+
+test("a thread Codex compacts as the turn runs is told to the runner", async () => {
+  const { driver, turn, replies } = setup();
+  let compacted = 0;
+  await driver.runTurn(turn("long", { compacted: () => void compacted++ }));
+  await driver.runTurn(turn("hello", { compacted: () => void compacted++ }));
+  assert.deepEqual([compacted, replies.length], [1, 2]);
 });
 
 test("a fast turn asks Codex for its model's fast tier", async () => {

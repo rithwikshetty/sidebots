@@ -89,6 +89,7 @@ const TABLE_CHANGES: (string | { table: string; change: string })[] = [
   `update jobs set what = replace(what, 'then the rest in a few short lines. When you have tools', 'then the rest in a few short lines. When something in it is work you could do for them, offer it with \`suggest\`. When you have tools') where what like 'Brief % on their day. Read today''s calendar, the mail that has come since your last brief and needs an answer from them, and what is due in Notion, from whichever of those you have tools for. Lead with the one or two things that most need them today, then the rest in a few short lines. When you have tools for none of them, tell % once that saying "connect my calendar" or "connect my Gmail" gives you their day to brief them on, note in your memory that you told them, and stay silent on later runs until you have one.'`,
   // A Codex session from before \`suggest\` gets a fresh start too, unless one waits for it already. A session on its way to another provider is replaced as it hands over.
   "insert into messages (id, agent_id, sender, body, status, created_at) select lower(hex(randomblob(16))), id, 'sidebots', 'Fresh start', 'queued', cast(unixepoch('subsec') * 1000 as integer) from agents where provider = 'codex' and coalesce(json_extract(ran_on, '$.provider'), provider) = 'codex' and session_id is not null and not exists (select 1 from messages where agent_id = agents.id and sender = 'sidebots' and status in ('queued', 'running'))",
+  { table: "usage", change: "alter table usage add column session_held integer" },
 ];
 
 const SCHEMA = `
@@ -170,7 +171,8 @@ create table if not exists usage (
   session_cost real not null,
   at           integer not null,
   tokens       integer not null default 0,
-  session_tokens integer
+  session_tokens integer,
+  session_held integer
 );
 create table if not exists limits (
   person_id  text not null references people(id),
@@ -692,14 +694,15 @@ export function openStore(home: string) {
     },
 
     /**
-     * What a session had cost in all, and the tokens it had used, as of the
-     * last turn recorded in it, or nothing when none is. The tokens are null
-     * when that turn was recorded without them.
+     * What a session had cost in all, the tokens it had used and how much it
+     * held, as of the last turn recorded in it, with when that turn ended, or
+     * nothing when none is. The tokens, and what it held, are null when that
+     * turn was recorded without them.
      */
-    sessionUsed(agentId: string, sessionId: string): { cost: number; tokens: number | null } | undefined {
-      return db.prepare("select session_cost as cost, session_tokens as tokens from usage where agent_id = ? and session_id = ? order by rowid desc limit 1").get(agentId, sessionId) as
-        | { cost: number; tokens: number | null }
-        | undefined;
+    sessionUsed(agentId: string, sessionId: string): { cost: number; tokens: number | null; held: number | null; at: number } | undefined {
+      return db
+        .prepare("select session_cost as cost, session_tokens as tokens, session_held as held, at from usage where agent_id = ? and session_id = ? order by rowid desc limit 1")
+        .get(agentId, sessionId) as { cost: number; tokens: number | null; held: number | null; at: number } | undefined;
     },
 
     /**
@@ -709,15 +712,16 @@ export function openStore(home: string) {
      * once the session's count has started again. `resumed` says the session
      * had turns before this one. When what they had used isn't recorded,
      * nobody can tell how much of the total is this turn's, and the turn is
-     * recorded as using nothing.
+     * recorded as using nothing. `contextTokens` is how much the session held
+     * as the turn ended, when the provider said.
      */
-    addUsage(agentId: string, kind: TurnKind, session: { sessionId: string; cost: number; tokens: number }, resumed: boolean): void {
+    addUsage(agentId: string, kind: TurnKind, session: { sessionId: string; contextTokens?: number; cost: number; tokens: number }, resumed: boolean): void {
       const last = this.sessionUsed(agentId, session.sessionId);
       const part = (total: number, recorded: number | null | undefined) => {
         const before = recorded ?? (resumed ? total : 0);
         return total >= before ? total - before : total;
       };
-      db.prepare("insert into usage (agent_id, kind, cost, session_id, session_cost, at, tokens, session_tokens) values (?, ?, ?, ?, ?, ?, ?, ?)").run(
+      db.prepare("insert into usage (agent_id, kind, cost, session_id, session_cost, at, tokens, session_tokens, session_held) values (?, ?, ?, ?, ?, ?, ?, ?, ?)").run(
         agentId,
         kind,
         part(session.cost, last?.cost),
@@ -726,6 +730,7 @@ export function openStore(home: string) {
         Date.now(),
         part(session.tokens, last?.tokens),
         session.tokens,
+        session.contextTokens ?? null,
       );
     },
 

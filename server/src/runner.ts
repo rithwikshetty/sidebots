@@ -78,6 +78,8 @@ export type Turn = {
   ask: (question: Question, withdrawn: AbortSignal) => Promise<Answer>;
   /** The provider says where limits of the person's plan stand. */
   limits: (limits: Limit[]) => void;
+  /** The provider compacted the session: it put a summary in the place of the oldest of what the session held, to make room. */
+  compacted: () => void;
 };
 /**
  * `contextTokens` is how much the session held when the turn ended. `cost` is
@@ -111,6 +113,14 @@ export type Driver = {
   failure: (words: string) => string;
   forget: (cwd: string, configDir: string) => void | Promise<void>;
   limits: (configDir: string, giveUp: AbortSignal) => Promise<Limit[] | null>;
+  /**
+   * For a provider that reads a session anew at the full price once it has
+   * sat a while: the message that has it compact the session before a turn
+   * in it, or null when the turn is to read the session as it is. `held` is
+   * what the session held after its last turn, `idleMs` how long ago that
+   * turn ended, and `onKey` whether the person pays by API key.
+   */
+  compactFirst?: (session: { held: number; idleMs: number; onKey: boolean }) => string | null;
 };
 /** A driver for each provider. */
 export type Drivers = Record<Provider, Driver>;
@@ -249,8 +259,8 @@ export function switchedWords({ from, to }: Switched): string {
 }
 /** What a stopped turn shows in the chat. */
 const STOPPED = "Stopped";
-// A session this large gets a fresh start once its reply is in.
-const FRESH_START_TOKENS = 120_000;
+/** What the chat shows where the agent's provider compacted its session. */
+const COMPACTED = "Compacted";
 // How many messages a session is shown that it hasn't seen: the chat so far for a new session, and what its own runs sent for one that is going.
 const RECENT_MESSAGES = 20;
 const RECENT_MESSAGE_CHARS = 1500;
@@ -575,6 +585,8 @@ export function createQueue(store: Store, drivers: Drivers, connections: Connect
           sendUpdate: rest.sendUpdate,
           ask,
           limits: (limits) => store.setLimits(person.id, on.provider, limits),
+          // The chat marks where its own session was compacted, which is why the reply that follows took longer.
+          compacted: () => void (rest.kind === "reply" && store.addMessage(agent.id, "sidebots", COMPACTED, "done")),
           cwd: store.agentHome(agent.id),
           sessionId,
           spent: { cost: before?.cost ?? 0, tokens: before?.tokens ?? 0 },
@@ -773,6 +785,18 @@ export function createQueue(store: Store, drivers: Drivers, connections: Connect
       const fromRuns = from || recent.length ? [] : store.sentByRuns(agent.id, RECENT_MESSAGES + 1);
       // The newest message the turn's prompt shows of the chat, which the session has been told of everything up to.
       const shown = (recent.length ? recent : fromRuns).at(-1);
+      // A large session that has sat too long is compacted first, in a turn of its own that answers nobody. The reply follows even when that turn fails.
+      const last = agent.session_id ? store.sessionUsed(agent.id, agent.session_id) : undefined;
+      const compact = last?.held != null ? driver.compactFirst?.({ held: last.held, idleMs: now() - last.at, onKey: apiKey !== undefined }) : null;
+      if (compact) {
+        await turn(compact, { kind: "reply", seen: () => undefined, replied: () => undefined }).catch(() => undefined);
+        // Stopped while it compacted, the turn it was for doesn't run, and what another agent sent gets none.
+        if (stop.signal.aborted) {
+          stopped(sent);
+          if (from) store.setStatus(message.id, "failed");
+          continue;
+        }
+      }
       try {
         const result = await turn(
           promptFor(message, person, { recent, quoted: quotedBy(message), fromRuns }, from),
@@ -798,7 +822,6 @@ export function createQueue(store: Store, drivers: Drivers, connections: Connect
           },
         );
         store.setSession(agent.id, result.sessionId);
-        if (!stop.signal.aborted && result.contextTokens > FRESH_START_TOKENS) store.addMessage(agent.id, "sidebots", FRESH_START, "queued");
       } catch (error) {
         if (stop.signal.aborted) {
           // Stopped, which `stopped` sees to.

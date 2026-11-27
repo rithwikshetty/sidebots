@@ -66,6 +66,7 @@ if (process.argv[2] === "app-server") {
       // What the turn does comes after the answer that it has started.
       setImmediate(async () => {
         read(clientUserMessageId, words);
+        if (words === "long") note("item/completed", { item: { type: "contextCompaction", id: "compaction" } });
         if (words === "fail") return end("failed", undefined, "You've hit your usage limit. Upgrade to Pro, or try again at 3:37 PM.");
         if (words.startsWith("tool ")) {
           const [, tool, text] = words.split(" ");

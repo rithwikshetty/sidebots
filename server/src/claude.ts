@@ -30,6 +30,12 @@ const DESCRIBE_COMMANDS =
 const BACKGROUND_WAIT_MS = 30 * 60_000;
 // The longest Claude Code is given to end a turn it was told to stop, before its process is ended for it.
 const STOP_WAIT_MS = 10_000;
+// The window Claude Code compacts a session to fit, in tokens. Its models hold a million, which costs too much to read anew.
+const COMPACT_WINDOW = 350_000;
+// How long Anthropic keeps what a session read, on a plan and on an API key. The first turn after that reads all the session holds anew, at the full price.
+const KEPT_MS = { plan: 60 * 60_000, key: 5 * 60_000 };
+// A session that holds less costs little to read anew, and compacting it would lose more than it saved.
+const WORTH_COMPACTING = 200_000;
 
 // Claude Code's names for the limits of a plan, and what it calls them in its own messages. Credit bought beyond the plan is no limit of the plan's, and has no name here.
 const LIMITS: Record<string, string> = {
@@ -196,7 +202,7 @@ const remote = (servers: Servers) => Object.fromEntries(Object.entries(servers).
  * is left for the next turn.
  */
 const runTurn: RunTurn = async (turn) => {
-  const { prompt, followUps, seen, replied, ask, limits, cwd, sessionId, configDir, apiKey, model, effort, fast, keepSession, stop } = turn;
+  const { prompt, followUps, seen, replied, ask, limits, compacted, cwd, sessionId, configDir, apiKey, model, effort, fast, keepSession, stop } = turn;
   const [claudeCode, env, servers] = [await program("claude"), await environment(), await turn.servers()];
   // A turn that was stopped while a connection's token was asked for never starts.
   if (stop.signal.aborted) throw new Error("The turn was stopped before it started");
@@ -268,8 +274,8 @@ const runTurn: RunTurn = async (turn) => {
       // Claude Code's own memory, kept in the agent's folder so it outlives
       // every session. It is on for a Sidebots agent even when its owner has
       // turned it off for their own Claude Code.
-      // Fast mode is the agent's own too, whatever its owner's Claude Code has it at.
-      settings: { autoMemoryEnabled: true, autoMemoryDirectory: join(cwd, "memory"), env: { CLAUDE_CODE_DISABLE_AUTO_MEMORY: "0" }, fastMode: fast },
+      // Fast mode is the agent's own too, whatever its owner's Claude Code has it at, and so is the window its session is compacted to fit.
+      settings: { autoMemoryEnabled: true, autoMemoryDirectory: join(cwd, "memory"), env: { CLAUDE_CODE_DISABLE_AUTO_MEMORY: "0" }, fastMode: fast, autoCompactWindow: COMPACT_WINDOW },
       skills: "all",
       mcpServers: { sidebots, ...remote(servers) },
       allowedTools: tools.filter((each) => !each.checked).map((each) => `mcp__sidebots__${each.name}`),
@@ -314,6 +320,7 @@ const runTurn: RunTurn = async (turn) => {
         settle();
       }
       if (message.type === "rate_limit_event") limits(limitsIn(message.rate_limit_info, Date.now()));
+      if (message.type === "system" && message.subtype === "compact_boundary") compacted();
       if (message.type !== "result") continue;
       if (stoppedPartWay(message)) {
         session = message.session_id;
@@ -395,4 +402,7 @@ const limitsNow: Driver["limits"] = async (configDir, giveUp) => {
   }
 };
 
-export const claude: Driver = { runTurn, failure, forget, limits: limitsNow };
+/** Claude Code's own command compacts a large session that has sat until Anthropic keeps nothing of it, so the turn after reads the summary. */
+const compactFirst: Driver["compactFirst"] = ({ held, idleMs, onKey }) => (held >= WORTH_COMPACTING && idleMs >= (onKey ? KEPT_MS.key : KEPT_MS.plan) ? "/compact" : null);
+
+export const claude: Driver = { runTurn, failure, forget, limits: limitsNow, compactFirst };

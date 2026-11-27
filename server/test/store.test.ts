@@ -371,7 +371,8 @@ test("several that open a new database at once all open it", async () => {
 });
 
 // Takes a database back to before each agent counted the changes to its chat, to before an agent had a fast mode, and to before `devices.kind`, the change before that.
-const BEFORE_COUNT = "drop trigger messages_added; drop trigger messages_changed; drop trigger messages_removed; alter table agents drop column chat_changes;";
+const BEFORE_HELD = "alter table usage drop column session_held;";
+const BEFORE_COUNT = `${BEFORE_HELD} drop trigger messages_added; drop trigger messages_changed; drop trigger messages_removed; alter table agents drop column chat_changes;`;
 const BEFORE_FAST = `${BEFORE_COUNT} alter table agents drop column fast; alter table agents drop column ran_on; alter table messages drop column switched;`;
 const BEFORE_KIND = `alter table devices drop column kind; ${BEFORE_FAST}`;
 
@@ -455,7 +456,7 @@ test("a Codex session from before the connections' tools, or before those tools 
 
   // The database as it was before agents had \`suggest\`, with that fresh start done: the session gets one more, for the tool. Ruby, moved to Codex since its last turn, hands its Claude Code session over on its next one, and gets none.
   const latest = new DatabaseSync(join(home, "sidebots.sqlite"));
-  latest.exec(`update messages set status = 'done'; update agents set provider = 'codex' where id = '${ruby.id}'; pragma user_version = 20`);
+  latest.exec(`update messages set status = 'done'; update agents set provider = 'codex' where id = '${ruby.id}'; ${BEFORE_HELD} pragma user_version = 20`);
   latest.close();
   const last = openStore(home);
   assert.deepEqual(last.messages(maya.id).map((message) => [message.body, message.status]), [["Fresh start", "done"], ["Fresh start", "done"], ["Fresh start", "queued"]]);
@@ -474,7 +475,7 @@ test("a first agent's brief from before agents could offer work is told to offer
   fresh.addJob(ruby.id, own, { type: "daily", time: "18:00" }, 1);
   fresh.close();
   const old = new DatabaseSync(join(home, "sidebots.sqlite"));
-  old.exec("pragma user_version = 19");
+  old.exec(`${BEFORE_HELD} pragma user_version = 19`);
   old.close();
 
   const store = openStore(home);
