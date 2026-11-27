@@ -82,6 +82,20 @@ The step is done only at its last line, `TestFlight has build <number>: <state> 
 - `Apple refused build <number>` means the upload arrived and Apple turned it down. The reason is in Apple's email to the account holder, so ask the user for it.
 - A wait that fails to read its key or is refused by App Store Connect means `SIDEBOTS_ASC_KEY_ID` or `SIDEBOTS_ASC_ISSUER_ID` in `mobile/.env.local` is missing or wrong. The build is uploaded by then, so fix the setting and run `node testflight-build.mjs` from `mobile/` with the four values its first lines name.
 
+## The App Store, when the user mentions it
+
+A deploy stops at TestFlight. Send the phone app to the App Store only when the user mentions the App Store, after step 4, with the build TestFlight just took. Their mentioning it is the approval to submit.
+
+App Store Connect's API does it, with the key and the signed token `mobile/testflight-build.mjs` uses. In order:
+
+1. Find the app with `GET /v1/apps?filter[bundleId]=<bundle id>` and read its versions with `GET /v1/apps/<app>/appStoreVersions`. Apple reviews one submission at a time, so when a version is `WAITING_FOR_REVIEW` or `IN_REVIEW`, tell the user and leave it as it is.
+2. Make the version with `POST /v1/appStoreVersions`: platform `IOS`, the `version` in `mobile/app.config.ts`, release type `AFTER_APPROVAL`, the app, and the build, whose id `GET /v1/builds?filter[app]=<app>&filter[version]=<build number>` gives. It takes the description, the screenshots and the review contact and notes from the version before it.
+3. Write "What's New" with `PATCH /v1/appStoreVersionLocalizations/<id>` on the one under `/v1/appStoreVersions/<version>/appStoreVersionLocalizations`. It says what the phone app gained since the build that is live, in plain words. A build number is a count of commits, so `git rev-list --reverse HEAD | sed -n <live build>p` is the live build's commit, and `git log <commit>..HEAD --format=%s -- mobile` what merged since.
+4. Read the review notes at `/v1/appStoreVersions/<version>/appStoreReviewDetail` against the app's screens as they are. Apple's reviewer follows them through the demo computer in `mobile/src/lib/demo.ts`. When a step in them has moved, write them again with `PATCH /v1/appStoreReviewDetails/<id>`, sending only `notes`.
+5. Submit: `POST /v1/reviewSubmissions` for the app on `IOS`, `POST /v1/reviewSubmissionItems` with that submission and the version, then `PATCH /v1/reviewSubmissions/<id>` with `submitted: true`.
+
+It is submitted once the version reads `WAITING_FOR_REVIEW`. Report that state and that the version goes live by itself when Apple approves it. After that, TestFlight takes only a higher version, as the note in step 4 on a closed train says.
+
 ## Handing over
 
 Report the version and the link to its GitHub release, the phone app's build number with the two states TestFlight gave it, how many machines the relay holds, and what the last release didn't have, in plain words. With 150 machines or more, start the report with this: the zone must be on Cloudflare's Pro plan before the count reaches 190, or new computers stop getting an address. With 800 or more, start it with this: the account runs out of tunnels at 1,000, and issue #157 has the decision to make. Say what is left for the user: update Sidebots from TestFlight. Name any step that failed and what it needs.
