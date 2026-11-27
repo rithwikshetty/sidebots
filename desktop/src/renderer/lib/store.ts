@@ -76,6 +76,8 @@ export const {
   loadConnections,
   connect,
   removeConnection,
+  saveJob,
+  runJob,
   removeJob,
   findMessages,
   markRead,

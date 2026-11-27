@@ -7,7 +7,7 @@ import { Hono } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import { streamSSE } from "hono/streaming";
 import { COLOR, CONNECTIONS, CONTRACT_HEADER, CONTRACT_VERSION, KEEPALIVE_MS, MESSAGE_BYTES, PROVIDERS, avatarStateOf, effortMoved } from "./contract.ts";
-import type { Connection, Effort, Model, Paired, Provider, PushToken, StreamEvent } from "./contract.ts";
+import type { Connection, Effort, JobFields, Model, Paired, Provider, PushToken, Schedule, StreamEvent } from "./contract.ts";
 import type { Connections } from "./connections.ts";
 import type { AgentChanges, Device, Person, Store } from "./store.ts";
 import type { Queue } from "./runner.ts";
@@ -32,6 +32,16 @@ function pushToken({ token, environment, app }: Partial<PushToken>): PushToken |
   return app === undefined ? { token, environment } : { token, environment, app };
 }
 const NOT_A_PUSH_TOKEN = "A push token comes with its push service, and the app it is for when the app says.";
+
+/** A job as the person sets it, from a request's body: its title, what it does, its schedule and whether it runs, each left out when the body has none. */
+function jobFields({ title, what, schedule, enabled }: Record<string, unknown>): Partial<JobFields> {
+  return {
+    ...(typeof title === "string" ? { title } : {}),
+    ...(typeof what === "string" ? { what: what.replaceAll("\r\n", "\n") } : {}),
+    ...(schedule && typeof schedule === "object" ? { schedule: schedule as Schedule } : {}),
+    ...(typeof enabled === "boolean" ? { enabled } : {}),
+  };
+}
 
 /** What a request's `Authorization` header carries under a scheme, as in `Bearer <key>`. */
 function credential(header: string | undefined, scheme: string): string | undefined {
@@ -180,6 +190,30 @@ export function createApi(store: Store, queue: Queue, connections: Connections, 
     const agent = ownAgent(c.var.person, c.req.param("id"));
     if (!agent) return c.json({ error: "No such agent." }, 404);
     return c.json(store.about(agent));
+  });
+
+  /** Adds a job to an agent: its title, what it does, its schedule, and whether it runs, which it does unless `enabled` is false. */
+  app.post("/agents/:id/jobs", async (c) => {
+    const agent = ownAgent(c.var.person, c.req.param("id"));
+    if (!agent) return c.json({ error: "No such agent." }, 404);
+    const saved = queue.saveJob(agent.id, jobFields(await c.req.json()));
+    return typeof saved === "string" ? c.json({ error: saved }, 400) : c.json(saved, 201);
+  });
+
+  /** Changes one of an agent's jobs: what the request gives of its title, what it does, its schedule and whether it runs. */
+  app.patch("/agents/:id/jobs/:job", async (c) => {
+    const agent = ownAgent(c.var.person, c.req.param("id"));
+    if (!agent || !store.job(agent.id, c.req.param("job"))) return c.json({ error: "No such job." }, 404);
+    const saved = queue.saveJob(agent.id, jobFields(await c.req.json()), c.req.param("job"));
+    return typeof saved === "string" ? c.json({ error: saved }, 400) : c.json(saved);
+  });
+
+  /** Runs one of an agent's jobs now, beside its schedule. */
+  app.post("/agents/:id/jobs/:job/run", (c) => {
+    const agent = ownAgent(c.var.person, c.req.param("id"));
+    if (!agent || !store.job(agent.id, c.req.param("job"))) return c.json({ error: "No such job." }, 404);
+    const refused = queue.runJobNow(agent.id, c.req.param("job"));
+    return refused ? c.json({ error: refused }, 409) : c.json({});
   });
 
   /** Removes one of an agent's jobs. A run of it that is under way stops. */

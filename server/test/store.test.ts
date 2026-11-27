@@ -370,8 +370,11 @@ test("several that open a new database at once all open it", async () => {
   }
 });
 
-// Takes a database back to before each agent counted the changes to its chat, to before an agent had a fast mode, and to before `devices.kind`, the change before that.
-const BEFORE_HELD = "alter table usage drop column session_held;";
+// The jobs table as it was before jobs had titles, could be paused, and kept how their last run went.
+const BEFORE_JOB_RUNS =
+  "create table jobs_before (id text primary key, agent_id text not null references agents(id), what text not null, schedule text not null, next_at integer not null, created_at integer not null); insert into jobs_before select id, agent_id, what, schedule, next_at, created_at from jobs; drop table jobs; alter table jobs_before rename to jobs;";
+// Takes a database back to before jobs had titles, to before each agent counted the changes to its chat, to before an agent had a fast mode, and to before `devices.kind`, the change before that.
+const BEFORE_HELD = `${BEFORE_JOB_RUNS} alter table usage drop column session_held;`;
 const BEFORE_COUNT = `${BEFORE_HELD} drop trigger messages_added; drop trigger messages_changed; drop trigger messages_removed; alter table agents drop column chat_changes;`;
 const BEFORE_FAST = `${BEFORE_COUNT} alter table agents drop column fast; alter table agents drop column ran_on; alter table messages drop column switched;`;
 const BEFORE_KIND = `alter table devices drop column kind; ${BEFORE_FAST}`;
@@ -461,6 +464,15 @@ test("a Codex session from before the connections' tools, or before those tools 
   const last = openStore(home);
   assert.deepEqual(last.messages(maya.id).map((message) => [message.body, message.status]), [["Fresh start", "done"], ["Fresh start", "done"], ["Fresh start", "queued"]]);
   assert.deepEqual(last.messages(ruby.id), []);
+  last.close();
+
+  // The database as it was before jobs had titles, with that fresh start done: the session gets one more, for the job tools.
+  const jobs = new DatabaseSync(join(home, "sidebots.sqlite"));
+  jobs.exec(`update messages set status = 'done'; ${BEFORE_JOB_RUNS} pragma user_version = 22`);
+  jobs.close();
+  const titled = openStore(home);
+  assert.deepEqual(titled.messages(maya.id).map((message) => message.status), ["done", "done", "done", "queued"]);
+  assert.deepEqual(titled.messages(ruby.id), []);
 });
 
 test("a first agent's brief from before agents could offer work is told to offer it, and one the agent has rewritten stays as it is", () => {
@@ -471,8 +483,8 @@ test("a first agent's brief from before agents could offer work is told to offer
   const starter =
     'Brief Alex on their day. Read today\'s calendar, the mail that has come since your last brief and needs an answer from them, and what is due in Notion, from whichever of those you have tools for. Lead with the one or two things that most need them today, then the rest in a few short lines. When you have tools for none of them, tell Alex once that saying "connect my calendar" or "connect my Gmail" gives you their day to brief them on, note in your memory that you told them, and stay silent on later runs until you have one.';
   const own = "Brief Alex on their day. Read today's calendar, the mail that has come since your last brief, and keep it to three lines.";
-  fresh.addJob(ruby.id, starter, { type: "daily", time: "08:00" }, 0);
-  fresh.addJob(ruby.id, own, { type: "daily", time: "18:00" }, 1);
+  fresh.addJob(ruby.id, { title: "Brief", what: starter, schedule: { type: "daily", time: "08:00" }, enabled: true }, 0);
+  fresh.addJob(ruby.id, { title: "Evening", what: own, schedule: { type: "daily", time: "18:00" }, enabled: true }, 1);
   fresh.close();
   const old = new DatabaseSync(join(home, "sidebots.sqlite"));
   old.exec(`${BEFORE_HELD} pragma user_version = 19`);
@@ -480,4 +492,52 @@ test("a first agent's brief from before agents could offer work is told to offer
 
   const store = openStore(home);
   assert.deepEqual(store.jobs(ruby.id).map((job) => job.what), [starter.replace("short lines. When you have", "short lines. When something in it is work you could do for them, offer it with `suggest`. When you have"), own]);
+});
+
+test("a job from before jobs had titles is named for what it is for, runs, and has never run", () => {
+  const home = mkdtempSync(join(tmpdir(), "sidebots-store-test-"));
+  const fresh = openStore(home);
+  const person = fresh.addPerson({ name: "Alex", provider: "claude", configDir: "/tmp/claude" });
+  const ruby = fresh.createAgent(person, "Ruby", "cog", "claude");
+  const brief = "Brief Alex on their day. Read today's calendar.";
+  const invoice = "Get Alex's invoice email for this month ready, so they can send it by the 26th or the 27th of the month. Read memory first.";
+  fresh.addJob(ruby.id, { title: "-", what: brief, schedule: { type: "daily", time: "08:00" }, enabled: true }, 5);
+  fresh.addJob(ruby.id, { title: "-", what: invoice, schedule: { type: "once", at: 9 }, enabled: true }, 9);
+  fresh.addJob(ruby.id, { title: "-", what: "Water the plants", schedule: { type: "every", minutes: 60 }, enabled: true }, 7);
+  fresh.close();
+  const old = new DatabaseSync(join(home, "sidebots.sqlite"));
+  old.exec(`${BEFORE_HELD} pragma user_version = 21`);
+  old.close();
+
+  const store = openStore(home);
+  assert.deepEqual(
+    store.jobs(ruby.id).map(({ title, enabled, next_at, last_run_status, run_count }) => ({ title, enabled, next_at, last_run_status, run_count })),
+    [
+      { title: "Morning brief", enabled: true, next_at: 5, last_run_status: "never", run_count: 0 },
+      { title: "Water the plants", enabled: true, next_at: 7, last_run_status: "never", run_count: 0 },
+      { title: "Get Alex's invoice email for this month ready, so they can…", enabled: true, next_at: 9, last_run_status: "never", run_count: 0 },
+    ],
+  );
+  assert.deepEqual(store.agentsWithDueJobs(9), [ruby.id]);
+});
+
+test("a paused job doesn't come due, and a run that a stopped server left running failed", () => {
+  const home = mkdtempSync(join(tmpdir(), "sidebots-store-test-"));
+  const first = openStore(home);
+  const person = first.addPerson({ name: "Alex", provider: "claude", configDir: "/tmp/claude" });
+  const ruby = first.createAgent(person, "Ruby", "cog", "claude");
+  const job = first.addJob(ruby.id, { title: "Check", what: "Check.", schedule: { type: "every", minutes: 5 }, enabled: true }, 10);
+  first.updateJob(ruby.id, job.id, { ...job, enabled: false }, 10);
+  assert.equal(first.dueJob(ruby.id, 20), undefined);
+  assert.deepEqual(first.agentsWithDueJobs(20), []);
+  first.updateJob(ruby.id, job.id, { ...job, enabled: true }, 10);
+  first.jobStarted(job.id, 20);
+  first.close();
+
+  const store = openStore(home);
+  store.requeueInterrupted();
+  const after = store.job(ruby.id, job.id)!;
+  assert.deepEqual([after.last_run_status, after.last_run_error, after.last_run_at, after.run_count], ["failed", "Sidebots stopped while it ran.", 20, 1]);
+  // Its next run was still to be worked out, so it comes due again.
+  assert.equal(store.dueJob(ruby.id, 20)?.id, job.id);
 });

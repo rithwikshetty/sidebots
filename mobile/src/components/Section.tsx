@@ -9,13 +9,21 @@ import { useTheme } from "@/lib/theme";
  * A group of rows on a card, under its title, with a line of help below. A
  * group with no rows shows only its title and help. The card and the help
  * fade in and out as rows come and go, and the group slides as it changes size.
+ * An `action`, as a button that adds a row, sits at the title's end.
  */
-export function Section({ title, note, children }: { title?: string; note?: string; children?: ReactNode }) {
+export function Section({ title, note, action, children }: { title?: string; note?: string; action?: ReactNode; children?: ReactNode }) {
   const theme = useTheme();
   const rows = Array.isArray(children) ? children.some(Boolean) : Boolean(children);
   return (
     <Animated.View layout={MOVE} style={styles.section}>
-      {title ? <SectionTitle>{title}</SectionTitle> : null}
+      {title && action ? (
+        <View style={styles.heading}>
+          <SectionTitle>{title}</SectionTitle>
+          {action}
+        </View>
+      ) : title ? (
+        <SectionTitle>{title}</SectionTitle>
+      ) : null}
       {rows ? (
         <Animated.View entering={SHOW} exiting={HIDE} layout={MOVE} style={[styles.card, { backgroundColor: theme.field }]}>
           {children}
@@ -40,6 +48,7 @@ export function Rule() {
 
 const styles = StyleSheet.create({
   section: { marginTop: 24, gap: 8 },
+  heading: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingRight: 4 },
   title: { fontSize: 13, fontWeight: "600", textTransform: "uppercase", letterSpacing: 0.4, paddingHorizontal: 4 },
   note: { fontSize: 13, lineHeight: 18, paddingHorizontal: 4 },
   card: { borderRadius: 16, borderCurve: "continuous", overflow: "hidden" },

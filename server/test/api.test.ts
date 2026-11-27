@@ -11,7 +11,7 @@ import { addFirstAgent, createQueue, type Turn, type TurnResult } from "../src/r
 import { claude } from "../src/claude.ts";
 import { codex } from "../src/codex.ts";
 import { createApi } from "../src/api.ts";
-import { CONTRACT_VERSION, MESSAGE_BYTES, type AgentWithLatest, type Day, type Limit, type Message, type Question, type Used } from "../src/contract.ts";
+import { CONTRACT_VERSION, MESSAGE_BYTES, type AgentWithLatest, type Day, type Job, type Limit, type Message, type Question, type Used } from "../src/contract.ts";
 import { startPush, type Ended, type Notice, type Sealed } from "../src/push.ts";
 
 /** A turn's reply, as a fake provider gives it. No reply means the fake gave its replies itself. */
@@ -378,7 +378,7 @@ test("a person with an API key has every turn, job and fresh start run on it, an
   const turns: Turn[] = [];
   const { home, store, queue, call, say, phoneOf, open } = setup(async (turn) => {
     turns.push(turn);
-    if (turn.prompt.text === "watch the price") turn.scheduleJob({ what: "Check the price.", every_minutes: 5 });
+    if (turn.prompt.text === "watch the price") turn.scheduleJob({ title: "Watch", what: "Check the price.", every_minutes: 5 });
     if (turn.prompt.text.endsWith("buy it")) throw new Error(`Anthropic refused ${KEY}.`);
     return reply("ok");
   }, () => time);
@@ -749,7 +749,7 @@ test("another model, effort or speed on the same provider keeps the session, and
 test("a session its provider compacts is marked in the chat before the reply, and a job's own session is not", async () => {
   let time = new Date(2026, 10, 16, 9, 0).getTime();
   const { queue, call, say } = setup(async (turn) => {
-    if (turn.prompt.text === "watch the price") turn.scheduleJob({ what: "Check the price.", every_minutes: 5 });
+    if (turn.prompt.text === "watch the price") turn.scheduleJob({ title: "Watch", what: "Check the price.", every_minutes: 5 });
     turn.compacted();
     return reply("ok");
   }, () => time);
@@ -1035,7 +1035,7 @@ test("an agent's chat takes its avatar's colour until the person picks one, and 
 
 test("deleting an agent removes its messages, its jobs, what it used, its folder and its Claude Code sessions", async () => {
   const { home, store, queue, call, say } = setup(async (turn) => {
-    turn.scheduleJob({ what: "check", every_minutes: 5 });
+    turn.scheduleJob({ title: "Watch", what: "check", every_minutes: 5 });
     return reply("ok");
   });
   const configDir = join(home, "claude");
@@ -1065,7 +1065,7 @@ test("each agent's turns are counted with what they cost and the tokens they use
   let chat = 0;
   let runs = 0;
   const { queue, call, say } = setup(async (turn) => {
-    if (turn.prompt.text === "watch the price") turn.scheduleJob({ what: "Check the price.", every_minutes: 5 });
+    if (turn.prompt.text === "watch the price") turn.scheduleJob({ title: "Watch", what: "Check the price.", every_minutes: 5 });
     if (turn.prompt.text.startsWith("This is a run of one of your jobs")) return reply("SILENT", `run-${++runs}`, 0, 0.125, 1000);
     chat += turn.prompt.text === "watch the price" ? 0.5 : 0.25;
     return reply("ok", "chat", 0, chat, chat * 40_000);
@@ -1325,9 +1325,9 @@ test("a job runs when its time comes, in a session of its own, and only a run wi
   let found = "SILENT";
   const { queue, call, say } = setup(async (turn) => {
     if (turn.prompt.text === "watch the price") {
-      assert.match(turn.scheduleJob({ what: "Check the price. Stay silent unless it dropped.", every_minutes: 5 }), /^Saved job \w+: Every 5 minutes\. It first runs at 2026-11-16T09:05\. It is now 2026-11-16T09:00\.$/);
-      assert.equal(turn.scheduleJob({ what: "x", every_minutes: 5, daily_at: "08:00" }), "Give exactly one of every_minutes, daily_at and once_at.");
-      assert.match(turn.scheduleJob({ what: "x", once_at: "2026-11-16T08:00" }), /^That time has passed/);
+      assert.match(turn.scheduleJob({ title: "Watch", what: "Check the price. Stay silent unless it dropped.", every_minutes: 5 }), /^Saved job \w+, "Watch": Every 5 min, next at 2026-11-16T09:05, never run\. It is now 2026-11-16T09:00\.$/);
+      assert.match(turn.scheduleJob({ title: "Watch", what: "x", every_minutes: 5, daily_at: "08:00" }), /^Give exactly one of every_minutes, daily_at and once_at\./);
+      assert.match(turn.scheduleJob({ title: "Watch", what: "x", once_at: "2026-11-16T08:00" }), /^That time has passed/);
       return reply("Watching.");
     }
     runs.push([turn.prompt.text, turn.sessionId, turn.keepSession]);
@@ -1345,7 +1345,7 @@ test("a job runs when its time comes, in a session of its own, and only a run wi
   time += 60_000;
   await queue.kick(agent.id);
   assert.equal(runs.length, 1);
-  assert.match(runs[0][0], /\(Every 5 minutes\)[\s\S]*Check the price\. Stay silent unless it dropped\.[\s\S]*reply with only the word SILENT/);
+  assert.match(runs[0][0], /"Watch" \(Every 5 min\), started by Sidebots' clock[\s\S]*Check the price\. Stay silent unless it dropped\.[\s\S]*reply with only the word SILENT/);
   assert.deepEqual(runs[0].slice(1), [null, false]);
   assert.deepEqual(await bodies(), ["watch the price", "Watching."]);
   const [job] = (await call(ME, "GET", `/agents/${agent.id}/about`)).json.jobs;
@@ -1405,7 +1405,7 @@ test("a person starts with an agent that knows it briefs them every morning, has
   assert.equal(runs.length, 0);
   time = new Date(2026, 10, 17, 8, 0).getTime();
   await queue.kick(ruby.id);
-  assert.match(runs[0], /\(Every day at 08:00\)[\s\S]*Brief Alex on their day[\s\S]*offer it with `suggest`/);
+  assert.match(runs[0], /"Morning brief" \(Daily at 08:00\)[\s\S]*Brief Alex on their day[\s\S]*offer it with `suggest`/);
   const bodies = (await call(ME, "GET", `/agents/${ruby.id}/messages`)).json.map((m: { body: string }) => m.body);
   assert.equal(bodies.at(-1), "Standup at 10, and Sam wants an answer on the quote.");
   assert.equal(bodies.length, 4);
@@ -1462,7 +1462,7 @@ test("a reply is shown the latest twenty of what the agent's jobs sent that its 
   let posts = 0;
   const { queue, call, say } = setup(async (turn) => {
     if (turn.prompt.text === "watch the price") {
-      turn.scheduleJob({ what: "Say the price.", every_minutes: 5 });
+      turn.scheduleJob({ title: "Watch", what: "Say the price.", every_minutes: 5 });
       return reply("Watching.");
     }
     if (turn.prompt.text.startsWith("This is a run of one of your jobs")) return reply(`Post ${++posts}.`, "job-session");
@@ -1500,9 +1500,9 @@ test("a job set for one time runs once, a daily one keeps to its days, and a job
   let fail = false;
   const { store, queue, call, say } = setup(async (turn) => {
     if (turn.prompt.text === "set up") {
-      turn.scheduleJob({ what: "Say it is time to call the garage.", once_at: "2026-11-16T17:00" });
-      assert.match(turn.scheduleJob({ what: "Morning brief.", daily_at: "08:00", weekdays: [1, 5] }), /Mon, Fri at 08:00\. It first runs at 2026-11-20T08:00/);
-      assert.match(turn.listJobs(), /Once, 16 Nov at 17:00, next at 2026-11-16T17:00\. Say it is time to call the garage\.[\s\S]*It is now 2026-11-16T09:00\.$/);
+      turn.scheduleJob({ title: "Watch", what: "Say it is time to call the garage.", once_at: "2026-11-16T17:00" });
+      assert.match(turn.scheduleJob({ title: "Watch", what: "Morning brief.", daily_at: "08:00", weekdays: [1, 5] }), /"Watch": Mon, Fri at 08:00, next at 2026-11-20T08:00, never run\./);
+      assert.match(turn.listJobs(), /"Watch": Once, 16 Nov at 17:00, next at 2026-11-16T17:00, never run\. Say it is time to call the garage\.[\s\S]*It is now 2026-11-16T09:00\.$/);
       return reply("Done.");
     }
     if (fail) throw new Error("You've reached your usage limit.");
@@ -1517,7 +1517,12 @@ test("a job set for one time runs once, a daily one keeps to its days, and a job
   const messages = (await call(ME, "GET", `/agents/${agent.id}/messages`)).json;
   assert.equal(messages.at(-1).body, "Time to call the garage.");
   assert.equal(typeof messages.at(-1).job_id, "string");
-  assert.deepEqual(store.jobs(agent.id).map((job) => job.what), ["Morning brief."]);
+  // The job that ran its one time stays, with no run to come.
+  const sinceRun = (job: Job) => [job.what, job.next_at, job.last_run_status, job.run_count];
+  assert.deepEqual(store.jobs(agent.id).map(sinceRun), [
+    ["Morning brief.", new Date(2026, 10, 20, 8, 0).getTime(), "never", 0],
+    ["Say it is time to call the garage.", null, "succeeded", 1],
+  ]);
 
   // Friday's run fails, and so does the next Monday's. Sidebots says so once.
   fail = true;
@@ -1528,6 +1533,73 @@ test("a job set for one time runs once, a daily one keeps to its days, and a job
   await queue.kick(agent.id);
   const after = (await call(ME, "GET", `/agents/${agent.id}/messages`)).json.map((m: { body: string }) => m.body);
   assert.deepEqual(after.slice(-2), ["Time to call the garage.", "Sidebots couldn't run a job. Your Claude usage limit is reached. Try again once it resets."]);
+  const [failed] = store.jobs(agent.id);
+  assert.deepEqual([failed.last_run_status, failed.last_run_error, failed.run_count], ["failed", "Your Claude usage limit is reached. Try again once it resets.", 2]);
+});
+
+test("the person makes, changes, pauses and runs a job from the app, and the agent does the same with its tools", async () => {
+  let time = new Date(2026, 10, 16, 9, 0).getTime(); // A Monday.
+  const runs: string[] = [];
+  let jobId = "";
+  const { store, queue, call, say } = setup(async (turn) => {
+    if (turn.prompt.text.endsWith("pause it, and run it once")) {
+      assert.match(turn.scheduleJob({ id: jobId, enabled: false }), /^Saved job \w+, "Water the plants": Every 30 min, paused, last run at 2026-11-16T09:00, succeeded\./);
+      assert.match(turn.scheduleJob({ id: "nope", title: "Plants" }), /^No such job\. It is now 2026-11-16T09:00\.$/);
+      assert.equal(turn.runJobNow(jobId), "It runs now, in a session of its own, and what it replies goes to the person.");
+      return reply("Done.");
+    }
+    runs.push(turn.prompt.text);
+    return reply("Water the plants.", "job-session");
+  }, () => time);
+  const agent = (await call(ME, "POST", "/agents", { name: "Errands", avatarId: "hop" })).json;
+  const jobs = `/agents/${agent.id}/jobs`;
+  const plants = { title: "Plants", what: "Remind me to water the plants.", schedule: { type: "daily", time: "18:00", weekdays: [1, 3] } };
+  const stands = (job: Job) => ({ title: job.title, enabled: job.enabled, next_at: job.next_at, last_run_status: job.last_run_status, run_count: job.run_count });
+
+  // A job needs a title, what it does and a schedule that can run, and is the agent's person's alone.
+  assert.deepEqual((await call(ME, "POST", jobs, { ...plants, title: " " })).json, { error: "Give the job a name." });
+  assert.deepEqual((await call(ME, "POST", jobs, { ...plants, schedule: { type: "daily", time: "6pm" } })).json, { error: "Give the time of day as HH:MM on a 24-hour clock." });
+  assert.deepEqual((await call(ME, "POST", jobs, { ...plants, schedule: { type: "daily", time: "18:00", weekdays: [] } })).json, { error: "Pick at least one day." });
+  assert.equal((await call(HER, "POST", jobs, plants)).status, 404);
+  const made = await call(ME, "POST", jobs, plants);
+  assert.equal(made.status, 201);
+  jobId = made.json.id;
+  assert.deepEqual(stands(made.json), { title: "Plants", enabled: true, next_at: new Date(2026, 10, 16, 18, 0).getTime(), last_run_status: "never", run_count: 0 });
+
+  // Run now runs it beside its schedule, which it keeps.
+  assert.equal((await call(HER, "POST", `${jobs}/${jobId}/run`)).status, 404);
+  assert.equal((await call(ME, "POST", `${jobs}/${jobId}/run`)).status, 200);
+  await queue.kick(agent.id);
+  assert.match(runs[0], /"Plants" \(Mon, Wed at 18:00\), started now, beside its schedule/);
+  assert.deepEqual(stands(store.job(agent.id, jobId)!), { title: "Plants", enabled: true, next_at: new Date(2026, 10, 16, 18, 0).getTime(), last_run_status: "succeeded", run_count: 1 });
+
+  // Paused, it doesn't run at its time, and turned back on it runs at the next.
+  assert.equal((await call(ME, "PATCH", `${jobs}/${jobId}`, { enabled: false })).json.enabled, false);
+  time = new Date(2026, 10, 16, 18, 0).getTime();
+  await queue.kick(agent.id);
+  assert.equal(runs.length, 1);
+  time = new Date(2026, 10, 16, 18, 30).getTime();
+  assert.equal((await call(ME, "PATCH", `${jobs}/${jobId}`, { enabled: true })).json.next_at, new Date(2026, 10, 18, 18, 0).getTime());
+
+  // A new schedule works out its next run again, and new words alone leave it.
+  const moved = (await call(ME, "PATCH", `${jobs}/${jobId}`, { schedule: { type: "every", minutes: 30 } })).json;
+  assert.equal(moved.next_at, time + 30 * 60_000);
+  const renamed = (await call(ME, "PATCH", `${jobs}/${jobId}`, { title: "Water the plants" })).json;
+  assert.deepEqual([renamed.title, renamed.what, renamed.next_at], ["Water the plants", plants.what, moved.next_at]);
+  assert.equal((await call(ME, "PATCH", `${jobs}/nope`, { title: "x" })).status, 404);
+
+  // The agent pauses it and runs it once with its tools, and a paused job runs when it is asked to.
+  time = new Date(2026, 10, 16, 9, 0).getTime();
+  await say(ME, agent.id, "pause it, and run it once");
+  await queue.kick(agent.id);
+  await queue.kick(agent.id);
+  assert.equal(runs.length, 2);
+  assert.deepEqual(stands(store.job(agent.id, jobId)!), { title: "Water the plants", enabled: false, next_at: moved.next_at, last_run_status: "succeeded", run_count: 2 });
+
+  // A one-time job whose time passed while it was paused can't be turned back on.
+  const once = (await call(ME, "POST", jobs, { title: "Garage", what: "Say it is time to call the garage.", schedule: { type: "once", at: time + 60_000 }, enabled: false })).json;
+  time += 2 * 60_000;
+  assert.deepEqual((await call(ME, "PATCH", `${jobs}/${once.id}`, { enabled: true })).json, { error: "That time has passed. Pick a time still to come." });
 });
 
 test("a reply to a message tells the agent which one, and the chat pages back through older messages", async () => {
@@ -1666,7 +1738,7 @@ test("an agent's files go with its next message, an update or its reply, and ope
       turn.sendFiles(["week.png"]);
       return reply(time > new Date(2026, 10, 16, 9, 10).getTime() ? "Your week so far." : "SILENT");
     }
-    turn.scheduleJob({ what: "Chart the week.", every_minutes: 5 });
+    turn.scheduleJob({ title: "Watch", what: "Chart the week.", every_minutes: 5 });
     writeFileSync(join(turn.cwd, "chart.png"), "first draft");
     writeFileSync(join(home, "Week 47 report.pdf"), "the report");
     answers.push(turn.sendFiles(["chart.png", "missing.png"]));
@@ -1717,7 +1789,7 @@ test("a job's run can't send updates", async () => {
   let time = new Date(2026, 10, 16, 9, 0).getTime();
   const updates: boolean[] = [];
   const { queue, call, say } = setup(async (turn) => {
-    if (turn.prompt.text === "set up") turn.scheduleJob({ what: "Check.", every_minutes: 5 });
+    if (turn.prompt.text === "set up") turn.scheduleJob({ title: "Watch", what: "Check.", every_minutes: 5 });
     else updates.push(turn.sendUpdate !== undefined);
     return reply("SILENT");
   }, () => time);
@@ -1963,7 +2035,7 @@ test("a job runs beside the chat, so a message sent meanwhile has its turn, and 
   const runs: Turn[] = [];
   const { store, queue, call, say } = setup(async (turn) => {
     if (turn.prompt.text === "watch the price") {
-      turn.scheduleJob({ what: "Check the price.", every_minutes: 5 });
+      turn.scheduleJob({ title: "Watch", what: "Check the price.", every_minutes: 5 });
       return reply("Watching.");
     }
     if (!turn.prompt.text.startsWith("This is a run of one of your jobs")) return reply("Not yet.");

@@ -1,20 +1,20 @@
 import { useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore, type CSSProperties, type KeyboardEvent, type ReactNode } from "react";
-import { ChevronRight, Trash2 } from "lucide-react";
-import { PROVIDERS, USAGE_DAYS, plainText, scheduleWords, type AgentWithLatest, type Job, type Message, type Offered } from "@server/contract.ts";
+import { ChevronRight } from "lucide-react";
+import { PROVIDERS, USAGE_DAYS, plainText, type AgentWithLatest, type Message, type Offered } from "@server/contract.ts";
 import { WORK } from "@client/suggestions.ts";
-import { listTime, nextTime } from "@client/time.ts";
+import { listTime } from "@client/time.ts";
 import { COST_NOTE, KINDS, dollars, usedBy } from "@client/usage.ts";
 import { changeOrSay, confirmDelete, problem } from "../lib/alerts.ts";
 import { cn } from "../lib/cn.ts";
-import { answerAsk, loadAbout, loadUsage, removeJob, useAbout, useAgent, useChatColor, useUsage, type AgentChanges } from "../lib/store.ts";
+import { answerAsk, loadAbout, loadUsage, useAbout, useAgent, useChatColor, useUsage, type AgentChanges } from "../lib/store.ts";
 import { openChat, openPanel, type AgentTab } from "../lib/view.ts";
 import { AvatarPicker } from "../ui/AvatarPicker.tsx";
 import { Avatar } from "../ui/Avatar.tsx";
-import { Button, IconButton } from "../ui/Button.tsx";
-import { confirm } from "../ui/Confirm.tsx";
+import { Button } from "../ui/Button.tsx";
 import { Segmented } from "../ui/Segmented.tsx";
 import { Switch } from "../ui/Switch.tsx";
 import { ColorPicker } from "./ColorPicker.tsx";
+import { JobsSection } from "./Jobs.tsx";
 import { LoadingRow, Row, RowButton, RowText, Section, SectionTitle } from "./Section.tsx";
 
 const TABS: Record<AgentTab, string> = { settings: "Settings", work: "Jobs & memory" };
@@ -107,7 +107,7 @@ function useLoading(load: () => Promise<void>, key: string): Loading {
  * used in the last days, Mute and Hide, and Delete. Jobs & memory holds what
  * the agent works on and from: the work the person started from its
  * suggestions, each of which opens the chat at its suggestion and can be
- * stopped here until it ends, its jobs, which can be removed here, the instructions
+ * stopped here until it ends, its jobs, which can be made, edited, paused, run now and deleted here, the instructions
  * it follows and what it remembers, each of which opens to read in full. The
  * agent writes its jobs, instructions and memories itself, as it is told
  * things in its chat. Every change but the edit's takes effect at once. The
@@ -339,10 +339,6 @@ function WorkTab({ agent, loading }: { agent: AgentWithLatest; loading: Loading 
   // Until the computer has said, each group holds one row's place, or says why it couldn't.
   const waiting = about ? null : loading.state === "loading" ? <LoadingRow /> : null;
   const failed = !about && loading.state === "failed" ? loading.reason : undefined;
-  const forget = async (job: Job) => {
-    const yes = await confirm({ title: "Remove this job?", message: scheduleWords(job.schedule), action: "Remove", destructive: true });
-    if (yes) await removeJob(agent.id, job.id).catch((failure) => problem("Couldn't remove it", failure));
-  };
   return (
     <>
       <Section title="Work" note={failed ?? (about && !about.work.length ? "None. What you start from its suggestions shows here." : undefined)} testId="agent-work">
@@ -350,15 +346,9 @@ function WorkTab({ agent, loading }: { agent: AgentWithLatest; loading: Loading 
         {about?.work.map((work) => <WorkRow key={work.id} work={work} />)}
       </Section>
 
-      <Section title="Jobs" note={failed ?? (about && !about.jobs.length ? "None. Ask it to remind you of something, or to keep an eye on something." : undefined)} testId="agent-jobs">
+      <JobsSection agentId={agent.id} jobs={about?.jobs} note={failed}>
         {waiting}
-        {about?.jobs.map((job) => (
-          <Row key={job.id} className="items-start" data-testid="job">
-            <RowText title={scheduleWords(job.schedule)} note={<JobNote job={job} />} />
-            <IconButton icon={Trash2} label="Remove job" className="-mr-1 hover:text-danger" onClick={() => void forget(job)} />
-          </Row>
-        ))}
-      </Section>
+      </JobsSection>
 
       <Section title="Instructions" note={failed} testId="agent-instructions">
         {about ? (
@@ -413,15 +403,5 @@ function WorkRow({ work }: { work: Message }) {
         </Button>
       ) : null}
     </div>
-  );
-}
-
-/** When a job next runs, and what it does. */
-function JobNote({ job }: { job: Job }) {
-  return (
-    <>
-      <span className="block">Next {nextTime(job.next_at)}</span>
-      <span className="mt-0.5 line-clamp-3 block">{job.what}</span>
-    </>
   );
 }

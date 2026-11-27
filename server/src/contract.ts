@@ -8,7 +8,7 @@
  * its own. The app sends its own in the same header, and the server refuses
  * to pair an app on another version.
  */
-export const CONTRACT_VERSION = 7;
+export const CONTRACT_VERSION = 8;
 export const CONTRACT_HEADER = "Sidebots-Contract";
 
 export type Sender = "person" | "agent" | "sidebots";
@@ -365,8 +365,33 @@ export type Found = { id: string; agent_id: string; agent: string; sender: Sende
  * day on some weekdays (0 is Sunday) or on all of them, or once.
  */
 export type Schedule = { type: "every"; minutes: number } | { type: "daily"; time: string; weekdays?: number[] } | { type: "once"; at: number };
-/** Work an agent does by itself. `what` is the agent's own instructions for a run, and `next_at` is when it next runs. */
-export type Job = { id: string; agent_id: string; what: string; schedule: Schedule; next_at: number; created_at: number };
+/** Where a job's runs stand: it hasn't run, it runs now, or how its last run ended. */
+export type JobRun = "never" | "running" | "succeeded" | "failed";
+/** Where a job's runs stand, in words. */
+export const JOB_RUN: Record<JobRun, string> = { never: "Never run", running: "Running", succeeded: "Succeeded", failed: "Failed" };
+/**
+ * Work an agent does by itself. `title` names it, `what` is the agent's own
+ * instructions for a run, and a job that isn't `enabled` stays saved but
+ * doesn't run. `next_at` is when it next runs, or null when nothing is to
+ * come, as for a job that ran its one time. The rest is its last run: when it
+ * started, how it stands, why it failed, and how many runs it has had.
+ */
+export type Job = {
+  id: string;
+  agent_id: string;
+  title: string;
+  what: string;
+  schedule: Schedule;
+  enabled: boolean;
+  next_at: number | null;
+  created_at: number;
+  last_run_at: number | null;
+  last_run_status: JobRun;
+  last_run_error: string | null;
+  run_count: number;
+};
+/** What the person or the agent sets of a job as they make one or change it. */
+export type JobFields = Pick<Job, "title" | "what" | "schedule" | "enabled">;
 /** Something an agent has learned, from its memory folder. */
 export type Memory = { name: string; description: string; body: string };
 /** How many of the suggestions the person started an agent's page lists. */
@@ -410,18 +435,57 @@ export type Plan = { provider: Provider; apiKey: boolean; limits: Limit[] };
  */
 export type Usage = { used: Used[]; days: Day[]; accounts: Plan[] };
 
-const WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+/** The days of the week, by their number in a schedule, where 0 is Sunday. */
+export const WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+/** The days of the week in the order a week is set out, Monday first. */
+export const WEEK = [1, 2, 3, 4, 5, 6, 0];
 
-/** A schedule in words, such as "Every 5 minutes" or "Mon, Wed at 08:00". */
+/** A schedule in words, such as "Every 5 min", "Daily at 08:00", "Weekdays at 08:00" or "Mon, Wed at 08:00". */
 export function scheduleWords(schedule: Schedule): string {
-  if (schedule.type === "every") return schedule.minutes === 1 ? "Every minute" : `Every ${schedule.minutes} minutes`;
+  if (schedule.type === "every") return schedule.minutes === 1 ? "Every minute" : `Every ${schedule.minutes} min`;
   if (schedule.type === "daily") {
-    const days = schedule.weekdays?.length ? [...schedule.weekdays].sort().map((day) => WEEKDAYS[day]).join(", ") : "Every day";
-    return `${days} at ${schedule.time}`;
+    const weekdays = schedule.weekdays ?? [];
+    if (weekdays.length === 0 || weekdays.length === 7) return `Daily at ${schedule.time}`;
+    if (weekdays.length === 5 && weekdays.every((day) => day >= 1 && day <= 5)) return `Weekdays at ${schedule.time}`;
+    return `${WEEK.filter((day) => weekdays.includes(day))
+      .map((day) => WEEKDAYS[day])
+      .join(", ")} at ${schedule.time}`;
   }
   const at = new Date(schedule.at);
   const two = (value: number) => String(value).padStart(2, "0");
   return `Once, ${at.getDate()} ${at.toLocaleString("en", { month: "short" })} at ${two(at.getHours())}:${two(at.getMinutes())}`;
+}
+
+/** When a job next runs after `after`. A job that runs once has no run after its time. */
+export function nextRun(schedule: Schedule, after: number): number | null {
+  if (schedule.type === "every") return after + schedule.minutes * 60_000;
+  if (schedule.type === "once") return schedule.at > after ? schedule.at : null;
+  const [hours, minutes] = schedule.time.split(":").map(Number);
+  const next = new Date(after);
+  next.setHours(hours, minutes, 0, 0);
+  // Today if the time is still to come and today is one of its days, or the first of its days after.
+  while (next.getTime() <= after || (schedule.weekdays && !schedule.weekdays.includes(next.getDay()))) next.setDate(next.getDate() + 1);
+  return next.getTime();
+}
+
+/**
+ * What is wrong with a schedule as a job is saved with it, in words for
+ * whoever set it, or null when nothing is. A job runs every whole number of
+ * minutes, 1 or more, at a time of day as HH:MM on some of the days of the
+ * week or on all of them, or once at a time still to come. Its times are the
+ * computer's.
+ */
+export function scheduleProblem(schedule: Schedule, now: number): string | null {
+  if (schedule?.type === "every") return Number.isInteger(schedule.minutes) && schedule.minutes >= 1 ? null : "Run it every whole number of minutes, 1 or more.";
+  if (schedule?.type === "daily") {
+    if (typeof schedule.time !== "string" || !/^([01]\d|2[0-3]):[0-5]\d$/.test(schedule.time)) return "Give the time of day as HH:MM on a 24-hour clock.";
+    const { weekdays } = schedule;
+    if (weekdays === undefined) return null;
+    if (!Array.isArray(weekdays) || weekdays.some((day) => !Number.isInteger(day) || day < 0 || day > 6)) return "Days are numbers from 0, for Sunday, to 6.";
+    return weekdays.length ? null : "Pick at least one day.";
+  }
+  if (schedule?.type === "once") return Number.isFinite(schedule.at) && schedule.at > now ? null : "That time has passed. Pick a time still to come.";
+  return "A schedule runs every so many minutes, daily at a time, or once.";
 }
 
 /**

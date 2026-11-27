@@ -120,7 +120,7 @@ function app(t: TestContext, saved: object = {}) {
   };
   const streams: (() => Promise<Response> | Response)[] = [];
   const opened: AbortSignal[] = [];
-  const kept: Record<string, string> = { "cache-8": JSON.stringify(saved) };
+  const kept: Record<string, string> = { "cache-9": JSON.stringify(saved) };
   const heard = { front: (_dropped = false) => {}, refused: 0, signIn: null as string | null, changed: (_listener: () => void) => () => {} };
   const store = createStore<string>({
     async request<T>(path: string, init: { method?: string; body?: unknown } = {}) {
@@ -154,7 +154,7 @@ function app(t: TestContext, saved: object = {}) {
   /** What the store has saved, once the wait before a save has passed. */
   const savedNow = () => {
     t.mock.timers.tick(300);
-    return JSON.parse(kept["cache-8"]);
+    return JSON.parse(kept["cache-9"]);
   };
   const asked = () => calls.map((call) => `${call.method} ${call.path}`);
   return { store, calls, asked, answers, streams, opened, heard, savedNow, tick: (ms: number) => t.mock.timers.tick(ms) };
@@ -1475,4 +1475,20 @@ test("an agent's page takes the answer to what it asked for last, so an older on
   first(page("running"));
   await started;
   assert.deepEqual(store.useAbout("mochi")?.work.map((work) => work.status), ["done"]);
+});
+
+test("a job saved before its agent's page has come shows once the page comes, though the first answer was asked for before the save", async (t) => {
+  const { store, answers } = app(t);
+  const plants = { id: "plants", agent_id: "mochi", title: "Plants", what: "Water them.", schedule: { type: "every", minutes: 60 }, enabled: true, next_at: 1, created_at: 0, last_run_at: null, last_run_status: "never", last_run_error: null, run_count: 0 };
+  let first!: (about: unknown) => void;
+  answers["GET /agents/mochi/about"] = () => new Promise((resolve) => (first = resolve));
+  const opened = store.loadAbout("mochi");
+  await settle();
+  answers["POST /agents/mochi/jobs"] = () => plants;
+  answers["GET /agents/mochi/about"] = () => ({ instructions: "", memories: [], jobs: [plants], work: [] });
+  await store.saveJob("mochi", { title: "Plants", what: "Water them.", schedule: { type: "every", minutes: 60 } });
+  await settle();
+  first({ instructions: "", memories: [], jobs: [], work: [] });
+  await opened;
+  assert.deepEqual(store.useAbout("mochi")?.jobs.map((job) => job.title), ["Plants"]);
 });

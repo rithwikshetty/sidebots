@@ -207,7 +207,7 @@ export async function run({ home, port, world, pause: firstPause }: WorldOptions
       actions.set(agent.id, { ask: kind });
       if (body.job === true) {
         // A job's run asks, with no message of the person's.
-        const job = store.addJob(agent.id, "Tidy up the week's files before the weekend.", { type: "once", at: Date.now() - 1 }, Date.now() - 1);
+        const job = store.addJob(agent.id, { title: "Tidy files", what: "Tidy up the week's files before the weekend.", schedule: { type: "once", at: Date.now() - 1 }, enabled: true }, Date.now() - 1);
         void queue.kick(agent.id);
         return Response.json(job, { status: 201 });
       }
@@ -225,8 +225,7 @@ export async function run({ home, port, world, pause: firstPause }: WorldOptions
     if (path === "run-job") {
       const job = store.jobs(agent.id)[0];
       if (!job) return said(`${agent.name} has no jobs.`, 404);
-      store.setJobNext(job.id, Date.now() - 1);
-      void queue.kick(agent.id);
+      queue.runJobNow(agent.id, job.id);
       return Response.json(job);
     }
     return said(`There is no control called ${path}.`, 404);

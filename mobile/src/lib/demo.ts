@@ -11,11 +11,15 @@ import {
   CONNECTIONS,
   CONTRACT_HEADER,
   CONTRACT_VERSION,
+  nextRun,
+  scheduleProblem,
   type About,
   type Agent,
   type AgentWithLatest,
   type Avatar,
   type Found,
+  type Job,
+  type JobFields,
   type Message,
   type Paired,
   type Schedule,
@@ -82,7 +86,7 @@ type Cast = {
   avatar: string;
   instructions: string;
   memories?: About["memories"];
-  jobs?: [what: string, schedule: Schedule][];
+  jobs?: [title: string, what: string, schedule: Schedule, runs: number][];
   chat: [sender: Sender, body: string, ago: number, ...attachments: string[]][];
 };
 const CAST: Cast[] = [
@@ -110,8 +114,8 @@ const CAST: Cast[] = [
     avatar: "cog",
     instructions: "You brief Alex every morning at 8, in two or three short sentences: the weather, what is on today, and anything urgent.",
     jobs: [
-      ["Weather, today's calendar, and anything urgent in the wedding inbox.", { type: "daily", time: "08:00" }],
-      ["Check the Sydney to Melbourne fare for 4 December. Stay silent unless it is under $900.", { type: "every", minutes: 60 }],
+      ["Morning brief", "Weather, today's calendar, and anything urgent in the wedding inbox.", { type: "daily", time: "08:00" }, 9],
+      ["Fare watch", "Check the Sydney to Melbourne fare for 4 December. Stay silent unless it is under $900.", { type: "every", minutes: 60 }, 31],
     ],
     chat: [["agent", "17° and clear. Cake tasting at 11, and the celebrant wants a call back.", 4 * HOUR]],
   },
@@ -143,13 +147,9 @@ let made = 0;
 // How many messages the person has sent.
 let taken = 0;
 
-/** When a job next runs: a daily one at its time of day, another its minutes from now. */
-function nextRun(schedule: Schedule, now: number): number {
-  if (schedule.type === "once") return schedule.at;
-  if (schedule.type === "every") return now + schedule.minutes * MINUTE;
-  const [hours, minutes] = schedule.time.split(":").map(Number);
-  const today = new Date(now).setHours(hours, minutes, 0, 0);
-  return today > now ? today : today + DAY;
+/** A job as it is made, which has never run. */
+function job(agentId: string, id: string, fields: JobFields, createdAt: number, now: number): Job {
+  return { id, agent_id: agentId, ...fields, next_at: nextRun(fields.schedule, now), created_at: createdAt, last_run_at: null, last_run_status: "never", last_run_error: null, run_count: 0 };
 }
 
 function message(agentId: string, sender: Sender, body: string, at: number, status: Status = "done"): Message {
@@ -212,7 +212,12 @@ function start(): void {
     abouts[agent.id] = {
       instructions: `# ${name}\n\n${instructions}`,
       memories,
-      jobs: jobs.map(([what, schedule], index) => ({ id: `job-${index}`, agent_id: agent.id, what, schedule, next_at: nextRun(schedule, now), created_at: now - 9 * DAY })),
+      jobs: jobs.map(([title, what, schedule, runs], index) => ({
+        ...job(agent.id, `job-${index}`, { title, what, schedule, enabled: true }, now - 9 * DAY, now),
+        last_run_at: now - 4 * HOUR,
+        last_run_status: "succeeded",
+        run_count: runs,
+      })),
       work: [],
     };
   }
@@ -331,7 +336,7 @@ export async function demoFetch(url: string, init: { method?: string; body?: unk
   const agent = agents.find((each) => each.id === agentId);
   if (agentId && !agent) return answer({ error: "That agent is gone." }, 404);
   const body = typeof init.body === "string" ? (JSON.parse(init.body) as Record<string, never>) : init.body;
-  switch (`${init.method ?? "GET"} ${agent ? `/agents/:id${rest.replace(/^\/jobs\/.+/, "/jobs/:job")}` : pathname}`) {
+  switch (`${init.method ?? "GET"} ${agent ? `/agents/:id${rest.replace(/^\/jobs\/[^/]+/, "/jobs/:job")}` : pathname}`) {
     case "POST /pair": {
       start();
       // The phone keeps a notification key for every computer. This one sends no notifications.
@@ -385,6 +390,22 @@ export async function demoFetch(url: string, init: { method?: string; body?: unk
       agents = agents.filter((each) => each !== agent);
       hearing.forEach((hear) => hear({ deleted: agent!.id }));
       return answer({});
+    case "POST /agents/:id/jobs":
+    case "PATCH /agents/:id/jobs/:job": {
+      const jobs = abouts[agent!.id].jobs;
+      const before = jobs.find((each) => rest.startsWith(`/jobs/${each.id}`));
+      const fields = { ...before, ...(body as Partial<JobFields>) } as JobFields;
+      const wrong = !fields.title?.trim() ? "Give the job a name." : !fields.what?.trim() ? "Say what the agent does on each run." : before && fields.schedule === before.schedule ? null : scheduleProblem(fields.schedule, Date.now());
+      if (wrong) return answer({ error: wrong }, 400);
+      const saved = before ? { ...before, ...fields, next_at: fields.schedule === before.schedule ? before.next_at : nextRun(fields.schedule, Date.now()) } : job(agent!.id, `job-${++made}`, { ...fields, enabled: fields.enabled ?? true }, Date.now(), Date.now());
+      abouts[agent!.id].jobs = before ? jobs.map((each) => (each === before ? saved : each)) : [...jobs, saved];
+      return answer(saved, before ? 200 : 201);
+    }
+    case "POST /agents/:id/jobs/:job/run": {
+      // A job here does no work, so its run is over as it starts.
+      abouts[agent!.id].jobs = abouts[agent!.id].jobs.map((each) => (rest === `/jobs/${each.id}/run` ? { ...each, last_run_at: Date.now(), last_run_status: "succeeded", last_run_error: null, run_count: each.run_count + 1 } : each));
+      return answer({});
+    }
     case "DELETE /agents/:id/jobs/:job":
       abouts[agent!.id].jobs = abouts[agent!.id].jobs.filter((job) => `/jobs/${job.id}` !== rest);
       return answer({});

@@ -4,7 +4,7 @@
 // the few things a phone and a desktop do differently.
 
 import { KEEPALIVE_MS, PAGE, WORK_LISTED, isSuggestion } from "../server/src/contract.ts";
-import type { About, Agent, AgentWithLatest, Avatar, Connected, Connection, Effort, Found, Message, Model, Plan, Provider, SignIn, StreamEvent, Usage } from "../server/src/contract.ts";
+import type { About, Agent, AgentWithLatest, Avatar, Connected, Connection, Effort, Found, Job, JobFields, Message, Model, Plan, Provider, SignIn, StreamEvent, Usage } from "../server/src/contract.ts";
 import { ApiError, behind, type Behind } from "./api.ts";
 
 type State = {
@@ -72,7 +72,7 @@ export type Platform<Picked> = {
 };
 
 // The number changes when the shape of what is saved does.
-const CACHE_KEY = "cache-8";
+const CACHE_KEY = "cache-9";
 const SAVE_DELAY_MS = 300;
 // The computer says something on the stream within every keepalive, and a slow connection may bring it late. A stream quiet for longer than this has dropped.
 const QUIET_MS = KEEPALIVE_MS + 10_000;
@@ -702,10 +702,50 @@ export function createStore<Picked>(platform: Platform<Picked>) {
     keepConnection({ ...connected, account: null });
   }
 
+  /**
+   * An agent's page with its jobs as `change` makes them. A fetch of the
+   * page already on its way is older than the change, so its answer is
+   * dropped, and a page the app doesn't hold yet is fetched afresh.
+   */
+  function changeJobs(agentId: string, change: (jobs: Job[]) => Job[]): void {
+    const about = state.about[agentId];
+    if (!about) return void loadAbout(agentId).catch(() => {});
+    abouts.set(agentId, (abouts.get(agentId) ?? 0) + 1);
+    set({ about: { ...state.about, [agentId]: { ...about, jobs: change(about.jobs) } } });
+  }
+
+  /** Keeps a job as the computer now has it, in the place of the copy the agent's page holds, or last among its jobs when it is new. */
+  function keepJob(job: Job): void {
+    changeJobs(job.agent_id, (jobs) => (jobs.some((each) => each.id === job.id) ? jobs.map((each) => (each.id === job.id ? job : each)) : [...jobs, job]));
+  }
+
+  /**
+   * Saves one of an agent's jobs as the person set it: a new one, or, with
+   * `jobId`, what changed of that one, which its page shows at once and
+   * undoes if the computer refuses it.
+   */
+  async function saveJob(agentId: string, fields: Partial<JobFields>, jobId?: string): Promise<Job> {
+    const before = jobId === undefined ? undefined : state.about[agentId]?.jobs.find((job) => job.id === jobId);
+    if (before) keepJob({ ...before, ...fields });
+    try {
+      const job = await request<Job>(jobId ? `/agents/${agentId}/jobs/${jobId}` : `/agents/${agentId}/jobs`, { method: jobId ? "PATCH" : "POST", body: fields });
+      keepJob(job);
+      return job;
+    } catch (failure) {
+      if (before) keepJob(before);
+      throw failure;
+    }
+  }
+
+  /** Runs one of an agent's jobs now, beside its schedule. Its page shows it running until the page is fetched again. */
+  async function runJob(agentId: string, jobId: string): Promise<void> {
+    await request(`/agents/${agentId}/jobs/${jobId}/run`, { method: "POST" });
+    changeJobs(agentId, (jobs) => jobs.map((job) => (job.id === jobId ? { ...job, last_run_status: "running", last_run_error: null } : job)));
+  }
+
   async function removeJob(agentId: string, jobId: string): Promise<void> {
     await request(`/agents/${agentId}/jobs/${jobId}`, { method: "DELETE" });
-    const about = state.about[agentId];
-    if (about) set({ about: { ...state.about, [agentId]: { ...about, jobs: about.jobs.filter((job) => job.id !== jobId) } } });
+    changeJobs(agentId, (jobs) => jobs.filter((job) => job.id !== jobId));
   }
 
   /** The messages that contain `text`, in any of the person's chats, newest first. */
@@ -845,6 +885,8 @@ export function createStore<Picked>(platform: Platform<Picked>) {
     loadConnections,
     connect,
     removeConnection,
+    saveJob,
+    runJob,
     removeJob,
     findMessages,
     markRead,

@@ -415,7 +415,7 @@ export function createScript(store: Store, { pause, actions, clock }: { pause: (
       }
       case "/job": {
         await wait(pause());
-        const said = turn.scheduleJob({ what: `Look at tomorrow morning's forecast and tell ${person} whether to take an umbrella. Stay silent when it will be dry.`, daily_at: "07:30" });
+        const said = turn.scheduleJob({ title: "Watch", what: `Look at tomorrow morning's forecast and tell ${person} whether to take an umbrella. Stay silent when it will be dry.`, daily_at: "07:30" });
         return said.startsWith("Saved job") ? "Done. Every morning at 7:30 I'll check the forecast and tell you if you need an umbrella." : said;
       }
       case "/update": {
