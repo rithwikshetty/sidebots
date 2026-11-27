@@ -1,19 +1,18 @@
 ---
 name: sidebots-deploy
-description: "Release Sidebots from main to everywhere it runs: the relay, the Mac download and its update feed, the site, the phone app on TestFlight, and this Mac's own server. Use when the user asks to deploy, release, ship or publish Sidebots, or to update the app everywhere."
+description: "Release Sidebots from main to everywhere it runs: the relay, the Mac download and its update feed, the site, and the phone app on TestFlight. Use when the user asks to deploy, release, ship or publish Sidebots, or to update the app everywhere."
 ---
 
 # Deploy Sidebots
 
-A deploy releases `main` to five places, in this order:
+A deploy releases `main` to four places, in this order:
 
 1. **The relay**, at `relay.sidebots.app`. Servers and phones depend on it, so it goes first.
 2. **The Mac app**, as a disk image on a GitHub release. It carries the server and the desktop app.
 3. **The site**, at `sidebots.app`, with the update feed that tells installed Mac apps about the release.
 4. **The phone app**, on TestFlight. It goes after the Mac app, because a newer phone app on an older server asks for routes the server doesn't have.
-5. **This Mac's own server**, which runs from the main checkout, so no release reaches it.
 
-Every step runs each time. The user asking for a deploy is the approval for all five. Run it without them, and stop only when a step fails in a way the notes below don't cover.
+Every step runs each time. The user asking for a deploy is the approval for all four. Run it without them, and stop only when a step fails in a way the notes below don't cover.
 
 ## Before starting
 
@@ -65,7 +64,7 @@ Each takes one DNS record of the zone and one tunnel of the account. `relay/READ
 (cd site && npx wrangler deploy)
 ```
 
-Then `curl -s https://sidebots.app/appcast.xml` must name the new version. From here installed Mac apps update themselves, each once none of its agents is in the middle of a turn.
+Then `curl -s https://sidebots.app/appcast.xml` must name the new version. From here installed Mac apps update themselves, each once none of its agents is in the middle of a turn. This Mac's own server is one of them: it runs inside the Sidebots in `/Applications`, so the release reaches it through the feed, and nothing in the checkout restarts it. "Check for updates…" in the menu bar app fetches it at once.
 
 ## 4. The phone app
 
@@ -83,19 +82,8 @@ The step is done only at its last line, `TestFlight has build <number>: <state> 
 - `Apple refused build <number>` means the upload arrived and Apple turned it down. The reason is in Apple's email to the account holder, so ask the user for it.
 - A wait that fails to read its key or is refused by App Store Connect means `SIDEBOTS_ASC_KEY_ID` or `SIDEBOTS_ASC_ISSUER_ID` in `mobile/.env.local` is missing or wrong. The build is uploaded by then, so fix the setting and run `node testflight-build.mjs` from `mobile/` with the four values its first lines name.
 
-## 5. This Mac's server
-
-The launch agent `app.sidebots.server` keeps it running from the main checkout's `server/`, and starts it again whenever it stops. Node doesn't reload changed code, so restart it on the released code:
-
-```sh
-(cd server && pnpm install --frozen-lockfile)
-launchctl kickstart -k gui/$(id -u)/app.sidebots.server
-```
-
-A turn cut off by the restart is queued again when the server starts. It is up once `lsof -tiTCP:4317 -sTCP:LISTEN` returns a new process and `node src/main.ts status` in `server/` says `Phones reach it at <address>`. The server makes the release's changes to `~/.sidebots/sidebots.sqlite` as it starts.
-
 ## Handing over
 
 Report the version and the link to its GitHub release, the phone app's build number with the two states TestFlight gave it, how many machines the relay holds, and what the last release didn't have, in plain words. With 150 machines or more, start the report with this: the zone must be on Cloudflare's Pro plan before the count reaches 190, or new computers stop getting an address. With 800 or more, start it with this: the account runs out of tunnels at 1,000, and issue #157 has the decision to make. Say what is left for the user: update Sidebots from TestFlight. Name any step that failed and what it needs.
 
-Say a place is updated only when its own check in the step above passed: the download's length, the live feed's version, the script's `TestFlight has build` line, and the server's status.
+Say a place is updated only when its own check in the step above passed: the download's length, the live feed's version, and the script's `TestFlight has build` line.
