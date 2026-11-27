@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { StyleSheet, Text, View } from "react-native";
 import { Image } from "expo-image";
 import { useRouter } from "expo-router";
@@ -29,7 +29,11 @@ export default function Paired() {
   // However the screen is left, as by a tap on a notification, the phone has shown what it paired with.
   useEffect(() => greeted, []);
 
+  // The steps are left once, though the phone may still be asking Apple for its token when the person taps on.
+  const left = useRef(false);
   function finish(agentId = picked) {
+    if (left.current) return;
+    left.current = true;
     greeted();
     if (agentId) openChat(agentId);
     else router.back();

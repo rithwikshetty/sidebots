@@ -158,7 +158,6 @@ struct SetupView: View {
 
   private func greet() {
     guard !typed.isEmpty else { return }
-    name = typed
     step = .ruby
   }
 
@@ -176,7 +175,12 @@ struct SetupView: View {
       HStack {
         Button("Back") { step = .welcome }
         Spacer()
-        Button("Continue") { step = FullDiskAccess.granted ? .picking : .files }.keyboardShortcut(.defaultAction)
+        Button("Continue") {
+          // Both answers are kept from here, so setup that is opened again goes on past these two steps.
+          name = typed
+          step = FullDiskAccess.granted ? .picking : .files
+        }
+        .keyboardShortcut(.defaultAction)
       }
       .padding(.top, 8)
     }

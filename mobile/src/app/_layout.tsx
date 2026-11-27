@@ -9,7 +9,7 @@ import Animated, { interpolate, useAnimatedStyle } from "react-native-reanimated
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { AgentList } from "@/components/AgentList";
 import { BAR_HEIGHT } from "@/components/ChatHeader";
-import { usePaired } from "@/lib/api";
+import { useFresh, usePaired } from "@/lib/api";
 import { haptics } from "@/lib/haptics";
 import { onOpenChat } from "@/lib/push";
 import { SIDEBAR_WIDTH, SideMenu, useWindowLayout, WindowLayout } from "@/lib/layout";
@@ -40,12 +40,14 @@ export const unstable_settings = { anchor: "index" };
 export default function Layout() {
   const theme = useTheme();
   const paired = usePaired();
+  const fresh = useFresh();
   const pathname = usePathname();
   const { width } = useWindowDimensions();
   const insets = useSafeAreaInsets();
   const [controls, setControls] = useState(0);
   const layout = useWindowLayout(controls);
-  const split = layout.split && paired;
+  // A phone that has just paired shows what it paired with across the whole window, before its agents.
+  const split = layout.split && paired && !fresh;
   const [menuOpen, setMenuOpen] = useState(false);
   const menu = useMemo(() => ({ open: () => setMenuOpen(true) }), []);
   // The menu is behind a chat.
