@@ -112,6 +112,7 @@ function PanelColumn({ view, width, most, sheet, end }: { view: PanelView; width
     <aside
       data-testid="panel"
       data-column
+      data-floating={sheet || undefined}
       aria-label="Panel"
       onKeyDown={close}
       style={{ ...useChatTint(view.agentId), width }}

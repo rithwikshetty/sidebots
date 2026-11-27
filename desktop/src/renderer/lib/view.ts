@@ -1,6 +1,7 @@
 // What the window shows: the chat that is open, what the panel beside it
-// shows, Settings, the new agent dialog, search, and the sidebar. It lives
-// outside React, so a shortcut, a menu item or a row anywhere can change it.
+// shows, Settings, the new agent dialog, search, and the sidebar, and each
+// time the person asks to write. It lives outside React, so a shortcut, a
+// menu item or a row anywhere can change it.
 // The sizes the person gives the sidebar and the panel, and whether the
 // sidebar is collapsed, are kept on this computer, with the chat that was
 // open. It also says whether the person is looking at a chat.
@@ -48,6 +49,8 @@ type View = {
   searching: boolean;
   sidebar: { collapsed: boolean; width: number };
   panelWidth: number;
+  // How many times the person has asked to write. Each is a new value, so the open chat hears every one.
+  writes: number;
 };
 
 const KEPT_KEY = "view-1";
@@ -70,6 +73,7 @@ let view: View = {
   searching: false,
   sidebar: { collapsed: saved.sidebarCollapsed ?? false, width: saved.sidebarWidth ?? SIDEBAR.initial },
   panelWidth: saved.panelWidth ?? PANEL.initial,
+  writes: 0,
 };
 const listeners = new Set<() => void>();
 
@@ -130,6 +134,27 @@ export function closePanel(): void {
 
 export function usePanel(): PanelView | null {
   return useView((view) => view.panel);
+}
+
+/** Whether the panel lies over the chat as a sheet, for want of room beside it. */
+function sheetOverChat(): boolean {
+  return view.panel !== null && columns(window.innerWidth, view.sidebar).sheet;
+}
+
+/**
+ * Brings the person to where they write: the open chat's message field takes
+ * the cursor, and what lies over the chat closes, as Settings, the new agent
+ * dialog and the panel as a sheet do. With no chat open there is nowhere to
+ * write, and a confirm dialog waits for its answer first.
+ */
+export function write(): void {
+  if (!view.chat || confirming()) return;
+  set({ settings: null, newAgent: false, panel: sheetOverChat() ? null : view.panel, writes: view.writes + 1 });
+}
+
+/** How many times the person has asked to write, which the open chat answers by giving its message field the cursor. */
+export function useWrites(): number {
+  return useView((view) => view.writes);
 }
 
 /** Opens Settings, at `section` or at the first. */
@@ -218,7 +243,7 @@ export function usePanelWidth(): number {
  * walked away or locked the screen, isn't looked at.
  */
 export function looking(agentId: string): boolean {
-  const covered = view.settings !== null || view.newAgent || confirming() || (view.panel !== null && columns(window.innerWidth, view.sidebar).sheet);
+  const covered = view.settings !== null || view.newAgent || confirming() || sheetOverChat();
   return window.desktop.present() && document.visibilityState === "visible" && document.hasFocus() && view.chat?.agentId === agentId && !covered;
 }
 

@@ -8,6 +8,7 @@ import { LINES } from "../../client/lines.ts";
 import { PROVIDERS } from "../../server/src/contract.ts";
 import { expect, test } from "./fixtures.ts";
 import { addAgent, agentOf, field, idle, messagesOf, mine, notices, openChat, payload, said, sendFromApp, serverPid, theirs, toast, until } from "./chat-helpers.ts";
+import { chooseMenuItem } from "./panel-support.ts";
 
 /** A provider's models in the model's panel, and the efforts beside them. */
 const models = (page: Parameters<typeof openChat>[0], provider: keyof typeof PROVIDERS) => page.getByRole("radiogroup", { name: `${PROVIDERS[provider].name} models` });
@@ -503,6 +504,107 @@ test.describe("keyboard and focus", () => {
     await page.keyboard.type("hello");
     await expect(field(page)).toBeFocused();
     await expect(field(page)).toHaveValue("hello");
+  });
+
+  test("typing goes to the message field from a button or a message that has focus", async ({ page, server }) => {
+    await chatWith(page, server);
+    await sendFromApp(page, "Hi");
+    await expect(said(page, "Hi Tester!")).toBeVisible();
+    // Settings gives focus back to the button that opened it.
+    await page.getByTestId("settings-button").click();
+    await expect(page.getByTestId("settings")).toBeVisible();
+    await page.keyboard.press("Escape");
+    await expect(page.getByTestId("settings-button")).toBeFocused();
+    await page.keyboard.type("hello");
+    await expect(field(page)).toBeFocused();
+    await expect(field(page)).toHaveValue("hello");
+    await theirs(page).click();
+    await expect(theirs(page)).toBeFocused();
+    await page.keyboard.type("?");
+    await expect(field(page)).toBeFocused();
+    await expect(field(page)).toHaveValue("hello?");
+  });
+
+  test("typing stays in a field, a dialog and a menu, and Space still presses the button that has focus", async ({ page, server }) => {
+    await chatWith(page, server);
+    await page.getByTestId("search-button").click();
+    await page.keyboard.type("ec");
+    await expect(page.getByTestId("search")).toHaveValue("ec");
+    await page.keyboard.press("Escape");
+    await page.getByTestId("settings-button").click();
+    await page.getByTestId("settings-connections").focus();
+    await page.keyboard.type("x");
+    await expect(page.getByTestId("settings-connections")).toBeFocused();
+    await page.keyboard.press("Escape");
+    await page.getByTestId("chat-menu").click();
+    await expect(page.getByRole("menuitem", { name: "Mute" })).toBeVisible();
+    await page.keyboard.type("x");
+    await expect(page.getByRole("menuitem", { name: "Mute" })).toBeVisible();
+    await page.keyboard.press("Escape");
+    await expect(page.getByTestId("chat-menu")).toBeFocused();
+    await page.keyboard.press("Space");
+    await expect(page.getByRole("menuitem", { name: "Mute" })).toBeVisible();
+    await expect(field(page)).toHaveValue("");
+  });
+
+  test("Write a Message in the menu puts the cursor in the message field, and closes Settings and the new agent dialog over the chat", async ({ page, server, electronApp }) => {
+    await chatWith(page, server);
+    // The item's shortcut is ⌘/ on a Mac and Ctrl+/ elsewhere.
+    const shortcut = await electronApp.evaluate(({ Menu }) => Menu.getApplicationMenu()!.items.flatMap((menu) => menu.submenu?.items ?? []).find((item) => item.label === "Write a Message")?.accelerator);
+    expect(shortcut).toBe("CmdOrCtrl+/");
+    await page.getByTestId("model").focus();
+    await chooseMenuItem(electronApp, "Write a Message");
+    await expect(field(page)).toBeFocused();
+    await page.getByTestId("settings-button").click();
+    await expect(page.getByTestId("settings")).toBeVisible();
+    await chooseMenuItem(electronApp, "Write a Message");
+    await expect(page.getByTestId("settings")).toBeHidden();
+    await expect(field(page)).toBeFocused();
+    await page.getByTestId("new-agent-button").click();
+    await expect(page.getByTestId("agent-name")).toBeFocused();
+    await chooseMenuItem(electronApp, "Write a Message");
+    await expect(page.getByTestId("new-agent")).toBeHidden();
+    await expect(field(page)).toBeFocused();
+    await page.keyboard.type("hello");
+    await expect(field(page)).toHaveValue("hello");
+  });
+
+  test("Write a Message closes the panel where it lies over the chat, and leaves it open beside the chat", async ({ page, server, electronApp, setWindowSize }) => {
+    await chatWith(page, server);
+    await setWindowSize(900, 700);
+    await page.getByTestId("chat-agent").click();
+    await expect(page.getByTestId("panel")).toBeVisible();
+    // Over the chat, the panel keeps what is typed from the field it covers.
+    await page.getByTestId("close-panel").focus();
+    await page.keyboard.type("x");
+    await expect(page.getByTestId("close-panel")).toBeFocused();
+    await expect(field(page)).toHaveValue("");
+    await chooseMenuItem(electronApp, "Write a Message");
+    await expect(page.getByTestId("panel")).toBeHidden();
+    await expect(field(page)).toBeFocused();
+    await setWindowSize(1400, 900);
+    await page.getByTestId("chat-agent").click();
+    await expect(page.getByTestId("panel")).toBeVisible();
+    await chooseMenuItem(electronApp, "Write a Message");
+    await expect(field(page)).toBeFocused();
+    await expect(page.getByTestId("panel")).toBeVisible();
+    // Beside the chat, typing in the panel goes to the field.
+    await page.getByTestId("close-panel").focus();
+    await page.keyboard.type("x");
+    await expect(field(page)).toHaveValue("x");
+  });
+
+  test("Write a Message leaves a question that waits for its answer", async ({ page, server, electronApp }) => {
+    await chatWith(page, server);
+    await page.getByTestId("chat-menu").click();
+    await page.getByRole("menuitem", { name: "Delete agent…" }).click();
+    const confirm = page.getByTestId("confirm");
+    await expect(confirm).toBeVisible();
+    await chooseMenuItem(electronApp, "Write a Message");
+    await page.keyboard.type("x");
+    await expect(confirm).toBeVisible();
+    await expect(field(page)).not.toBeFocused();
+    await expect(field(page)).toHaveValue("");
   });
 
   test("Reply from the hover button quotes the message, and the sent reply carries it", async ({ page, server }) => {
